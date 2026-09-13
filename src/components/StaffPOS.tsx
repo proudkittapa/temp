@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus, 
-  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, DayType, MemberType
+  Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
+  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, getDayType, isHourOffPeak } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
 import { Check, X, ShoppingCart, Activity, RefreshCw, AlertTriangle, Coffee, ShieldCheck, Dumbbell, Receipt, Plus, Minus, CheckCircle2, UserCheck, AlertOctagon } from 'lucide-react';
 
 interface StaffPOSProps {
@@ -132,13 +132,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return;
     }
 
-    // Double booking verify
-    const isOccupied = bookings.some(
-      b => b.courtId === walkinCourtId &&
-           b.date === walkinDate &&
-           b.startTime === walkinSlot &&
-           b.status !== BookingStatus.CANCELLED
-    );
+    // Double booking verify - checks the mutex group (FR-1.2), not just this
+    // exact court id, so a walk-in half-court booking correctly blocks the
+    // full court and vice versa.
+    const isOccupied = !isCourtSlotAvailable(walkinCourtId, walkinDate, walkinSlot, bookings, courts);
 
     if (isOccupied) {
       alert('ขออภัยค่ะ! สนามและเวลาที่เลือกถูกจองไว้แล้ว กรุณาเลือกช่วงเวลาอื่น');
@@ -160,15 +157,24 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
 
     const courtObj = courts.find(c => c.id === walkinCourtId);
-    let amount = 300; // standard fixed for walkin
-    if (courtObj?.type === CourtType.BASKETBALL) amount = 600;
-    else if (courtObj?.type === CourtType.PICKLEBALL) amount = 350;
-    else if (courtObj?.type === CourtType.MEETING_ROOM) amount = 400;
-
     const normalizedPhone = walkinPhone.replace(/[^0-9]/g, '');
     const usersList = StorageService.get<User[]>('users', []);
     const registeredUser = usersList.find(u => u.phone?.replace(/[^0-9]/g, '') === normalizedPhone);
     const resolvedUserId = registeredUser ? registeredUser.id : 'u-walkin-' + Date.now();
+
+    // Price through the same engine the grid preview uses (FR-2), instead of
+    // a flat per-sport fee that ignored peak/off-peak, half-court rate and
+    // membership discount - and could silently disagree with the price the
+    // staff member was just shown on screen.
+    const priceDetail = calculatePrice(
+      courtObj?.type || CourtType.BADMINTON,
+      walkinDate,
+      walkinSlot,
+      registeredUser?.memberType || MemberType.NORMAL,
+      false,
+      walkinCourtId
+    );
+    const isActuallyHalf = courtObj ? courtObj.shareOfGroup < 1 : false;
 
     const bookingId = 'bk-walkin-' + Date.now();
     const bkCode = `BK${walkinDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -183,9 +189,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       date: walkinDate,
       startTime: walkinSlot,
       endTime: (parseInt(walkinSlot.split(':')[0], 10) + 1).toString().padStart(2, '0') + ':00',
-      isHalfCourt: false,
-      priceType: PriceType.NORMAL,
-      totalAmount: amount,
+      isHalfCourt: isActuallyHalf,
+      priceType: priceDetail.priceType,
+      totalAmount: priceDetail.total,
       status: BookingStatus.CONFIRMED, // Walkin is auto-approved because payment is physical at counter
       isEventBlock: false,
       createdAt: new Date().toISOString(),
@@ -195,7 +201,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const newPayment: Payment = {
       id: 'pay-walkin-' + Date.now(),
       bookingId: bookingId,
-      amount: amount,
+      amount: priceDetail.total,
       method: walkinPayMethod,
       status: PaymentStatus.VERIFIED,
       verifiedAt: new Date().toISOString(),
@@ -895,7 +901,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       {/* Sticky Court Left Header */}
                       <td className="p-2.5 font-bold text-slate-800 bg-[#f8fafc]/95 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] border-r border-slate-200">
                         <span className="block text-[11px] font-black">{court.name}</span>
-                        {court.type === CourtType.BASKETBALL && (court.id === 'b_half_b' || court.id === 'b_half_c') && (
+                        {court.offPeakOnly && (
                           <span className="text-[8px] text-[#0f5132] font-semibold bg-[#d1e7dd] px-1 py-0.2 rounded w-max mt-0.5 inline-block">Off-Peak เท่านั้น</span>
                         )}
                       </td>
@@ -904,27 +910,23 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       {getWalkinHours().map((time) => {
                         const hourNum = parseInt(time.split(':')[0], 10);
 
-                        // 1. Is there a booking?
-                        const bItem = bookings.find(
-                          b => b.courtId === court.id && 
-                               b.date === walkinDate && 
-                               b.startTime === time && 
-                               b.status !== BookingStatus.CANCELLED
-                        );
+                        // 1. Is there a booking on this court OR a mutex-group
+                        // sibling (FR-1.2, e.g. the full court)?
+                        const bItem = findConflictingBooking(court.id, walkinDate, time, bookings, courts);
 
                         // 2. Is there a closure/maintenance?
                         const closureItem = daysOff.find(
-                          d => d.date === walkinDate && 
+                          d => d.date === walkinDate &&
                                (d.courtId === 'all' || d.courtId === court.id) &&
                                (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hourNum >= d.startHour && hourNum < d.endHour))
                         );
 
-                        // 3. Peak hour calculation for reference
-                        const isWeekend = getDayType(walkinDate) === DayType.WEEKEND;
-                        const isPeak = isWeekend ? (hourNum >= 9 && hourNum < 22) : (hourNum >= 17 && hourNum < 22);
+                        // 3. Peak/Offpeak, read from the same PricingRule config
+                        // the price itself uses.
+                        const isPeak = !isHourOffPeak(court.type, walkinDate, hourNum);
 
-                        // 4. Basketball sub-court offpeak only rule
-                        const isBasketballHalfCourt = court.type === CourtType.BASKETBALL && (court.id === 'b_half_b' || court.id === 'b_half_c');
+                        // 4. Half-court offpeak-only rule (FR-1.2)
+                        const isBasketballHalfCourt = !!court.offPeakOnly;
                         const isRestrictedPeakBasketball = isBasketballHalfCourt && isPeak;
 
                         // 5. Is it the currently selected slot on the POS left panel?

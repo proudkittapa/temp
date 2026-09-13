@@ -10,7 +10,7 @@ import (
 	"arena-backend/internal/model"
 	"arena-backend/internal/repository"
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/crypto/bcrypt"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var jwtKeySecret = []byte("SUPER_SECRET_COMPLEX_KEY_93281")

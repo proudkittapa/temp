@@ -4,7 +4,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
   User, UserRole
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, getDayType, getTodayDateStr } from '../mockData';
+import { StorageService, calculatePrice, generatePromptPayPayload, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
 import { Calendar, Clock, CreditCard, CheckCircle, AlertTriangle, MessageSquare, ToggleLeft, ToggleRight, Trash2, Shield, Phone, FileImage, Sparkles, UserCheck } from 'lucide-react';
 
 interface CustomerPanelProps {
@@ -333,8 +333,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     let original = 0;
     const currentEffectiveMemberType = loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL;
     selectedSlots.forEach(s => {
-      const isHalfLocal = s.courtId === 'b2';
-      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, isHalfLocal || isHalfCourt, s.courtId);
+      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, isHalfCourt, s.courtId);
       total += detail.total;
       original += detail.original;
     });
@@ -429,29 +428,20 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         return;
       }
 
-      // Check slot double booking
-      const isSlotOccupied = bookings.some(
-        b => b.courtId === courtId &&
-             b.date === selectedDate &&
-             b.startTime === startTime &&
-             b.status !== BookingStatus.CANCELLED
-      );
-
-      if (isSlotOccupied) {
+      // Check slot double booking. Uses the shared mutex-group check (FR-1.2)
+      // instead of a plain per-court lookup, so e.g. booking half-court B is
+      // correctly blocked when the full court is already booked, and vice
+      // versa - a same-court-id-only check would miss that conflict.
+      if (!isCourtSlotAvailable(courtId, selectedDate, startTime, bookings, courts)) {
         alert('ขออภัยค่ะ! ช่วงเวลานี้ถูกผู้อื่นจองไปแล้ว กรุณาเลือกเวลาอื่น');
         return;
       }
 
-      // Check peak constraint for basketball half court
+      // Check peak constraint for half-court resources (FR-1.2)
       const targetCourt = courts.find(c => c.id === courtId);
-      if (targetCourt && targetCourt.type === CourtType.BASKETBALL && (courtId === 'b_half_b' || courtId === 'b_half_c')) {
-        const hourNum = parseInt(startTime.split(':')[0], 10);
-        const isWeekend = getDayType(selectedDate) === DayType.WEEKEND;
-        const isPeak = isWeekend ? (hourNum >= 9 && hourNum < 22) : (hourNum >= 17 && hourNum < 22);
-        if (isPeak) {
-          alert('⚠️ ขออภัยค่ะ สนามครึ่งสนาม (B / C) เปิดให้บริการจองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
-          return;
-        }
+      if (targetCourt?.offPeakOnly && !isHourOffPeak(targetCourt.type, selectedDate, parseInt(startTime.split(':')[0], 10))) {
+        alert('⚠️ ขออภัยค่ะ สนามครึ่งสนาม (B / C) เปิดให้บริการจองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
+        return;
       }
 
       // Check Special DayOff block
@@ -616,9 +606,13 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     const bkCode = `BK${selectedDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newBookings: Booking[] = selectedSlots.map((slotItem, index) => {
-      const isHalfLocal = slotItem.courtId === 'b2';
-      const singlePrice = calculatePrice(selectedType, selectedDate, slotItem.startTime, loggedInUser.memberType || MemberType.NORMAL, isHalfLocal || isHalfCourt, slotItem.courtId);
-      
+      const singlePrice = calculatePrice(selectedType, selectedDate, slotItem.startTime, loggedInUser.memberType || MemberType.NORMAL, isHalfCourt, slotItem.courtId);
+      // Snapshot the court's actual half-court status (not just the manual
+      // toggle) so the stored record reflects reality even if the toggle
+      // wasn't touched for a court that's a half-share by configuration.
+      const bookedCourt = courts.find(c => c.id === slotItem.courtId);
+      const isActuallyHalf = isHalfCourt || (bookedCourt ? bookedCourt.shareOfGroup < 1 : false);
+
       return {
         id: index === 0 ? mainBookingId : `bk-${Date.now()}-${index}`,
         bookingCode: bkCode,
@@ -629,7 +623,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         date: selectedDate,
         startTime: slotItem.startTime,
         endTime: (parseInt(slotItem.startTime.split(':')[0], 10) + 1).toString().padStart(2, '0') + ':00',
-        isHalfCourt: isHalfLocal || isHalfCourt,
+        isHalfCourt: isActuallyHalf,
         priceType: singlePrice.priceType,
         totalAmount: singlePrice.total,
         status: BookingStatus.PENDING_PAYMENT,
@@ -1226,7 +1220,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                             <td className="p-3 font-bold text-[#0f172a] bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] border-r border-slate-200">
                               <div className="flex flex-col">
                                 <span className="text-[11px] font-black">{court.name}</span>
-                                {court.type === CourtType.BASKETBALL && (court.id === 'b_half_b' || court.id === 'b_half_c') && (
+                                {court.offPeakOnly && (
                                   <span className="text-[8px] text-emerald-800 font-bold bg-emerald-50 px-1 py-0.2 rounded w-max mt-0.5">Off-Peak เท่านั้น</span>
                                 )}
                               </div>
@@ -1237,28 +1231,24 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                               const time = slot.start;
                               const hourNum = slot.hourNum;
 
-                              // 1. Is it blocked by a reservation?
-                              const matchedBooking = bookings.find(
-                                b => b.courtId === court.id && 
-                                     b.date === selectedDate && 
-                                     b.startTime === time && 
-                                     b.status !== BookingStatus.CANCELLED
-                              );
+                              // 1. Is it blocked by a reservation on this court OR a
+                              // mutex-group sibling (FR-1.2, e.g. the full court)?
+                              const matchedBooking = findConflictingBooking(court.id, selectedDate, time, bookings, courts);
 
                               // 2. Is it blocked by admin closure / operational days off?
                               const matchedClosure = daysOff.find(
-                                d => d.date === selectedDate && 
+                                d => d.date === selectedDate &&
                                      (d.courtId === 'all' || d.courtId === court.id) &&
                                      (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hourNum >= d.startHour && hourNum < d.endHour))
                               );
 
-                              // 3. Peak/Offpeak check
-                              const isWeekend = getDayType(selectedDate) === DayType.WEEKEND;
-                              const isPeak = isWeekend ? (hourNum >= 9 && hourNum < 22) : (hourNum >= 17 && hourNum < 22);
+                              // 3. Peak/Offpeak check, read from the same PricingRule
+                              // config the price itself uses (instead of a separately
+                              // hardcoded peak window that could drift from it).
+                              const isPeak = !isHourOffPeak(court.type, selectedDate, hourNum);
 
-                              // 4. Basketball half-court offpeak constraint: "สนามบาสครึ่งสนามเปิดได้เฉพาะเวลา offpeak"
-                              const isBasketballHalfCourt = court.type === CourtType.BASKETBALL && (court.id === 'b_half_b' || court.id === 'b_half_c');
-                              const isRestrictedPeakBasketball = isBasketballHalfCourt && isPeak;
+                              // 4. Half-court offpeak-only constraint (FR-1.2)
+                              const isRestrictedPeakBasketball = !!court.offPeakOnly && isPeak;
 
                               // 5. Currently selected by this user in checkout drawer
                               const isSelectedBySelf = selectedSlots.some(s => s.courtId === court.id && s.startTime === time);
@@ -1315,7 +1305,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                 selectedDate, 
                                 time, 
                                 loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL,
-                                isBasketballHalfCourt, 
+                                court.shareOfGroup < 1,
                                 court.id
                               );
 
@@ -1524,8 +1514,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     <p className="font-bold text-slate-800 text-[11px]">รายการสล็อตเวลาที่ทำจอง ({selectedSlots.length} สล็อต):</p>
                     {selectedSlots.map((s, idx) => {
                       const cName = courts.find(c => c.id === s.courtId)?.name || 'สนาม';
-                      const isHalfLocal = s.courtId === 'b2';
-                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, memberType, isHalfLocal || isHalfCourt, s.courtId);
+                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, memberType, isHalfCourt, s.courtId);
                       return (
                         <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 font-medium font-sans">
                           <span>{idx + 1}. {cName} - เวลา {s.startTime} น.</span>

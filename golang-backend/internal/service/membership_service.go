@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -28,13 +27,23 @@ type MembershipDiscount struct {
 	Description        string  `json:"description"`
 }
 
-// CalculateDiscount returns custom discount factors matching special member categories
+// CalculateDiscount returns discount factors matching special member
+// categories. Percentages match REQUIREMENTS.md FR-2.3 and mockData.ts's
+// DEFAULT_MEMBER_DISCOUNTS - previously this switch, mockData.ts, and
+// BACKEND_PLAN.md's pricing engine sample each hardcoded a different set of
+// numbers (20/10/15 here vs 15/10/20 in the spec).
+//
+// TODO: this is currently NOT called from PriceEngineService.CalculatePrice -
+// the booking price path applies peak/off-peak and half-court rate but never
+// this membership discount. Wiring it in is a business-logic change beyond
+// this pass's data-structure fixes; flagging it so it isn't mistaken for
+// already-applied.
 func (s *MembershipService) CalculateDiscount(ctx context.Context, mType model.MemberType) *MembershipDiscount {
 	switch mType {
 	case model.MemberStudent:
 		return &MembershipDiscount{
-			PercentageDiscount: 20.0,
-			Description:        "Student ID discount: 20% off",
+			PercentageDiscount: 15.0,
+			Description:        "Student ID discount: 15% off",
 		}
 	case model.MemberClub:
 		return &MembershipDiscount{
@@ -43,8 +52,8 @@ func (s *MembershipService) CalculateDiscount(ctx context.Context, mType model.M
 		}
 	case model.MemberCorporate:
 		return &MembershipDiscount{
-			PercentageDiscount: 15.0,
-			Description:        "Corporate Account agreement discount: 15% off",
+			PercentageDiscount: 20.0,
+			Description:        "Corporate Account agreement discount: 20% off",
 		}
 	default:
 		return &MembershipDiscount{

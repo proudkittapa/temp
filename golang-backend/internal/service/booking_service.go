@@ -38,14 +38,12 @@ func NewBookingService(
 }
 
 type CreateBookingInput struct {
-	CourtID       string `json:"court_id"`
-	Date          string `json:"date"`
-	StartTime     string `json:"start_time"`
-	EndTime       string `json:"end_time"`
-	IsHalfCourt   bool   `json:"is_half_court"`
-	HalfCourtSide string `json:"half_court_side"`
-	Notes         string `json:"notes"`
-	UserID        string `json:"user_id"`
+	CourtID   string `json:"court_id"`
+	Date      string `json:"date"`
+	StartTime string `json:"start_time"`
+	EndTime   string `json:"end_time"`
+	Notes     string `json:"notes"`
+	UserID    string `json:"user_id"`
 }
 
 type CreateBookingResult struct {
@@ -68,6 +66,11 @@ func (s *BookingService) CreateNewBooking(ctx context.Context, input CreateBooki
 		return nil, fmt.Errorf("court lookup error: %w", err)
 	}
 
+	// isHalfCourt is derived from the court's own configuration, never taken
+	// from client input - otherwise a caller could request full-court pricing
+	// on a half-court booking (or vice versa) by lying about the flag.
+	isHalfCourt := court.ShareOfGroup < 1
+
 	// 2. Compute pricing via PriceEngineService
 	calculatedAmount, descPr, err := s.priceEngine.CalculatePrice(
 		ctx,
@@ -75,7 +78,7 @@ func (s *BookingService) CreateNewBooking(ctx context.Context, input CreateBooki
 		input.Date,
 		input.StartTime,
 		input.EndTime,
-		input.IsHalfCourt,
+		isHalfCourt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("pricing calculation failed: %w", err)
@@ -84,20 +87,15 @@ func (s *BookingService) CreateNewBooking(ctx context.Context, input CreateBooki
 	bookingID := "b-" + time.Now().Format("02150405")
 	bookingCode := "BK-" + time.Now().Format("150405")
 
-	sideVal := input.HalfCourtSide
-	if sideVal == "" {
-		sideVal = "FULL"
-	}
-
-	// 3. Serialize and perform overlap block checking atomically
+	// 3. Serialize and perform overlap block checking atomically. Conflicts
+	// across a shared physical resource (e.g. full vs. half-court sides) are
+	// resolved generically via Court.MutexGroupID inside the repository.
 	err = s.bkRepo.CheckAndBlockOverlap(
 		ctx,
 		input.CourtID,
 		input.Date,
 		input.StartTime,
 		input.EndTime,
-		input.IsHalfCourt,
-		sideVal,
 		func(tx *gorm.DB) error {
 			var notesVal *string
 			if input.Notes != "" {
@@ -105,22 +103,21 @@ func (s *BookingService) CreateNewBooking(ctx context.Context, input CreateBooki
 			}
 
 			b := model.Booking{
-				ID:            bookingID,
-				BookingCode:   bookingCode,
-				CourtID:       input.CourtID,
-				UserID:        input.UserID,
-				Date:          input.Date,
-				StartTime:     input.StartTime,
-				EndTime:       input.EndTime,
-				IsHalfCourt:   input.IsHalfCourt,
-				HalfCourtSide: &sideVal,
-				PriceType:     descPr,
-				TotalAmount:   calculatedAmount,
-				Status:        model.BookingPendingPayment,
-				Notes:         notesVal,
-				CreatedBy:     input.UserID,
-				CreatedAt:     time.Now(),
-				UpdatedAt:     time.Now(),
+				ID:          bookingID,
+				BookingCode: bookingCode,
+				CourtID:     input.CourtID,
+				UserID:      input.UserID,
+				Date:        input.Date,
+				StartTime:   input.StartTime,
+				EndTime:     input.EndTime,
+				IsHalfCourt: isHalfCourt,
+				PriceType:   descPr,
+				TotalAmount: calculatedAmount,
+				Status:      model.BookingPendingPayment,
+				Notes:       notesVal,
+				CreatedBy:   input.UserID,
+				CreatedAt:   time.Now(),
+				UpdatedAt:   time.Now(),
 			}
 
 			if err := tx.Create(&b).Error; err != nil {

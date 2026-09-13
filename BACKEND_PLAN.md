@@ -97,10 +97,24 @@ CREATE TABLE courts (
     id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     type court_type NOT NULL,
-    allow_half BOOLEAN NOT NULL DEFAULT FALSE, -- relevant for basketball half-courts
+    -- Courts sharing mutex_group_id are the same physical resource: an
+    -- active booking on any of them blocks every other court in the group
+    -- for the overlapping time range (FR-1.2). Generic replacement for
+    -- hardcoding specific basketball court IDs in application code.
+    mutex_group_id VARCHAR(50),
+    -- Fraction of the mutex group's physical resource this court represents.
+    -- 1 = the whole resource (or a standalone court). Less than 1 marks a
+    -- sub-allocation (e.g. 0.5 for a half-court side). The pricing engine
+    -- reads this to decide whether to apply pricing_config.half_court_rate_percent,
+    -- which is the independently configurable business rate - share_of_group
+    -- itself is purely structural/for mutex+display.
+    share_of_group NUMERIC(3, 2) NOT NULL DEFAULT 1.0 CHECK (share_of_group > 0 AND share_of_group <= 1),
+    off_peak_only BOOLEAN NOT NULL DEFAULT FALSE, -- FR-1.2
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+
+CREATE INDEX idx_courts_mutex_group ON courts(mutex_group_id) WHERE mutex_group_id IS NOT NULL;
 
 -- 3. Dynamic Pricing Rules
 CREATE TABLE pricing_rules (
@@ -116,16 +130,41 @@ CREATE TABLE pricing_rules (
     CONSTRAINT chk_rule_hours CHECK (end_hour > start_hour)
 );
 
+-- 3b. Single source of truth for business coefficients that used to be
+-- duplicated (and had drifted out of sync) as magic numbers across the
+-- frontend, this DDL's comments, and the Go service samples below. Exactly
+-- one row, id = 'global'.
+CREATE TABLE pricing_config (
+    id VARCHAR(20) PRIMARY KEY DEFAULT 'global' CHECK (id = 'global'),
+    half_court_rate_percent NUMERIC(5, 2) NOT NULL CHECK (half_court_rate_percent BETWEEN 0 AND 100) -- FR-2.4, default 50
+);
+
+-- 3c. Membership discount table (FR-2.3) - one row per member_type instead of
+-- a percentage re-literaled in every service/language that needs it.
+CREATE TABLE member_discounts (
+    member_type member_type PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    discount_percent NUMERIC(5, 2) NOT NULL CHECK (discount_percent BETWEEN 0 AND 100),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
 -- 4. Calendar Overrides (Days off / Maintenance blocks)
 CREATE TABLE days_off (
     id VARCHAR(50) PRIMARY KEY,
     date DATE NOT NULL,
-    court_id VARCHAR(50) NOT NULL, -- Use 'all' or specific court_id
+    court_id VARCHAR(50) REFERENCES courts(id) ON DELETE CASCADE, -- NULL = all courts
     reason VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    is_full_day BOOLEAN NOT NULL DEFAULT TRUE, -- FR-1.3
+    start_hour INT CHECK (start_hour BETWEEN 0 AND 23), -- set when NOT is_full_day
+    end_hour INT CHECK (end_hour BETWEEN 1 AND 24),      -- set when NOT is_full_day
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT chk_dayoff_hours CHECK (is_full_day OR (start_hour IS NOT NULL AND end_hour IS NOT NULL AND end_hour > start_hour))
 );
 
-CREATE UNIQUE INDEX idx_days_off_date_court ON days_off(date, court_id);
+-- Partial unique indexes since court_id is now nullable ("all courts" rows
+-- can't collide with a NULL != NULL comparison under a plain UNIQUE index).
+CREATE UNIQUE INDEX idx_days_off_date_court ON days_off(date, court_id) WHERE court_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_days_off_date_allcourts ON days_off(date) WHERE court_id IS NULL;
 
 -- 5. Regular Base Week Operating Hours
 CREATE TABLE operating_hours (
@@ -144,9 +183,14 @@ CREATE TABLE bookings (
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     date DATE NOT NULL,
     start_time TIME NOT NULL,
-    end_time TIME NOT NULL,
-    is_half_court BOOLEAN NOT NULL DEFAULT FALSE, -- e.g. Basketball Side A/B
-    half_court_side VARCHAR(10) CHECK (half_court_side IN ('A', 'B', 'FULL')), -- A, B, or FULL
+    end_time TIME NOT NULL, -- always start_time + 1h: one row per booked hour, so pricing/overlap logic has a single agreed grain
+    -- Snapshot of (court.share_of_group < 1) at booking time, kept for
+    -- historical/receipt display even if the court's configuration later
+    -- changes. Availability and pricing must read the live court via
+    -- court_id, never this column. Replaces the old half_court_side
+    -- ('A'/'B'/'FULL') enum, which duplicated what court_id + courts.mutex_group_id
+    -- already encode and had already drifted from the frontend's court IDs.
+    is_half_court BOOLEAN NOT NULL DEFAULT FALSE,
     price_type price_type NOT NULL,
     total_amount NUMERIC(10, 2) NOT NULL CHECK (total_amount >= 0),
     status booking_status NOT NULL DEFAULT 'PENDING_PAYMENT',
@@ -192,9 +236,25 @@ CREATE TABLE products (
     sub_category VARCHAR(100), -- 'drink', 'snack', 'racket', 'shoes'
     price NUMERIC(10, 2) NOT NULL CHECK (price >= 0),
     is_rental BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Authoritative stock ONLY for products with no rows in
+    -- product_variants. A variant-tracked product (e.g. sized rentals) must
+    -- decrement the matching product_variants row instead - checking this
+    -- aggregate alone lets two customers both be told "in stock" for the
+    -- last unit of one size while a different size sits unused.
     stock INT NOT NULL DEFAULT 0 CHECK (stock >= 0),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- 8b. Sellable/rentable units tracked separately from their parent product,
+-- e.g. one shoe size+gender combination (FR-5.3).
+CREATE TABLE product_variants (
+    id VARCHAR(50) PRIMARY KEY,
+    product_id VARCHAR(50) NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    label VARCHAR(20) NOT NULL, -- e.g. shoe size "42"
+    gender CHAR(1) CHECK (gender IN ('M', 'F', 'U')),
+    stock INT NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    UNIQUE (product_id, label, gender)
 );
 
 -- 9. POS Orders Main Table
@@ -218,11 +278,12 @@ CREATE TABLE order_items (
     id VARCHAR(50) PRIMARY KEY,
     order_id VARCHAR(50) NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     product_id VARCHAR(50) NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id VARCHAR(50) REFERENCES product_variants(id) ON DELETE RESTRICT, -- set when product_id has variants
     qty INT NOT NULL DEFAULT 1 CHECK (qty > 0),
     unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0),
     returned_at TIMESTAMP WITH TIME ZONE, -- populated when rented shoe/racket is returned
-    shoe_size VARCHAR(10), -- e.g. "39", "40", "42"
-    shoe_gender CHAR(1) CHECK (shoe_gender IN ('M', 'F', 'U')), -- Male, Female, Unisex size standard
+    shoe_size VARCHAR(10), -- display copy of the variant label at time of sale
+    shoe_gender CHAR(1) CHECK (shoe_gender IN ('M', 'F', 'U')), -- display copy of the variant gender at time of sale
     notes VARCHAR(255) -- extra specs, e.g. racket string tension specifications
 );
 
@@ -232,14 +293,77 @@ CREATE TABLE audit_logs (
     user_id VARCHAR(50) NOT NULL,
     user_name VARCHAR(255) NOT NULL,
     action VARCHAR(100) NOT NULL, -- USER_POINTS_ADJUSTED_BY_ADMIN, SLIP_VERIFIED, COURT_BLOCKED_FOR_MAINTENANCE etc.
-    target_type VARCHAR(100) NOT NULL, -- e.g. "User", "Booking", "Product", "PricingRule"
+    target_type VARCHAR(100) NOT NULL, -- "Booking", "Payment", "Order", "Court", "PricingRule", "PricingConfig", "User", "Product", "DayOff", "Shift", "Report"
     target_id VARCHAR(100) NOT NULL,
     before_state JSONB, -- state before changes in JSON formats
     after_state JSONB,  -- state after changes in JSON formats
+    reason VARCHAR(500), -- required by FR-6.3/FR-7.3 for cancellations, refunds, manual point adjustments and price/schedule overrides
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 CREATE INDEX idx_audit_time ON audit_logs(created_at);
+
+-- 12. Append-only loyalty history (FR-4.1/FR-4.3, AC-6/AC-7). users.points is
+-- a cached sum of these rows; the ledger is what makes accrual/redemption
+-- auditable and traces a manual point adjustment back to an actor.
+CREATE TYPE ledger_entry_type AS ENUM ('EARN_BOOKING', 'EARN_PURCHASE', 'REDEEM', 'ADJUST_MANUAL');
+
+CREATE TABLE points_ledger (
+    id VARCHAR(50) PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type ledger_entry_type NOT NULL,
+    points INT NOT NULL, -- signed: positive for earn, negative for redeem/adjustment
+    ref_type VARCHAR(20) CHECK (ref_type IN ('Booking', 'Order', 'Voucher')),
+    ref_id VARCHAR(50),
+    note VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    created_by VARCHAR(50) NOT NULL -- 'system' for automatic accrual
+);
+
+CREATE INDEX idx_points_ledger_user ON points_ledger(user_id);
+
+-- 13. Rewards catalog (FR-4.2), kept separate from vouchers so it can be
+-- edited without touching redemption history.
+CREATE TABLE rewards_catalog (
+    id VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    emoji VARCHAR(10) NOT NULL,
+    points_cost INT NOT NULL CHECK (points_cost > 0),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE TYPE voucher_status AS ENUM ('ACTIVE', 'REDEEMED', 'EXPIRED');
+
+-- 14. A claimed reward (FR-4.3): created when a customer redeems points,
+-- then looked up by code at the counter and marked REDEEMED on dispense.
+CREATE TABLE vouchers (
+    id VARCHAR(50) PRIMARY KEY,
+    code VARCHAR(20) UNIQUE NOT NULL, -- "RW-XXXXXX"
+    user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reward_id VARCHAR(50) NOT NULL REFERENCES rewards_catalog(id) ON DELETE RESTRICT,
+    points_spent INT NOT NULL CHECK (points_spent > 0),
+    status voucher_status NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    dispensed_at TIMESTAMP WITH TIME ZONE,
+    dispensed_by VARCHAR(50)
+);
+
+-- 15. Front-desk cash drawer session (FR-6). Cash totals should be computed
+-- from bookings/orders paid by CASH within [opened_at, closed_at), not
+-- re-entered by staff, so the variance calculation has a single source of
+-- truth.
+CREATE TABLE shifts (
+    id VARCHAR(50) PRIMARY KEY,
+    staff_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    staff_name VARCHAR(255) NOT NULL,
+    opened_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    opening_float NUMERIC(10, 2) NOT NULL CHECK (opening_float >= 0),
+    closed_at TIMESTAMP WITH TIME ZONE,
+    counted_cash NUMERIC(10, 2),
+    expected_cash NUMERIC(10, 2),
+    variance_cash NUMERIC(10, 2),
+    notes VARCHAR(500)
+);
 ```
 
 ---
@@ -291,11 +415,11 @@ Below is the standard Golang production directory architecture. Place this in yo
 
 ## 4. In-Depth Golang Go Code Implementations for Core Arena Operations
 
-### 4.1 Feature 1: The Booking Schedule Overlap Engine (Basketball Half-Court Locking Support)
+### 4.1 Feature 1: The Booking Schedule Overlap Engine (Generic Mutex-Group Locking)
 
-Basketball courts allow half-court bookings (`is_half_court = true`, `half_court_side = 'A' | 'B'`). If a FULL court of basketball is booked, sides A and B must be locked. Similarly, if either side A or side B is booked, a full-court booking on that time slot is prohibited.
+Courts that share `mutex_group_id` are the same physical resource (FR-1.2) - e.g. one physical basketball court exposed as a full-court booking option plus two half-court sides. A booking on any court in the group blocks every other court in that group for the overlapping time range. This is resolved generically instead of a hardcoded "is this basketball, and is it side A/B/FULL" conflict matrix, which only worked for one sport and had to be extended by hand for every new shared-resource court (and had already drifted from the frontend's own court IDs - an earlier version of this doc used `half_court_side` in ways the frontend and `internal/model/models.go` never agreed on).
 
-Here is the robust transaction pattern using pgx's connection pool:
+Here is the transaction pattern using pgx's connection pool (the actual implementation, using gorm, lives in `internal/repository/booking.go`):
 
 ```go
 package repository
@@ -318,14 +442,12 @@ func NewBookingRepository(pool *pgxpool.Pool) *BookingRepository {
 	return &BookingRepository{pool: pool}
 }
 
-// CheckAndCreateBooking handles half-court and full-court overlap logic atomically with row locks
+// CheckAndCreateBooking handles mutex-group overlap logic atomically with row locks
 func (r *BookingRepository) CheckAndCreateBooking(
-	ctx context.Context, 
-	courtID string, 
-	date time.Time, 
-	start, end string, 
-	isHalf bool, 
-	side string, // "A", "B", or "FULL"
+	ctx context.Context,
+	courtID string,
+	date time.Time,
+	start, end string,
 	insertFunc func(tx pgx.Tx) error,
 ) error {
 	txOpts := pgx.TxOptions{
@@ -341,7 +463,8 @@ func (r *BookingRepository) CheckAndCreateBooking(
 
 	// 1. Acquire row lock on the Master Court record to sequentialize parallel bookings for this court
 	var isCourtActive bool
-	err = tx.QueryRow(ctx, "SELECT is_active FROM courts WHERE id = $1 FOR UPDATE", courtID).Scan(&isCourtActive)
+	var mutexGroupID *string
+	err = tx.QueryRow(ctx, "SELECT is_active, mutex_group_id FROM courts WHERE id = $1 FOR UPDATE", courtID).Scan(&isCourtActive, &mutexGroupID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errors.New("error: court does not exist")
@@ -352,50 +475,47 @@ func (r *BookingRepository) CheckAndCreateBooking(
 		return errors.New("error: court is currently inactive")
 	}
 
-	// 2. Query overlapping booking schedules
+	// 2. Resolve every court that shares this court's mutex group (itself
+	// included), then query overlapping active reservations across all of them.
+	mutexCourtIDs := []string{courtID}
+	if mutexGroupID != nil {
+		rows, err := tx.Query(ctx, "SELECT id FROM courts WHERE mutex_group_id = $1", *mutexGroupID)
+		if err != nil {
+			return fmt.Errorf("failed to resolve mutex group: %w", err)
+		}
+		mutexCourtIDs = nil
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			mutexCourtIDs = append(mutexCourtIDs, id)
+		}
+		rows.Close()
+	}
+
 	overlapQuery := `
-		SELECT id, is_half_court, half_court_side, start_time, end_time 
+		SELECT id, start_time, end_time
 		FROM bookings
-		WHERE court_id = $1 
-		  AND date = $2 
+		WHERE court_id = ANY($1)
+		  AND date = $2
 		  AND status NOT IN ('CANCELLED')
 		  AND NOT (end_time <= $3::TIME OR start_time >= $4::TIME)
 	`
-	rows, err := tx.Query(ctx, overlapQuery, courtID, date, start, end)
+	rows, err := tx.Query(ctx, overlapQuery, mutexCourtIDs, date, start, end)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
-	for rows.Next() {
+	if rows.Next() {
 		var bID string
-		var bIsHalf bool
-		var bSide string
 		var bStart, bEnd time.Time
-		if err := rows.Scan(&bID, &bIsHalf, &bSide, &bStart, &bEnd); err != nil {
+		if err := rows.Scan(&bID, &bStart, &bEnd); err != nil {
 			return err
 		}
-
-		// Conflict Logic Matrix:
-		// Target Booking: FULL-COURT
-		//   --> Overlaps with ANYTHING active -> CONFLICT
-		// Target Booking: HALF-COURT (Side A or B)
-		//   --> Overlaps with active FULL-COURT -> CONFLICT
-		//   --> Overlaps with active HALF-COURT (same Side A or B) -> CONFLICT
-		//   --> Overlaps with active HALF-COURT (opposite Side) -> SAFE (Allows 2 parallel bookings)
-		if !isHalf {
-			// Trying to book full court, but an active booking exists in this time range!
-			return fmt.Errorf("conflict: cannot book FULL court during active booked slot (%s-%s)", start, end)
-		} else {
-			// Target is Half and existing is FULL -> Block
-			if !bIsHalf || bSide == "FULL" {
-				return fmt.Errorf("conflict: FULL court is already reserved during %s-%s", bStart.Format("15:04"), bEnd.Format("15:04"))
-			}
-			// Both are Half -> Block only if sides match
-			if bSide == side {
-				return fmt.Errorf("conflict: Half court Side %s is already reserved during %s-%s", side, bStart.Format("15:04"), bEnd.Format("15:04"))
-			}
-		}
+		return fmt.Errorf("conflict: court timing already reserved by active booking %s (%s-%s)", bID, bStart.Format("15:04"), bEnd.Format("15:04"))
 	}
 
 	// 3. Perform actual row insert inside calling boundary logic
@@ -552,26 +672,25 @@ func (e *PricingEngine) ComputeBookingPrice(
 		totalBasePrice = totalBasePrice.Add(hourRate)
 	}
 
-	// 2. Match loyalty membership discount profiles
-	discountPercent := decimal.NewFromFloat(0.0)
-	switch memberType {
-	case Student:
-		discountPercent = decimal.NewFromFloat(0.20) // 20% Discount for school accounts
-	case Member:
-		discountPercent = decimal.NewFromFloat(0.10) // 10% Discount for sports members
-	case Corporate:
-		discountPercent = decimal.NewFromFloat(0.15) // 15% Discount for group accounts
-	default:
-		discountPercent = decimal.NewFromFloat(0.0)
-	}
+	// 2. Match loyalty membership discount profiles. Read from the
+	// member_discounts table (FR-2.3) instead of hardcoding percentages here -
+	// this switch previously disagreed with both REQUIREMENTS.md and the
+	// frontend's own DEFAULT_MEMBER_DISCOUNTS (20/10/15 here vs the spec's
+	// 15/10/20), which is exactly the kind of drift a single config table
+	// prevents.
+	// e.g. SQL: SELECT discount_percent FROM member_discounts WHERE member_type = $1 AND is_active = true
+	discountPercent := lookupMemberDiscountPercent(ctx, memberType) // decimal, e.g. 0.15 for STUDENT
 
 	discountAmount := totalBasePrice.Mul(discountPercent)
 	chargeAmount := totalBasePrice.Sub(discountAmount)
 
-	// 3. Apply half-court multiplier if active
+	// 3. Apply half-court multiplier if active (FR-2.4), read from the single
+	// pricing_config.half_court_rate_percent row instead of a hardcoded
+	// coefficient (previously 0.60 here vs the spec's 50%).
+	// e.g. SQL: SELECT half_court_rate_percent FROM pricing_config WHERE id = 'global'
 	if isHalf {
-		// Half-courts typically cost 60% of full values (coefficient 0.60 to support lighting/overhead costs)
-		chargeAmount = chargeAmount.Mul(decimal.NewFromFloat(0.60))
+		halfCourtRatePercent := lookupHalfCourtRatePercent(ctx) // decimal, e.g. 0.50
+		chargeAmount = chargeAmount.Mul(halfCourtRatePercent)
 	}
 
 	// Return rounded final total ready for PromptPay invoicing
@@ -842,7 +961,8 @@ Every route starts with prefix `/api/v1` and follows structured JWT validation.
             "id": "c-bball01",
             "name": "Basketball Main Hall",
             "type": "BASKETBALL",
-            "is_half_court_supported": true,
+            "mutex_group_id": "bball-court-1",
+            "share_of_group": 1.0,
             "timelines": [
               {
                 "hour": "10:00",
@@ -850,7 +970,6 @@ Every route starts with prefix `/api/v1` and follows structured JWT validation.
                 "booking_meta": {
                   "booking_id": "b-9281a",
                   "booker_name": "Satit ArenaGuy",
-                  "side": "A",
                   "is_half": true
                 },
                 "hourly_rate": 450.00
@@ -874,15 +993,13 @@ Every route starts with prefix `/api/v1` and follows structured JWT validation.
 
 #### 5.3.1 `POST /api/v1/bookings`
 *   **Permissions**: Authenticated (Customer or Staff)
-*   **Request Params**:
+*   **Request Params** (note: `is_half_court` is NOT accepted here - it's derived server-side from the booked court's own `share_of_group`, so a caller can't request full-court pricing on a half-court booking or vice versa by lying about the flag):
     ```json
     {
-      "court_id": "c-bball01",
+      "court_id": "c-bball-half-b",
       "date": "2026-06-20",
       "start_time": "11:00",
       "end_time": "13:00",
-      "is_half_court": true,
-      "half_court_side": "B",
       "notes": "Bring customized basketball balls"
     }
     ```

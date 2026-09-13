@@ -141,13 +141,11 @@ func (h *ArenaHandler) GetSlots(c *gin.Context) {
 // 4. Create Reservation (POST /api/v1/bookings)
 func (h *ArenaHandler) CreateBooking(c *gin.Context) {
 	var input struct {
-		CourtID       string `json:"court_id" binding:"required"`
-		Date          string `json:"date" binding:"required"`       // YYYY-MM-DD
-		StartTime     string `json:"start_time" binding:"required"` // HH:MM
-		EndTime       string `json:"end_time" binding:"required"`   // HH:MM
-		IsHalfCourt   bool   `json:"is_half_court"`
-		HalfCourtSide string `json:"half_court_side"` // "A", "B", "FULL"
-		Notes         string `json:"notes"`
+		CourtID   string `json:"court_id" binding:"required"`
+		Date      string `json:"date" binding:"required"`       // YYYY-MM-DD
+		StartTime string `json:"start_time" binding:"required"` // HH:MM
+		EndTime   string `json:"end_time" binding:"required"`   // HH:MM
+		Notes     string `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -161,15 +159,16 @@ func (h *ArenaHandler) CreateBooking(c *gin.Context) {
 		userID = u.(string)
 	}
 
+	// is_half_court/half_court_side are no longer accepted from the client:
+	// CreateNewBooking derives half-court status from Court.ShareOfGroup so a
+	// caller can't request the wrong rate by lying about the flag.
 	bookingInput := service.CreateBookingInput{
-		CourtID:       input.CourtID,
-		Date:          input.Date,
-		StartTime:     input.StartTime,
-		EndTime:       input.EndTime,
-		IsHalfCourt:   input.IsHalfCourt,
-		HalfCourtSide: input.HalfCourtSide,
-		Notes:         input.Notes,
-		UserID:        userID,
+		CourtID:   input.CourtID,
+		Date:      input.Date,
+		StartTime: input.StartTime,
+		EndTime:   input.EndTime,
+		Notes:     input.Notes,
+		UserID:    userID,
 	}
 
 	result, err := h.bookingService.CreateNewBooking(context.Background(), bookingInput)

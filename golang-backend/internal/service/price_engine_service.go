@@ -83,9 +83,16 @@ func (s *PriceEngineService) CalculatePrice(ctx context.Context, courtType model
 		totalAmount += (appliedRate * step)
 	}
 
-	// 4. Apply half-court scaling rules
+	// 4. Apply half-court scaling (FR-2.4) from the single configurable
+	// PricingConfig instead of a hardcoded coefficient - this and the
+	// frontend's mockData.ts read the same business rule instead of each
+	// hardcoding their own (previously 60% here vs 50% in REQUIREMENTS.md).
 	if isHalfCourt {
-		totalAmount = totalAmount * 0.60 // half-court is 60% of full rate
+		cfg, err := s.courtRepo.GetPricingConfig(ctx)
+		if err != nil {
+			return 0, "NORMAL", fmt.Errorf("failed to load half-court rate: %w", err)
+		}
+		totalAmount = totalAmount * (cfg.HalfCourtRatePercent / 100.0)
 	}
 
 	return totalAmount, dominantPriceType, nil

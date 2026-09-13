@@ -105,7 +105,6 @@ func main() {
 	bkRepo := repository.NewBookingRepository(db)
 	usrRepo := repository.NewUserRepository(db)
 	courtRepo := repository.NewCourtRepository(db)
-	prodRepo := repository.NewProductRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
 
 	authService := service.NewAuthService(usrRepo, auditRepo)

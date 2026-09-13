@@ -31,7 +31,7 @@ export default function App() {
   };
 
   // Helper function to append to Audit Log (Module 6 Anti-Fraud Compliance)
-  const handleAddNewAuditLog = (action: string, targetType: string, targetId: string, before?: any, after?: any) => {
+  const handleAddNewAuditLog = (action: string, targetType: AuditLog['targetType'], targetId: string, before?: Record<string, unknown> | null, after?: Record<string, unknown> | null, reason?: string) => {
     const currentLogs = StorageService.get<AuditLog[]>('audit_logs', []);
     const newLog: AuditLog = {
       id: 'al-' + Date.now(),
@@ -42,8 +42,9 @@ export default function App() {
       action,
       targetType,
       targetId,
-      before,
-      after,
+      before: before ?? undefined,
+      after: after ?? undefined,
+      reason,
       createdAt: new Date().toISOString()
     };
 

@@ -5,7 +5,7 @@ import {
   OperatingHours, User, UserRole, MemberType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, getDayType } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak } from '../mockData';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
@@ -336,7 +336,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       id: cId,
       name: newCourtName,
       type: newCourtType,
-      allowHalf: newCourtAllowHalf,
+      // A court created here has no sibling sub-allocations, so "allow half"
+      // just books it at the half-court rate (Court.shareOfGroup) rather than
+      // joining a mutex group - there's nothing else in the group to conflict
+      // with yet. Previously this checkbox only toggled a cosmetic badge.
+      shareOfGroup: newCourtAllowHalf ? 0.5 : 1,
       isActive: true,
       createdAt: new Date().toISOString()
     };
@@ -1103,9 +1107,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         {["07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"].map((time) => {
                           const targetH = parseInt(time.split(':')[0], 10);
                           
-                          // 1. Check for double booking
+                          // 1. Check for double booking - includes mutex-group
+                          // siblings (FR-1.2), not just this exact court id.
+                          const mutexCourtIds = court.mutexGroupId
+                            ? new Set(courts.filter(c => c.mutexGroupId === court.mutexGroupId).map(c => c.id))
+                            : new Set([court.id]);
                           const matchedBooking = bookings.find(b => {
-                            if (b.courtId !== court.id || b.date !== dashboardSelectedDate || b.status === BookingStatus.CANCELLED) return false;
+                            if (!mutexCourtIds.has(b.courtId) || b.date !== dashboardSelectedDate || b.status === BookingStatus.CANCELLED) return false;
                             const startH = parseInt(b.startTime.split(':')[0], 10);
                             const endH = parseInt(b.endTime.split(':')[0], 10);
                             return targetH >= startH && targetH < endH;
@@ -1118,11 +1126,10 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                  (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && targetH >= d.startHour && targetH < d.endHour))
                           );
 
-                          // 3. Peak Hour Rule for Basketball Sub-court
-                          const isWeekend = getDayType(dashboardSelectedDate) === DayType.WEEKEND;
-                          const isPeak = isWeekend ? (targetH >= 9 && targetH < 22) : (targetH >= 17 && targetH < 22);
-                          const isBasketballHalfCourt = court.type === CourtType.BASKETBALL && (court.id === 'b_half_b' || court.id === 'b_half_c');
-                          const isRestrictedPeakBasketball = isBasketballHalfCourt && isPeak;
+                          // 3. Peak/Offpeak, read from the same PricingRule
+                          // config the price itself uses.
+                          const isPeak = !isHourOffPeak(court.type, dashboardSelectedDate, targetH);
+                          const isRestrictedPeakBasketball = !!court.offPeakOnly && isPeak;
 
                           if (matchedBooking) {
                             const isPending = matchedBooking.status === BookingStatus.PENDING_PAYMENT;
@@ -1660,7 +1667,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             <td className="px-4 py-3 font-bold text-slate-800">{court.name}</td>
                             <td className="px-4 py-3 font-medium text-slate-600">{court.type}</td>
                             <td className="px-4 py-3">
-                              {court.allowHalf ? (
+                              {court.shareOfGroup < 1 ? (
                                 <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
                                   แบ่งครึ่งสนามได้
                                 </span>

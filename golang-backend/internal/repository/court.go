@@ -51,17 +51,39 @@ func (r *CourtRepository) CreateDayOff(ctx context.Context, d *model.DayOff) err
 	return nil
 }
 
-// IsDayOffActive checks whether a date is blocked for this court
-func (r *CourtRepository) IsDayOffActive(ctx context.Context, date string, courtID string) (bool, string, error) {
-	var do model.DayOff
-	err := r.db.WithContext(ctx).Where("date = ? AND (court_id = 'all' OR court_id = ?)", date, courtID).First(&do).Error
+// IsDayOffActive checks whether a specific hour is blocked for this court
+// (FR-1.3): a closure with CourtID = NULL applies to every court, and a
+// non-full-day closure only blocks the [StartHour, EndHour) window.
+func (r *CourtRepository) IsDayOffActive(ctx context.Context, date string, courtID string, hour int) (bool, string, error) {
+	var closures []model.DayOff
+	err := r.db.WithContext(ctx).
+		Where("date = ? AND (court_id IS NULL OR court_id = ?)", date, courtID).
+		Find(&closures).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return false, "", nil
 		}
 		return false, "", err
 	}
-	return true, do.Reason, nil
+	for _, do := range closures {
+		if do.IsFullDay || do.StartHour == nil || do.EndHour == nil {
+			return true, do.Reason, nil
+		}
+		if hour >= *do.StartHour && hour < *do.EndHour {
+			return true, do.Reason, nil
+		}
+	}
+	return false, "", nil
+}
+
+// GetPricingConfig loads the single global PricingConfig row (business
+// coefficients like the half-court rate) so services never re-literal it.
+func (r *CourtRepository) GetPricingConfig(ctx context.Context) (*model.PricingConfig, error) {
+	var cfg model.PricingConfig
+	if err := r.db.WithContext(ctx).First(&cfg, "id = ?", "global").Error; err != nil {
+		return nil, fmt.Errorf("failed to load pricing config: %w", err)
+	}
+	return &cfg, nil
 }
 
 // GetActivePricingRules retrieves custom billing structures matching target court types and dates.

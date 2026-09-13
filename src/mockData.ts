@@ -2,6 +2,7 @@ import {
   Court,
   CourtType,
   PricingRule,
+  PricingConfig,
   DayType,
   PriceType,
   OperatingHours,
@@ -21,21 +22,29 @@ import {
   AuditLog,
   LineMessage,
   OrderItem,
-  MemberDiscountRule
+  MemberDiscountRule,
+  PointsLedgerEntry,
+  LedgerEntryType,
+  RewardCatalogItem,
+  Voucher,
+  Shift
 } from './types';
 
 // Default initial seeds
 const DEFAULT_COURTS: Court[] = [
-  // Basketball (3 courts)
-  { id: 'b_full_a', name: 'สนามบาสเกตบอล A (เต็มสนาม)', type: CourtType.BASKETBALL, allowHalf: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'b_half_b', name: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)', type: CourtType.BASKETBALL, allowHalf: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'b_half_c', name: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)', type: CourtType.BASKETBALL, allowHalf: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
+  // Basketball: one physical court exposed as a full-court booking option plus
+  // two half-court sides. They share `mutexGroupId` so availability/conflict
+  // checks are generic (see isCourtSlotAvailable) instead of hardcoding these
+  // three IDs. Half-court sides are off-peak only per FR-1.2.
+  { id: 'b_full_a', name: 'สนามบาสเกตบอล A (เต็มสนาม)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 1, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'b_half_b', name: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'b_half_c', name: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
   // Badminton (12 courts)
   ...Array.from({ length: 12 }, (_, i) => ({
     id: `bad-${i + 1}`,
     name: `สนามแบดมินตัน ${i + 1}`,
     type: CourtType.BADMINTON,
-    allowHalf: false,
+    shareOfGroup: 1,
     isActive: true,
     createdAt: '2026-01-01T00:00:00.000Z'
   })),
@@ -44,12 +53,12 @@ const DEFAULT_COURTS: Court[] = [
     id: `pick-${i + 1}`,
     name: `สนามพิคเคิลบอล ${i + 1}`,
     type: CourtType.PICKLEBALL,
-    allowHalf: false,
+    shareOfGroup: 1,
     isActive: true,
     createdAt: '2026-01-01T00:00:00.000Z'
   })),
   // Meeting Room (1)
-  { id: 'meet-1', name: 'ห้องประชุมเอนกประสงค์ 1', type: CourtType.MEETING_ROOM, allowHalf: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' }
+  { id: 'meet-1', name: 'ห้องประชุมเอนกประสงค์ 1', type: CourtType.MEETING_ROOM, shareOfGroup: 1, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' }
 ];
 
 const DEFAULT_PRICING_RULES: PricingRule[] = [
@@ -101,7 +110,22 @@ const DEFAULT_PRODUCTS: Product[] = [
   { id: 'pd-6', name: 'ลูกแบด RSL (แบ่งขาย/คนละลูก)', category: ProductCat.EQUIPMENT, subCategory: 'shuttle', price: 60, isRental: false, stock: 45, isActive: true },
   { id: 'pd-7', name: 'เช่าไม้แบดมินตัน Yonex (ต่อชั่วโมง)', category: ProductCat.EQUIPMENT, subCategory: 'racket', price: 50, isRental: true, stock: 20, isActive: true },
   { id: 'pd-8', name: 'เช่าไม้พิคเคิลบอล Franklin (ต่อชั่วโมง)', category: ProductCat.EQUIPMENT, subCategory: 'racket', price: 60, isRental: true, stock: 10, isActive: true },
-  { id: 'pd-9', name: 'เช่ารองเท้ากีฬาคุณภาพ (ต่อครั้ง)', category: ProductCat.EQUIPMENT, subCategory: 'shoes', price: 80, isRental: true, stock: 8, isActive: true }
+  {
+    id: 'pd-9', name: 'เช่ารองเท้ากีฬาคุณภาพ (ต่อครั้ง)', category: ProductCat.EQUIPMENT, subCategory: 'shoes', price: 80, isRental: true,
+    // `stock` is a cached sum of the per-size/gender variants below (FR-5.3) -
+    // checkout must decrement the matching variant, not this aggregate, or
+    // two customers could both be told "in stock" for the same last pair.
+    stock: 20, isActive: true,
+    variants: ['36', '37', '38', '39', '40', '41', '42', '43', '44', '45'].flatMap((size) => (
+      (['M', 'F'] as const).map((gender) => ({
+        id: `pd-9-${size}-${gender}`,
+        productId: 'pd-9',
+        label: size,
+        gender,
+        stock: 1
+      }))
+    ))
+  }
 ];
 
 const DEFAULT_USERS: User[] = [
@@ -275,11 +299,30 @@ const DEFAULT_LINE_MESSAGES = (): LineMessage[] => {
   ];
 };
 
+// Percentages match REQUIREMENTS.md FR-2.3 (the approved spec). Previously
+// this table, mockData's calculatePrice(), and BACKEND_PLAN.md's pricing
+// engine each hardcoded a different set of numbers; this is now the one
+// place they're defined.
 export const DEFAULT_MEMBER_DISCOUNTS: MemberDiscountRule[] = [
   { id: MemberType.NORMAL, name: 'ลูกค้าทั่วไป', discountPercent: 0, isActive: true },
+  { id: MemberType.STUDENT, name: 'สิทธิ์นักเรียนนักศึกษาเยาวชน', discountPercent: 15, isActive: true },
   { id: MemberType.MEMBER, name: 'สมาชิกร้านทั่วไป', discountPercent: 10, isActive: true },
-  { id: MemberType.STUDENT, name: 'สิทธิ์นักเรียนนักศึกษาเยาวชน', discountPercent: 20, isActive: true },
-  { id: MemberType.CORPORATE, name: 'องค์กรพันธมิตรร่วม MOU', discountPercent: 15, isActive: true },
+  { id: MemberType.CORPORATE, name: 'องค์กรพันธมิตรร่วม MOU', discountPercent: 20, isActive: true },
+];
+
+// FR-2.4: half-court rate as a percent of the full-court rate, applied before
+// membership discounts. The only place this coefficient should live.
+export const DEFAULT_PRICING_CONFIG: PricingConfig = {
+  id: 'global',
+  halfCourtRatePercent: 50
+};
+
+// FR-4.2 rewards catalog.
+export const DEFAULT_REWARDS_CATALOG: RewardCatalogItem[] = [
+  { id: 'rw-water', name: 'น้ำดื่มเย็น', emoji: '🥤', pointsCost: 5, isActive: true },
+  { id: 'rw-energy', name: 'เครื่องดื่มเกลือแร่สปอนเซอร์', emoji: '⚡', pointsCost: 8, isActive: true },
+  { id: 'rw-towel', name: 'เช่าผ้าเย็นสะอาด', emoji: '🧼', pointsCost: 10, isActive: true },
+  { id: 'rw-hour', name: 'สนาม Off-Peak ฟรี 1 ชั่วโมง', emoji: '🏸', pointsCost: 25, isActive: true },
 ];
 
 // State manager for localStorage
@@ -301,59 +344,65 @@ export class StorageService {
     }
   }
 
-  static addPoints(userId: string | undefined, amount: number): number {
-    if (!userId) return 0;
-    const pointsToAdd = Math.floor(amount / 100);
-    if (pointsToAdd <= 0) return 0;
+  // Single write path for every points mutation (earn from booking hours,
+  // earn from retail spend, redemption, manual admin adjustment). Appends an
+  // auditable PointsLedgerEntry and keeps User.points as its cached sum, so
+  // the two can never drift apart the way ad hoc increments used to allow.
+  static addLedgerEntry(
+    userId: string | undefined,
+    type: LedgerEntryType,
+    points: number,
+    createdBy: string,
+    opts?: { refType?: PointsLedgerEntry['refType']; refId?: string; note?: string }
+  ): number {
+    if (!userId || points === 0) return 0;
 
     const users = this.get<User[]>('users', []);
-    let pointsAwarded = 0;
+    let applied = 0;
     const updatedUsers = users.map(user => {
-      if (user.id === userId) {
-        const currentPoints = user.points || 0;
-        const newPoints = currentPoints + pointsToAdd;
-        pointsAwarded = pointsToAdd;
-        return { ...user, points: newPoints };
-      }
-      return user;
+      if (user.id !== userId) return user;
+      const currentPoints = user.points || 0;
+      const newPoints = Math.max(0, currentPoints + points);
+      applied = newPoints - currentPoints; // clamps a redemption that would go negative
+      return { ...user, points: newPoints };
     });
 
-    if (pointsAwarded > 0) {
-      this.set('users', updatedUsers);
-      
-      const currentCust = this.get<User | null>('current_logged_in_customer', null);
-      if (currentCust && currentCust.id === userId) {
-        currentCust.points = (currentCust.points || 0) + pointsAwarded;
-        this.set('current_logged_in_customer', currentCust);
-      }
+    if (applied === 0) return 0;
+    this.set('users', updatedUsers);
+
+    const entry: PointsLedgerEntry = {
+      id: `ledger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      userId,
+      type,
+      points: applied,
+      refType: opts?.refType,
+      refId: opts?.refId,
+      note: opts?.note,
+      createdAt: new Date().toISOString(),
+      createdBy
+    };
+    const ledger = this.get<PointsLedgerEntry[]>('points_ledger', []);
+    this.set('points_ledger', [...ledger, entry]);
+
+    const currentCust = this.get<User | null>('current_logged_in_customer', null);
+    if (currentCust && currentCust.id === userId) {
+      currentCust.points = (currentCust.points || 0) + applied;
+      this.set('current_logged_in_customer', currentCust);
     }
-    return pointsAwarded;
+    return applied;
   }
 
-  static addPointsHour(userId: string | undefined, hours: number): number {
-    if (!userId || hours <= 0) return 0;
-    const users = this.get<User[]>('users', []);
-    let pointsAwarded = 0;
-    const updatedUsers = users.map(user => {
-      if (user.id === userId) {
-        const currentPoints = user.points || 0;
-        const newPoints = currentPoints + hours;
-        pointsAwarded = hours;
-        return { ...user, points: newPoints };
-      }
-      return user;
-    });
+  // FR-4.1: 1 point per 100 THB spent on POS retail/F&B.
+  static addPoints(userId: string | undefined, amount: number): number {
+    const pointsToAdd = Math.floor(amount / 100);
+    if (pointsToAdd <= 0) return 0;
+    return this.addLedgerEntry(userId, LedgerEntryType.EARN_PURCHASE, pointsToAdd, 'system', { note: `Purchase of ${amount} THB` });
+  }
 
-    if (pointsAwarded > 0) {
-      this.set('users', updatedUsers);
-      
-      const currentCust = this.get<User | null>('current_logged_in_customer', null);
-      if (currentCust && currentCust.id === userId) {
-        currentCust.points = (currentCust.points || 0) + pointsAwarded;
-        this.set('current_logged_in_customer', currentCust);
-      }
-    }
-    return pointsAwarded;
+  // FR-4.1: 1 point per 1 hour of confirmed court reservation.
+  static addPointsHour(userId: string | undefined, hours: number): number {
+    if (hours <= 0) return 0;
+    return this.addLedgerEntry(userId, LedgerEntryType.EARN_BOOKING, hours, 'system', { note: `${hours}h confirmed booking` });
   }
 
   static clear(): void {
@@ -378,6 +427,40 @@ export function isHourOffPeak(courtType: CourtType, dateStr: string, hourNum: nu
          r.isActive
   );
   return rule ? rule.priceType === PriceType.OFFPEAK : true;
+}
+
+// Finds the booking (if any) that conflicts with courtId at this date/hour,
+// checking every court that shares its mutexGroupId (FR-1.2) rather than just
+// courtId itself. Replaces the old approach of hardcoding basketball court
+// IDs in every component: any two courts that share Court.mutexGroupId are
+// treated as the same physical resource, so booking one blocks every other
+// court in its group for that hour, no matter what sport or how many
+// sub-allocations are involved.
+export function findConflictingBooking(
+  courtId: string,
+  date: string,
+  hour: string, // "HH:00"
+  bookings: Booking[],
+  courts: Court[]
+): Booking | undefined {
+  const court = courts.find(c => c.id === courtId);
+  const activeAt = (b: Booking) => b.date === date && b.startTime === hour && b.status !== BookingStatus.CANCELLED;
+
+  if (court?.mutexGroupId) {
+    const groupCourtIds = new Set(courts.filter(c => c.mutexGroupId === court.mutexGroupId).map(c => c.id));
+    return bookings.find(b => groupCourtIds.has(b.courtId) && activeAt(b));
+  }
+  return bookings.find(b => b.courtId === courtId && activeAt(b));
+}
+
+export function isCourtSlotAvailable(
+  courtId: string,
+  date: string,
+  hour: string, // "HH:00"
+  bookings: Booking[],
+  courts: Court[]
+): boolean {
+  return !findConflictingBooking(courtId, date, hour, bookings, courts);
 }
 
 export function calculatePrice(
@@ -405,10 +488,16 @@ export function calculatePrice(
   const original = basePrice;
   let priceType = rule ? rule.priceType : PriceType.NORMAL;
 
-  // 2. Adjust for Half-Court (Basketball off-peak only, or court b_half_b/c/b1/b2/ครึ่งสนาม)
-  const isReallyHalf = isHalfCourt || courtId === 'b_half_b' || courtId === 'b_half_c' || courtId === 'b2';
-  if (courtType === CourtType.BASKETBALL && isReallyHalf) {
-    basePrice = basePrice * 0.6; // 40% discount for half court (all times)
+  // 2. Adjust for half-court (FR-2.4). `shareOfGroup` on the Court record is
+  // the only source of truth for "is this a half-court" - no more matching
+  // against specific court IDs here. The rate itself comes from the single
+  // configurable PricingConfig instead of a hardcoded coefficient.
+  const courts = StorageService.get<Court[]>('courts', DEFAULT_COURTS);
+  const court = courts.find(c => c.id === courtId);
+  const isReallyHalf = isHalfCourt || (court ? court.shareOfGroup < 1 : false);
+  if (isReallyHalf) {
+    const pricingConfig = StorageService.get<PricingConfig>('pricing_config', DEFAULT_PRICING_CONFIG);
+    basePrice = basePrice * (pricingConfig.halfCourtRatePercent / 100);
   }
 
   let finalPrice = basePrice;
@@ -444,6 +533,7 @@ export function initializeState() {
   if (!localStorage.getItem('sports_complex_init')) {
     StorageService.set('courts', DEFAULT_COURTS);
     StorageService.set('pricing_rules', DEFAULT_PRICING_RULES);
+    StorageService.set('pricing_config', DEFAULT_PRICING_CONFIG);
     StorageService.set('operating_hours', DEFAULT_OPERATING_HOURS);
     StorageService.set('products', DEFAULT_PRODUCTS);
     StorageService.set('users', DEFAULT_USERS);
@@ -453,22 +543,43 @@ export function initializeState() {
     StorageService.set('audit_logs', DEFAULT_AUDIT_LOGS());
     StorageService.set('line_messages', DEFAULT_LINE_MESSAGES());
     StorageService.set('member_discounts', DEFAULT_MEMBER_DISCOUNTS);
+    StorageService.set('rewards_catalog', DEFAULT_REWARDS_CATALOG);
+    StorageService.set('vouchers', [] as Voucher[]);
+    StorageService.set('points_ledger', [] as PointsLedgerEntry[]);
+    StorageService.set('shifts', [] as Shift[]);
     StorageService.set('init', 'true');
   } else {
-    // Migration check for basketball courts (A, B, C)
+    // Migration: courts now carry mutexGroupId/shareOfGroup instead of the
+    // unused allowHalf flag, and the basketball trio needs the group wired up.
     const courts = StorageService.get<Court[]>('courts', []);
-    if (!courts.some(c => c.id === 'b_half_b')) {
+    if (!courts.some(c => c.mutexGroupId === 'bball-court-1')) {
       const filtered = courts.filter(c => c.type !== CourtType.BASKETBALL);
       filtered.push(
-        { id: 'b_full_a', name: 'สนามบาสเกตบอล A (เต็มสนาม)', type: CourtType.BASKETBALL, allowHalf: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-        { id: 'b_half_b', name: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)', type: CourtType.BASKETBALL, allowHalf: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-        { id: 'b_half_c', name: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)', type: CourtType.BASKETBALL, allowHalf: false, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' }
+        { id: 'b_full_a', name: 'สนามบาสเกตบอล A (เต็มสนาม)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 1, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'b_half_b', name: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'b_half_c', name: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' }
       );
-      StorageService.set('courts', filtered);
+      StorageService.set('courts', filtered.map(c => ({ ...c, shareOfGroup: c.shareOfGroup ?? 1 })));
     }
     // Migration check for member_discounts
     if (!localStorage.getItem('sports_complex_member_discounts')) {
       StorageService.set('member_discounts', DEFAULT_MEMBER_DISCOUNTS);
+    }
+    // Migrations for entities added by the loyalty ledger / vouchers / shifts / pricing config redesign
+    if (!localStorage.getItem('sports_complex_pricing_config')) {
+      StorageService.set('pricing_config', DEFAULT_PRICING_CONFIG);
+    }
+    if (!localStorage.getItem('sports_complex_rewards_catalog')) {
+      StorageService.set('rewards_catalog', DEFAULT_REWARDS_CATALOG);
+    }
+    if (!localStorage.getItem('sports_complex_vouchers')) {
+      StorageService.set('vouchers', [] as Voucher[]);
+    }
+    if (!localStorage.getItem('sports_complex_points_ledger')) {
+      StorageService.set('points_ledger', [] as PointsLedgerEntry[]);
+    }
+    if (!localStorage.getItem('sports_complex_shifts')) {
+      StorageService.set('shifts', [] as Shift[]);
     }
   }
 }
