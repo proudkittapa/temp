@@ -1,0 +1,6 @@
+{
+  "name": "Sports Complex Management System",
+  "description": "ระบบจัดการสนามกีฬาแบบมีระบบ POS, หน้าจองคิวสำหรับลูกค้า, คิดราคาตาม Peak และ Off-Peak, เมนู F&B, การยืนยันสลิป และรายงานสำหรับผู้ดูแลระบบ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
