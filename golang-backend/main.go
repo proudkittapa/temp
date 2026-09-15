@@ -111,10 +111,10 @@ func main() {
 	userService := service.NewUserService(usrRepo)
 	auditLogService := service.NewAuditLogService(auditRepo)
 	membershipService := service.NewMembershipService(db, usrRepo)
-	priceEngineService := service.NewPriceEngineService(courtRepo)
+	priceEngineService := service.NewPriceEngineService(courtRepo, membershipService)
 	paymentService := service.NewPaymentService(db)
 	bookingService := service.NewBookingService(db, bkRepo, usrRepo, courtRepo, priceEngineService, paymentService)
-	posService := service.NewPOSService(db)
+	posService := service.NewPOSService(db, usrRepo)
 
 	arenaHandler := handler.NewArenaHandler(
 		authService,

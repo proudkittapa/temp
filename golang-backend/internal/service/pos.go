@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 )
 
@@ -35,11 +36,12 @@ type CheckoutResult struct {
 }
 
 type POSService struct {
-	db *gorm.DB
+	db      *gorm.DB
+	usrRepo *repository.UserRepository
 }
 
-func NewPOSService(db *gorm.DB) *POSService {
-	return &POSService{db: db}
+func NewPOSService(db *gorm.DB, usrRepo *repository.UserRepository) *POSService {
+	return &POSService{db: db, usrRepo: usrRepo}
 }
 
 // ProcessCheckout performs thread-safe inventory decrements and registers receipt transactions.
@@ -131,38 +133,19 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 			}
 		}
 
-		// 4. Update core loyalty card: $100 THB spent earns +1 membership loyalty points
+		// 4. Update core loyalty card: 100 THB spent earns +1 membership loyalty
+		// point (FR-4.1), credited through AddPointsEntry so it lands in
+		// points_ledger (LedgerEarnPurchase) rather than mutating u.Points
+		// directly - the same primitive UserRepository.UpdatePoints uses for
+		// admin overrides, so every points-earning path is equally auditable.
 		pointsGranted = 0
 		if input.UserID != nil && *input.UserID != "" && totalAmount >= 100.0 {
 			pointsGranted = int(totalAmount / 100.0)
 
-			var u model.User
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&u, "id = ?", *input.UserID).Error; err != nil {
-				return fmt.Errorf("failed to retrieve user for loyalty credit: %w", err)
-			}
-
-			u.Points += pointsGranted
-			u.UpdatedAt = time.Now()
-			if err := tx.Save(&u).Error; err != nil {
-				return fmt.Errorf("failed to credit points: %w", err)
-			}
-
-			// Create transactional administrator audit trace for CRM engine increments
-			auditID := fmt.Sprintf("log-%d", time.Now().UnixNano())
-			auditMsg := fmt.Sprintf("Credited loyalty wallet: +%d points from shop purchase invoice %s", pointsGranted, orderCode)
-			auditLog := model.AuditLog{
-				ID:         auditID,
-				UserID:     "system",
-				UserName:   "SYSTEM_CRM_ENGINE",
-				Action:     "CRM_POINTS_ADDITION",
-				TargetType: "User",
-				TargetID:   *input.UserID,
-				AfterState: auditMsg,
-				CreatedAt:  time.Now(),
-			}
-
-			if err := tx.Create(&auditLog).Error; err != nil {
-				return fmt.Errorf("failed to persist loyalty points addition audit: %w", err)
+			refType := "Order"
+			note := fmt.Sprintf("Purchase of %.2f THB (order %s)", totalAmount, orderCode)
+			if _, err := s.usrRepo.AddPointsEntry(ctx, tx, *input.UserID, model.LedgerEarnPurchase, pointsGranted, "system", &refType, &orderID, &note); err != nil {
+				return fmt.Errorf("failed to credit loyalty points: %w", err)
 			}
 		}
 

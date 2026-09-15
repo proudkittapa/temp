@@ -71,6 +71,14 @@ func (s *BookingService) CreateNewBooking(ctx context.Context, input CreateBooki
 	// on a half-court booking (or vice versa) by lying about the flag.
 	isHalfCourt := court.ShareOfGroup < 1
 
+	// Member type likewise comes from the resolved user record, never from
+	// client input - a walk-in/guest booking (no registered user) prices at
+	// the standard NORMAL rate.
+	memberType := model.MemberNormal
+	if bookingUser, err := s.usrRepo.GetByID(ctx, input.UserID); err == nil && bookingUser != nil {
+		memberType = bookingUser.MemberType
+	}
+
 	// 2. Compute pricing via PriceEngineService
 	calculatedAmount, descPr, err := s.priceEngine.CalculatePrice(
 		ctx,
@@ -79,6 +87,7 @@ func (s *BookingService) CreateNewBooking(ctx context.Context, input CreateBooki
 		input.StartTime,
 		input.EndTime,
 		isHalfCourt,
+		memberType,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("pricing calculation failed: %w", err)

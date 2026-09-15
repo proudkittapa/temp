@@ -10,15 +10,18 @@ import (
 )
 
 type PriceEngineService struct {
-	courtRepo *repository.CourtRepository
+	courtRepo         *repository.CourtRepository
+	membershipService *MembershipService
 }
 
-func NewPriceEngineService(courtRepo *repository.CourtRepository) *PriceEngineService {
-	return &PriceEngineService{courtRepo: courtRepo}
+func NewPriceEngineService(courtRepo *repository.CourtRepository, membershipService *MembershipService) *PriceEngineService {
+	return &PriceEngineService{courtRepo: courtRepo, membershipService: membershipService}
 }
 
-// CalculatePrice parses starting/ending hours and maps them to dynamic PricingRules
-func (s *PriceEngineService) CalculatePrice(ctx context.Context, courtType model.CourtType, dateStr string, startTimeStr string, endTimeStr string, isHalfCourt bool) (float64, string, error) {
+// CalculatePrice parses starting/ending hours, maps them to dynamic
+// PricingRules, and applies the half-court rate and membership discount
+// (FR-2) for the given member type.
+func (s *PriceEngineService) CalculatePrice(ctx context.Context, courtType model.CourtType, dateStr string, startTimeStr string, endTimeStr string, isHalfCourt bool, memberType model.MemberType) (float64, string, error) {
 	// 1. Determine if the selected date constitutes a Weekend day
 	t, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
@@ -94,6 +97,17 @@ func (s *PriceEngineService) CalculatePrice(ctx context.Context, courtType model
 		}
 		totalAmount = totalAmount * (cfg.HalfCourtRatePercent / 100.0)
 	}
+
+	// 5. Apply the membership discount (FR-2.3) AFTER the half-court
+	// adjustment, matching the order specified in REQUIREMENTS.md 5.1
+	// (AdjustedRate = BaseRate * halfCourtCoefficient, then FinalPrice =
+	// AdjustedRate * discountMultiplier) and mirrored by mockData.ts's
+	// calculatePrice.
+	discount, err := s.membershipService.CalculateDiscount(ctx, memberType)
+	if err != nil {
+		return 0, "NORMAL", fmt.Errorf("failed to load membership discount: %w", err)
+	}
+	totalAmount = totalAmount * (1 - discount.PercentageDiscount/100.0)
 
 	return totalAmount, dominantPriceType, nil
 }
