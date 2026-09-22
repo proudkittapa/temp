@@ -49,14 +49,24 @@ Run the command below inside the `/golang-backend` directory to pull official pa
 go mod tidy
 ```
 
-### 4. Set Environment Variables
+### 4. Run the Unit Tests
+The unit tests cover pure business logic (mutex-group booking conflicts,
+half-court/membership pricing math) and need neither Postgres nor network
+access:
+```bash
+go build ./...      # compiles the whole module
+go vet ./...         # static checks
+go test ./... -v     # runs internal/model and internal/service tests
+```
+
+### 5. Set Environment Variables
 The application accepts configuration strings from the environment:
 ```bash
 export DATABASE_URL="postgres://your_user:your_password@localhost:5432/your_database?sslmode=disable"
 export PORT="8080"
 ```
 
-### 5. Launch Server
+### 6. Launch Server
 Compile and start the engine using the Go toolchain:
 ```bash
 go run main.go
@@ -89,18 +99,20 @@ curl -X GET "http://localhost:8080/api/v1/courts/slots?date=2026-06-20"
 ```
 
 ### 3. Hold Court & Get Dynamic PromptPay Payload
-Include the token returned from the registration call as a Bearer Header:
+Include the token returned from the registration call as a Bearer Header.
+Note: `is_half_court` is NOT part of the request - it's derived server-side
+from the booked court's own `share_of_group` (see `courts.mutex_group_id` in
+the DDL), so pass a half-court's own id (e.g. a court with `share_of_group =
+0.5`) to book it at the half-court rate:
 ```bash
 curl -X POST http://localhost:8080/api/v1/bookings \
   -H "Authorization: Bearer <Your_Token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "court_id": "court_bball_01",
+    "court_id": "b_half_b",
     "date": "2026-06-20",
     "start_time": "14:00",
     "end_time": "16:00",
-    "is_half_court": true,
-    "half_court_side": "A",
     "notes": "Bring half court balls"
   }'
 ```

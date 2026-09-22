@@ -5,7 +5,7 @@ import {
   OperatingHours, User, UserRole, MemberType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict } from '../mockData';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
@@ -1108,12 +1108,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                           const targetH = parseInt(time.split(':')[0], 10);
                           
                           // 1. Check for double booking - includes mutex-group
-                          // siblings (FR-1.2), not just this exact court id.
-                          const mutexCourtIds = court.mutexGroupId
-                            ? new Set(courts.filter(c => c.mutexGroupId === court.mutexGroupId).map(c => c.id))
-                            : new Set([court.id]);
+                          // conflicts (FR-1.2: the full court blocks every
+                          // half-court side, but two half-court sides do NOT
+                          // block each other), not just this exact court id.
                           const matchedBooking = bookings.find(b => {
-                            if (!mutexCourtIds.has(b.courtId) || b.date !== dashboardSelectedDate || b.status === BookingStatus.CANCELLED) return false;
+                            if (b.date !== dashboardSelectedDate || b.status === BookingStatus.CANCELLED) return false;
+                            const bookedCourt = courts.find(c => c.id === b.courtId);
+                            if (!bookedCourt || !courtsConflict(court, bookedCourt)) return false;
                             const startH = parseInt(b.startTime.split(':')[0], 10);
                             const endH = parseInt(b.endTime.split(':')[0], 10);
                             return targetH >= startH && targetH < endH;

@@ -86,28 +86,41 @@ func (s *PriceEngineService) CalculatePrice(ctx context.Context, courtType model
 		totalAmount += (appliedRate * step)
 	}
 
-	// 4. Apply half-court scaling (FR-2.4) from the single configurable
-	// PricingConfig instead of a hardcoded coefficient - this and the
-	// frontend's mockData.ts read the same business rule instead of each
-	// hardcoding their own (previously 60% here vs 50% in REQUIREMENTS.md).
+	// 4. Apply half-court rate (FR-2.4) and membership discount (FR-2.3).
+	// Coefficients come from PricingConfig/member_discounts instead of
+	// hardcoded literals, so this and mockData.ts's calculatePrice read the
+	// same business rules (previously 60%/20%/10%/15% here vs 50%/15%/10%/20%
+	// in REQUIREMENTS.md).
+	halfCourtRatePercent := 100.0
 	if isHalfCourt {
 		cfg, err := s.courtRepo.GetPricingConfig(ctx)
 		if err != nil {
 			return 0, "NORMAL", fmt.Errorf("failed to load half-court rate: %w", err)
 		}
-		totalAmount = totalAmount * (cfg.HalfCourtRatePercent / 100.0)
+		halfCourtRatePercent = cfg.HalfCourtRatePercent
 	}
 
-	// 5. Apply the membership discount (FR-2.3) AFTER the half-court
-	// adjustment, matching the order specified in REQUIREMENTS.md 5.1
-	// (AdjustedRate = BaseRate * halfCourtCoefficient, then FinalPrice =
-	// AdjustedRate * discountMultiplier) and mirrored by mockData.ts's
-	// calculatePrice.
 	discount, err := s.membershipService.CalculateDiscount(ctx, memberType)
 	if err != nil {
 		return 0, "NORMAL", fmt.Errorf("failed to load membership discount: %w", err)
 	}
-	totalAmount = totalAmount * (1 - discount.PercentageDiscount/100.0)
+
+	totalAmount = ApplyRateAdjustments(totalAmount, isHalfCourt, halfCourtRatePercent, discount.PercentageDiscount)
 
 	return totalAmount, dominantPriceType, nil
+}
+
+// ApplyRateAdjustments applies the half-court coefficient and then the
+// membership discount to a base amount, in the order specified by
+// REQUIREMENTS.md 5.1: AdjustedRate = BaseRate * (isHalfCourt ? halfCourtCoefficient : 1),
+// FinalPrice = AdjustedRate * (1 - discountPercent/100). Pulled out as a pure
+// function (no DB access) so the arithmetic itself is unit-testable
+// independent of PricingConfig/member_discounts lookups.
+func ApplyRateAdjustments(baseAmount float64, isHalfCourt bool, halfCourtRatePercent float64, discountPercent float64) float64 {
+	amount := baseAmount
+	if isHalfCourt {
+		amount = amount * (halfCourtRatePercent / 100.0)
+	}
+	amount = amount * (1 - discountPercent/100.0)
+	return amount
 }

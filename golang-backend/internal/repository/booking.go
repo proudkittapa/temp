@@ -19,10 +19,10 @@ func NewBookingRepository(db *gorm.DB) *BookingRepository {
 
 // CheckAndBlockOverlap evaluates if target timings collide with active
 // reservations inside an ACID transaction block. Conflicts are resolved
-// generically via Court.MutexGroupID (FR-1.2): courts sharing a group id are
-// the same physical resource, so a booking on any of them blocks every other
-// court in the group for the overlapping time range. This replaces the old
-// isHalf/side ("A"/"B"/"FULL") conflict matrix, which only worked for
+// generically via Court.MutexGroupID/IsHub (FR-1.2): the group's hub (full
+// court) is exclusive with every sibling, but two non-hub sub-allocations
+// (e.g. half-court sides B and C) do NOT block each other. This replaces the
+// old isHalf/side ("A"/"B"/"FULL") conflict matrix, which only worked for
 // basketball and had to be extended by hand for every new shared-resource
 // sport - and had already drifted from the frontend's own half-court IDs.
 func (r *BookingRepository) CheckAndBlockOverlap(
@@ -34,32 +34,46 @@ func (r *BookingRepository) CheckAndBlockOverlap(
 	actionFunc func(tx *gorm.DB) error,
 ) error {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Lock the master court record to serialize concurrent threads for this specific court
+		// 1. Load the target court first (need MutexGroupID before we know
+		// which rows to lock).
 		var court model.Court
-		err := tx.Set("gorm:query_option", "FOR UPDATE").First(&court, "id = ?", courtID).Error
-		if err != nil {
+		if err := tx.First(&court, "id = ?", courtID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errors.New("boundary error: selected court does not exist")
 			}
 			return err
 		}
+
+		// 2. Lock every court sharing this court's mutex group (itself
+		// included), ordered stably to avoid deadlocks between concurrent
+		// bookings targeting different courts in the group. Locking only the
+		// target row would let two conflicting bookings on different courts
+		// in the same group (e.g. the full court and a half-court side) both
+		// pass the overlap check below before either commits.
+		var groupCourts []model.Court
+		if court.MutexGroupID != nil {
+			if err := tx.Set("gorm:query_option", "FOR UPDATE").
+				Where("mutex_group_id = ?", *court.MutexGroupID).
+				Order("id").
+				Find(&groupCourts).Error; err != nil {
+				return fmt.Errorf("failed to lock mutex group: %w", err)
+			}
+			for _, c := range groupCourts {
+				if c.ID == courtID {
+					court = c
+				}
+			}
+		} else {
+			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&court, "id = ?", courtID).Error; err != nil {
+				return err
+			}
+			groupCourts = []model.Court{court}
+		}
 		if !court.IsActive {
 			return errors.New("boundary error: court is currently set to inactive")
 		}
 
-		// 2. Resolve every court that shares this court's mutex group (itself
-		// included), then lock and query overlapping active reservations
-		// across all of them.
-		mutexCourtIDs := []string{courtID}
-		if court.MutexGroupID != nil {
-			var siblingIDs []string
-			if err := tx.Model(&model.Court{}).
-				Where("mutex_group_id = ?", *court.MutexGroupID).
-				Pluck("id", &siblingIDs).Error; err != nil {
-				return fmt.Errorf("failed to resolve mutex group: %w", err)
-			}
-			mutexCourtIDs = siblingIDs
-		}
+		mutexCourtIDs := model.ConflictingCourtIDs(court, groupCourts)
 
 		var bookings []model.Booking
 		overlapQuery := tx.Where("court_id IN ? AND date = ? AND status != 'CANCELLED' AND NOT (end_time <= ? OR start_time >= ?)",

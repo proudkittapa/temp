@@ -107,10 +107,12 @@ type Court struct {
 	ID   string    `json:"id" db:"id" gorm:"primaryKey;column:id"`
 	Name string    `json:"name" db:"name" gorm:"column:name"`
 	Type CourtType `json:"type" db:"type" gorm:"column:type"`
-	// Courts sharing MutexGroupID are the same physical resource: an active
-	// booking on any of them blocks every other court in the group for the
-	// overlapping time range (FR-1.2), enforced generically in the booking
-	// repository instead of hardcoding specific court IDs.
+	// Courts sharing MutexGroupID represent the same physical resource
+	// (FR-1.2). Conflicts within a group are NOT all-vs-all: only the
+	// group's "hub" (the full-court allocation, ShareOfGroup >= 1) is
+	// exclusive with every other court in the group. Two non-hub
+	// sub-allocations (e.g. half-court sides B and C) do NOT block each
+	// other - see IsHub/ConflictingCourtIDs below.
 	MutexGroupID *string `json:"mutex_group_id,omitempty" db:"mutex_group_id" gorm:"column:mutex_group_id"`
 	// Fraction of the mutex group's physical resource this court represents.
 	// 1 = the whole resource (or a standalone court). Less than 1 marks a
@@ -122,6 +124,37 @@ type Court struct {
 	OffPeakOnly  bool      `json:"off_peak_only" db:"off_peak_only" gorm:"column:off_peak_only"` // FR-1.2
 	IsActive     bool      `json:"is_active" db:"is_active" gorm:"column:is_active"`
 	CreatedAt    time.Time `json:"created_at" db:"created_at" gorm:"column:created_at"`
+}
+
+// IsHub reports whether this court is the exclusive "full" resource of its
+// mutex group - booking it blocks every other court in the group, and it is
+// blocked by a booking on any of them. A standalone court (no MutexGroupID)
+// trivially satisfies this but it's meaningless without siblings to conflict
+// with.
+func (c Court) IsHub() bool {
+	return c.ShareOfGroup >= 1
+}
+
+// ConflictingCourtIDs returns the court ids that could conflict with booking
+// `target`, given every court in its mutex group (siblings included, target
+// itself may or may not be included in groupCourts - it is always added).
+// The rule is asymmetric, not all-vs-all: the group's hub (full-court
+// allocation) is exclusive with every sibling, but two non-hub
+// sub-allocations (e.g. half-court sides B and C) never block each other.
+// A flat "any court sharing MutexGroupID blocks any other" rule would
+// incorrectly prevent B and C from being booked in parallel, which
+// REQUIREMENTS.md FR-1.2 explicitly allows.
+func ConflictingCourtIDs(target Court, groupCourts []Court) []string {
+	ids := []string{target.ID}
+	for _, c := range groupCourts {
+		if c.ID == target.ID {
+			continue
+		}
+		if target.IsHub() || c.IsHub() {
+			ids = append(ids, c.ID)
+		}
+	}
+	return ids
 }
 
 // 3. Dynamic Rule Charges

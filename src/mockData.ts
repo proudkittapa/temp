@@ -429,13 +429,29 @@ export function isHourOffPeak(courtType: CourtType, dateStr: string, hourNum: nu
   return rule ? rule.priceType === PriceType.OFFPEAK : true;
 }
 
+// A court is the "hub" of its mutex group when it represents the whole
+// physical resource (e.g. the full court) rather than a sub-allocation.
+export function isHubCourt(court: Court): boolean {
+  return court.shareOfGroup >= 1;
+}
+
+// Determines whether two courts conflict for mutex-group purposes (FR-1.2).
+// The rule is asymmetric, NOT all-vs-all: a group's hub (the full-court
+// allocation) is exclusive with every sibling, but two non-hub
+// sub-allocations (e.g. half-court sides B and C) must NOT block each other -
+// an earlier version of this function treated every court sharing a
+// mutexGroupId as mutually exclusive with every other, which would have
+// incorrectly prevented B and C from being booked in parallel.
+export function courtsConflict(a: Court, b: Court): boolean {
+  if (a.id === b.id) return true;
+  if (!a.mutexGroupId || a.mutexGroupId !== b.mutexGroupId) return false;
+  return isHubCourt(a) || isHubCourt(b);
+}
+
 // Finds the booking (if any) that conflicts with courtId at this date/hour,
-// checking every court that shares its mutexGroupId (FR-1.2) rather than just
-// courtId itself. Replaces the old approach of hardcoding basketball court
-// IDs in every component: any two courts that share Court.mutexGroupId are
-// treated as the same physical resource, so booking one blocks every other
-// court in its group for that hour, no matter what sport or how many
-// sub-allocations are involved.
+// checking every court in its mutex group (FR-1.2) via courtsConflict rather
+// than just courtId itself. Replaces the old approach of hardcoding
+// basketball court IDs in every component.
 export function findConflictingBooking(
   courtId: string,
   date: string,
@@ -446,11 +462,15 @@ export function findConflictingBooking(
   const court = courts.find(c => c.id === courtId);
   const activeAt = (b: Booking) => b.date === date && b.startTime === hour && b.status !== BookingStatus.CANCELLED;
 
-  if (court?.mutexGroupId) {
-    const groupCourtIds = new Set(courts.filter(c => c.mutexGroupId === court.mutexGroupId).map(c => c.id));
-    return bookings.find(b => groupCourtIds.has(b.courtId) && activeAt(b));
+  if (!court) {
+    return bookings.find(b => b.courtId === courtId && activeAt(b));
   }
-  return bookings.find(b => b.courtId === courtId && activeAt(b));
+  return bookings.find(b => {
+    if (!activeAt(b)) return false;
+    const bookedCourt = courts.find(c => c.id === b.courtId);
+    if (!bookedCourt) return b.courtId === courtId;
+    return courtsConflict(court, bookedCourt);
+  });
 }
 
 export function isCourtSlotAvailable(
