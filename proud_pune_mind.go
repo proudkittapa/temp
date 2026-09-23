@@ -216,7 +216,7 @@ func getFile() string {
 }
 
 func send(conn net.Conn, d string, c string) {
-	fmt.Fprintf(conn, createHeader(d, c))
+	fmt.Fprint(conn, createHeader(d, c))
 }
 
 //create header function
