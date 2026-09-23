@@ -40,8 +40,35 @@ This directory contains the production-grade, highly performant **Go (Golang)** 
 - **Go 1.21** or later installed.
 - **PostgreSQL 14** or later active.
 
-### 2. Prepare Database Schema
-Open a terminal and run the PostgreSQL DDL commands provided in the `BACKEND_PLAN.md` file in the project root to provision tables and indices.
+### 2. Set Up a Local Database (Homebrew, macOS)
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+
+# Create the role + database matching this directory's .env defaults
+psql postgres -c "CREATE ROLE arena_user WITH LOGIN PASSWORD 'ArenaSecurePass99';"
+psql postgres -c "CREATE DATABASE arena_db OWNER arena_user;"
+```
+No manual schema/DDL step is needed - `main.go` uses GORM's `AutoMigrate` to
+create every table on startup, and seeds the config rows the pricing engine
+needs (`pricing_config`, `member_discounts`) plus the same courts/pricing
+rules as the frontend's `DEFAULT_COURTS`/`DEFAULT_PRICING_RULES`, so a
+booking priced through this backend matches what the frontend shows for the
+same slot. The DDL in `BACKEND_PLAN.md` is reference documentation of that
+same schema, not something you run by hand.
+
+Not on macOS/Homebrew, or prefer not to install Postgres system-wide? Two
+alternatives:
+```bash
+# Docker - easiest to tear down later
+docker run --name arena-postgres \
+  -e POSTGRES_USER=arena_user \
+  -e POSTGRES_PASSWORD=ArenaSecurePass99 \
+  -e POSTGRES_DB=arena_db \
+  -p 5432:5432 \
+  -d postgres:16
+```
+Or a free hosted instance ([Neon](https://neon.tech), [Supabase](https://supabase.com)) - copy the connection string they give you into `.env`'s `DATABASE_URL` (adjust `sslmode` to `require`).
 
 ### 3. Install Backend Dependencies
 Run the command below inside the `/golang-backend` directory to pull official package requirements:
@@ -60,10 +87,14 @@ go test ./... -v     # runs internal/model and internal/service tests
 ```
 
 ### 5. Set Environment Variables
-The application accepts configuration strings from the environment:
+`.env` in this directory already has values matching step 2's Homebrew
+setup. If you used Docker/a hosted DB instead, or a different local
+user/password, edit it to match:
 ```bash
-export DATABASE_URL="postgres://your_user:your_password@localhost:5432/your_database?sslmode=disable"
-export PORT="8080"
+cat .env
+# DATABASE_URL=postgres://arena_user:ArenaSecurePass99@localhost:5432/arena_db?sslmode=disable
+# PORT=8080
+# JWT_SECRET=SUPER_SECRET_COMPLEX_KEY_93281
 ```
 
 ### 6. Launch Server
@@ -73,7 +104,10 @@ go run main.go
 ```
 The server will boot up and signal readiness:
 ```
-Database connection pool established successfully!
+GORM Database connection established successfully!
+Running GORM AutoMigrate for all system schemas...
+Database schemas verified and migrated successfully!
+Default pricing_config/member_discounts/courts/pricing_rules rows verified.
 Sports Arena Go Backend server launching on Port 8080...
 ```
 

@@ -83,9 +83,18 @@ conflict and pricing logic as the frontend tests, as pure functions with no
 DB dependency - they're the fastest way to check a change to that logic
 before touching a real database.
 
-Running the server itself (`go run main.go`) additionally requires a
-PostgreSQL database - see `golang-backend/README.md` for the DDL, env vars,
-and example requests.
+Running the server itself (`go run main.go`) additionally requires a local
+PostgreSQL database. Quickest path on macOS with Homebrew:
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+psql postgres -c "CREATE ROLE arena_user WITH LOGIN PASSWORD 'ArenaSecurePass99';"
+psql postgres -c "CREATE DATABASE arena_db OWNER arena_user;"
+```
+No manual schema step needed - `go run main.go` creates every table via
+GORM's `AutoMigrate` and seeds the pricing config + courts on first run. See
+`golang-backend/README.md` for Docker/hosted-DB alternatives, env vars, and
+example `curl` requests.
 
 ---
 
