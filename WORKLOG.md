@@ -18,10 +18,67 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Full re-verification from a clean clone; 4 more fixes
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `eb131fc`)
+- **Background:** The owner asked whether everything really works. Everything
+  was re-run from a fresh clone of `main`, started with the real
+  `npm run dev:api` against an empty database. That found four problems.
+
+### Changed
+- **Slip deleted itself on a quick re-upload** (existing bug): files were named
+  payment id + timestamp, so two uploads within one second (a double-click)
+  got the same name; the second overwrote the first and the "delete the old
+  slip" step then deleted the new one. Names now use a random part, and the
+  old file is only deleted if it is a different file.
+  `golang-backend/internal/handler/handlers.go`.
+- **First unknown-account login was slower** (131 ms vs ~65 ms), a small
+  leak of "this account doesn't exist": the dummy password hash is now built
+  at startup. `internal/service/auth_service.go`.
+- **Dev runner kept running when only npm was stopped** (IDE stop button,
+  `kill <npm pid>`): npm doesn't pass SIGTERM through its shell. The runner
+  now shuts down when its parent process goes away (and on SIGHUP).
+  `dev-runner.js`.
+- **No way to log out of the Admin panel in API mode** (existing gap): once
+  a manager signed in there, switching to the admin account needed clearing
+  browser storage. The header now shows who is signed in with a log-out
+  link. `src/components/AdminPanel.tsx`.
+
+### Verified (all from a clean clone / fresh database)
+- `go vet`, `go test` (no cache), `tsc`, `vitest` 28/28 (also with
+  `TZ=America/New_York`), `vite build`.
+- `npm run dev:api`: seeding reports "verified"; every API scenario from the
+  last two entries re-run and matched (cap, duplicate slip, slip version,
+  member tier, walk-in flow, phones, points, current-hour rule, limits, POS
+  quantities and codes, email case, 6 parallel bookings → 3, closure waits
+  for an in-flight booking, 413s, roles, suspension, IP-scoped lockout).
+- Re-upload within the same second → link 200, one file on disk.
+- First unknown-account login 65 ms vs known account 64 ms.
+- Dev runner: SIGTERM to npm only → 0 processes left; real Ctrl+C (SIGINT to
+  the foreground process group) → 0 left; port clash on 8080 → it stops the
+  rest instead of half-running.
+- Login lock shared between two backend instances on one database.
+- Browser click-through of every customer sport tab, every Staff POS tab and
+  every Admin tab (as manager: 6 tabs, then log out and as admin: 8) in API
+  mode, and all tabs in browser-only mode: no page errors, no console errors,
+  no failed API calls. End-to-end flows (online booking + history, walk-in
+  with QR + confirm, tier/points changes, promote + suspend, browser-only
+  approve/reject/closed hours) all pass.
+
+### Not verified (can't be from here)
+- Scanning the QR with a real Thai banking app (payloads match the
+  `promptpay-qr` reference library byte for byte, and the rendered image
+  decodes to them).
+- The dev runner on Windows (the `taskkill` path).
+- Running behind a real reverse proxy / HTTPS.
+
+---
+
 ## 2026-10-20 — Close the remaining review items (5, 10–22) and the follow-ups
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `f644839`)
+- **Commit(s):** `eb131fc` (on `main`, parent `f644839`)
 - **Background:** The owner asked to fix everything still open: items 5 and
   10–22 from the first review, plus the follow-ups listed in the previous
   entry (in-memory login limits, staff roles / suspension in API mode).

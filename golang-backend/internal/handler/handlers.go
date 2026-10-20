@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"arena-backend/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -250,8 +251,12 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	}
 	slipHash := hex.EncodeToString(hasher.Sum(nil))
 
-	// Named by payment (server-generated id), never by client input.
-	fileName := "slip_" + payment.ID + "_" + time.Now().Format("20060102150405") + "." + ext
+	// Named by payment plus a random part (server-generated, never client
+	// input). The second part used to be a timestamp: two uploads for the
+	// same payment within one second (a double-click) got the same name, the
+	// second overwrote the first, and deleting the "previous" file then
+	// deleted the new slip.
+	fileName := "slip_" + payment.ID + "_" + ids.New("f") + "." + ext
 	filePath := filepath.Join(slipDir, fileName)
 	if err := c.SaveUploadedFile(file, filePath); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "failed to store slip image"})
@@ -265,7 +270,9 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	removeSlipFile(previous)
+	if previous != servedURL {
+		removeSlipFile(previous)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

@@ -37,12 +37,16 @@ func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.Au
 	if len(jwtSecret) == 0 {
 		panic("auth: empty JWT secret")
 	}
-	return &AuthService{
+	s := &AuthService{
 		usrRepo:   usrRepo,
 		auditRepo: auditRepo,
 		jwtSecret: jwtSecret,
 		throttle:  throttle,
 	}
+	// Built now rather than on the first unknown-account login, which would
+	// otherwise be measurably slower than the rest.
+	compareDummy("")
+	return s
 }
 
 // PruneLoginFailures forgets failed logins older than the throttle window.

@@ -487,6 +487,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     return () => { cancelled = true; };
   }, [triggerRefresh, adminUser]);
 
+  const handleAdminLogout = () => {
+    api.logout('admin');
+    setAdminUser(null);
+    setActiveAdminTab('dashboard');
+  };
+
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
     adminLoginWith(adminIdentity, adminPassword);
@@ -1061,6 +1067,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             บอร์ดบริหารคอมเพล็กซ์ระบบอัจฉริยะ (Manager & Administrator Console)
           </h2>
           <p className="text-[10px] text-slate-400 mt-1">ผู้เข้าใช้ระดับพรีเมียม: ยินดีต้อนรับกลับสิทธิ์บริหารระดับสูงสุดของคุณ</p>
+          {/* API mode: who is signed in, and a way to switch accounts (e.g.
+              from the manager to the admin account) - there was none. */}
+          {api.USE_BACKEND && adminUser && (
+            <p className="text-[11px] text-slate-300 mt-1">
+              เข้าสู่ระบบในนาม <span className="font-bold text-white">{adminUser.name}</span> ({adminUser.role})
+              <button type="button" onClick={handleAdminLogout} className="ml-2 underline text-slate-400 hover:text-white">ออกจากระบบ</button>
+            </p>
+          )}
         </div>
 
         {/* Dashboard quick navigation links */}

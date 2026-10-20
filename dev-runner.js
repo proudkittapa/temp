@@ -73,6 +73,16 @@ function shutdown(exitCode = 0) {
 
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
+process.on('SIGHUP', () => shutdown(0)); // terminal closed
+
+// `npm run dev` starts this script through a shell, and npm doesn't pass a
+// SIGTERM on to it - so when an IDE's stop button or `kill <npm pid>` ends
+// npm, this script used to keep running with everything it started. Watch
+// for the parent going away and shut down then too.
+const parentPid = process.ppid;
+setInterval(() => {
+  if (process.ppid !== parentPid) shutdown(0);
+}, 1000).unref();
 process.on('exit', () => children.forEach(c => killTree(c, 'SIGKILL')));
 
 // 1. Go backend - API mode only. `npm run dev` keeps everything in the
