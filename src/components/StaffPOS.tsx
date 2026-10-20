@@ -108,7 +108,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         const [apiCourts, dayBookings, closures] = await Promise.all([
           api.listCourts(),
           api.listBookingsByDate(walkinDate, 'staff'),
-          api.listDaysOff(walkinDate, walkinDate)
+          api.listDaysOff(walkinDate, walkinDate),
+          api.syncPricingCache() // walk-in price previews read it
         ]);
         if (cancelled) return;
         setCourts(apiCourts);

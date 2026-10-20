@@ -214,7 +214,28 @@ curl -X DELETE http://localhost:8080/api/v1/admin/days-off/<id> -H "Authorizatio
 ```
 Use `"court_id": null` (or `"all"`) to close every court.
 
-### 8. Admin Points Modification & Audit Recording
+### 8. Pricing (FR-2)
+`GET /pricing` (public) returns the pricing rules, member-tier discounts and
+half-court rate that every booking is charged from. Editing is admin-only;
+active rules for the same court type and day type may not overlap (409),
+and every change is audit-logged:
+```bash
+curl http://localhost:8080/api/v1/pricing
+curl -X PUT http://localhost:8080/api/v1/admin/pricing-rules/p-bad-wd-p \
+  -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" \
+  -d '{"court_type": "BADMINTON", "day_type": "WEEKDAY", "start_hour": 17, "end_hour": 22,
+       "price_per_hour": 300, "price_type": "PEAK", "label": "Badminton weekday peak"}'
+curl -X PUT http://localhost:8080/api/v1/admin/member-discounts/STUDENT \
+  -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" \
+  -d '{"name": "Student", "discount_percent": 15, "is_active": true}'
+curl -X PUT http://localhost:8080/api/v1/admin/pricing-config \
+  -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" \
+  -d '{"half_court_rate_percent": 50}'
+```
+`POST /admin/pricing-rules` creates a rule; `DELETE /admin/pricing-rules/:id`
+removes one. An hour no active rule covers counts as closed.
+
+### 9. Admin Points Modification & Audit Recording
 ```bash
 curl -X POST http://localhost:8080/api/v1/admin/users/<user_id>/adjust-points \
   -H "Authorization: Bearer <Manager_Token>" \

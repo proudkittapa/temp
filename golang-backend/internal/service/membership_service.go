@@ -34,8 +34,7 @@ type MembershipDiscount struct {
 // BACKEND_PLAN.md's pricing engine sample each hardcoded a different set of
 // numbers (20/10/15 here vs 15/10/20 in REQUIREMENTS.md), which is exactly
 // the drift a single config table prevents. Called from
-// PriceEngineService.CalculatePrice, which is what actually applies this to
-// booking prices.
+// PriceEngineService.NewSlotQuoter, which applies it to booking prices.
 func (s *MembershipService) CalculateDiscount(ctx context.Context, mType model.MemberType) (*MembershipDiscount, error) {
 	d, err := s.usrRepo.GetMemberDiscount(ctx, mType)
 	if err != nil {

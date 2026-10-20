@@ -147,11 +147,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         }
         if (me) setLoggedInUser(me);
 
+        // syncPricingCache refreshes the pricing the price preview reads, so
+        // it shows what the server will actually charge.
         const [apiCourts, dayBookings, mine, closures] = await Promise.all([
           api.listCourts(),
           api.listBookingsByDate(selectedDate),
           me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
-          api.listDaysOff(selectedDate, selectedDate)
+          api.listDaysOff(selectedDate, selectedDate),
+          api.syncPricingCache()
         ]);
         if (cancelled) return;
         setDaysOff(closures);

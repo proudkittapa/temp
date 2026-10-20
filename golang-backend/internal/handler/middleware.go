@@ -94,6 +94,7 @@ func RequireRole(roles ...model.UserRole) gin.HandlerFunc {
 var (
 	StaffRoles   = []model.UserRole{model.RoleStaff, model.RoleManager, model.RoleAdmin}
 	ManagerRoles = []model.UserRole{model.RoleManager, model.RoleAdmin}
+	AdminRoles   = []model.UserRole{model.RoleAdmin}
 )
 
 func currentUserID(c *gin.Context) string {

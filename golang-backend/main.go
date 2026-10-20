@@ -134,6 +134,7 @@ func main() {
 	bookingService := service.NewBookingService(db, bkRepo, usrRepo, courtRepo, priceEngineService, paymentService)
 	posService := service.NewPOSService(db, usrRepo)
 	dayOffHandler := handler.NewDayOffHandler(service.NewDayOffService(db))
+	pricingHandler := handler.NewPricingHandler(service.NewPricingAdminService(db))
 
 	arenaHandler := handler.NewArenaHandler(
 		authService,
@@ -177,6 +178,7 @@ func main() {
 	loggedIn := handler.RequireRole()
 	staffOnly := handler.RequireRole(handler.StaffRoles...)
 	managerOnly := handler.RequireRole(handler.ManagerRoles...)
+	adminOnly := handler.RequireRole(handler.AdminRoles...)
 	{
 		// Authentication Ports
 		api.POST("/auth/register", arenaHandler.Register)
@@ -188,6 +190,7 @@ func main() {
 		api.GET("/courts/slots", arenaHandler.GetSlots)
 		api.GET("/bookings", arenaHandler.ListBookings)
 		api.GET("/days-off", dayOffHandler.List)
+		api.GET("/pricing", pricingHandler.Snapshot)
 
 		// Booking flows
 		api.POST("/bookings", loggedIn, arenaHandler.CreateBooking)
@@ -211,6 +214,13 @@ func main() {
 		// Court closures (FR-1.3) - enforced by booking creation
 		api.POST("/admin/days-off", managerOnly, dayOffHandler.Create)
 		api.DELETE("/admin/days-off/:id", managerOnly, dayOffHandler.Delete)
+
+		// Pricing engine (FR-2) - admin only; used by every booking price
+		api.POST("/admin/pricing-rules", adminOnly, pricingHandler.SaveRule)
+		api.PUT("/admin/pricing-rules/:id", adminOnly, pricingHandler.SaveRule)
+		api.DELETE("/admin/pricing-rules/:id", adminOnly, pricingHandler.DeleteRule)
+		api.PUT("/admin/member-discounts/:member_type", adminOnly, pricingHandler.UpdateMemberDiscount)
+		api.PUT("/admin/pricing-config", adminOnly, pricingHandler.UpdateConfig)
 	}
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned
@@ -244,10 +254,10 @@ func seedDefaults(db *gorm.DB) {
 	})
 
 	discounts := []model.MemberDiscount{
-		{MemberType: model.MemberNormal, Name: "Standard", DiscountPercent: 0, IsActive: true},
-		{MemberType: model.MemberStudent, Name: "Student", DiscountPercent: 15, IsActive: true},
-		{MemberType: model.MemberClub, Name: "Member", DiscountPercent: 10, IsActive: true},
-		{MemberType: model.MemberCorporate, Name: "Corporate", DiscountPercent: 20, IsActive: true},
+		{MemberType: model.MemberNormal, Name: "ลูกค้าทั่วไป", DiscountPercent: 0, IsActive: true},
+		{MemberType: model.MemberStudent, Name: "สิทธิ์นักเรียนนักศึกษาเยาวชน", DiscountPercent: 15, IsActive: true},
+		{MemberType: model.MemberClub, Name: "สมาชิกร้านทั่วไป", DiscountPercent: 10, IsActive: true},
+		{MemberType: model.MemberCorporate, Name: "องค์กรพันธมิตรร่วม MOU", DiscountPercent: 20, IsActive: true},
 	}
 	for _, d := range discounts {
 		db.Where(model.MemberDiscount{MemberType: d.MemberType}).FirstOrCreate(&d)
@@ -292,29 +302,71 @@ func seedDefaults(db *gorm.DB) {
 	}
 
 	pricingRules := []model.PricingRule{
-		{ID: "p-bad-wd-op", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 180, PriceType: "OFFPEAK", Label: "Badminton weekday off-peak", IsActive: true},
-		{ID: "p-bad-wd-p", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 17, EndHour: 22, PricePerHour: 280, PriceType: "PEAK", Label: "Badminton weekday peak", IsActive: true},
-		{ID: "p-bad-wd-op2", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 22, EndHour: 23, PricePerHour: 200, PriceType: "OFFPEAK", Label: "Badminton weekday late", IsActive: true},
-		{ID: "p-bad-we-p", CourtType: model.CourtBadminton, DayType: "WEEKEND", StartHour: 9, EndHour: 22, PricePerHour: 300, PriceType: "PEAK", Label: "Badminton weekend peak", IsActive: true},
-		{ID: "p-bad-we-op", CourtType: model.CourtBadminton, DayType: "WEEKEND", StartHour: 7, EndHour: 9, PricePerHour: 220, PriceType: "OFFPEAK", Label: "Badminton weekend morning", IsActive: true},
-		{ID: "p-bad-we-op2", CourtType: model.CourtBadminton, DayType: "WEEKEND", StartHour: 22, EndHour: 23, PricePerHour: 220, PriceType: "OFFPEAK", Label: "Badminton weekend late", IsActive: true},
-		{ID: "p-bas-wd-op", CourtType: model.CourtBasketball, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 500, PriceType: "OFFPEAK", Label: "Basketball weekday off-peak", IsActive: true},
-		{ID: "p-bas-wd-p", CourtType: model.CourtBasketball, DayType: "WEEKDAY", StartHour: 17, EndHour: 22, PricePerHour: 800, PriceType: "PEAK", Label: "Basketball weekday peak", IsActive: true},
-		{ID: "p-bas-wd-op2", CourtType: model.CourtBasketball, DayType: "WEEKDAY", StartHour: 22, EndHour: 23, PricePerHour: 600, PriceType: "OFFPEAK", Label: "Basketball weekday late", IsActive: true},
-		{ID: "p-bas-we-p", CourtType: model.CourtBasketball, DayType: "WEEKEND", StartHour: 9, EndHour: 22, PricePerHour: 900, PriceType: "PEAK", Label: "Basketball weekend peak", IsActive: true},
-		{ID: "p-bas-we-op", CourtType: model.CourtBasketball, DayType: "WEEKEND", StartHour: 7, EndHour: 9, PricePerHour: 600, PriceType: "OFFPEAK", Label: "Basketball weekend morning", IsActive: true},
-		{ID: "p-bas-we-op2", CourtType: model.CourtBasketball, DayType: "WEEKEND", StartHour: 22, EndHour: 23, PricePerHour: 600, PriceType: "OFFPEAK", Label: "Basketball weekend late", IsActive: true},
-		{ID: "p-pic-wd-op", CourtType: model.CourtPickleball, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 220, PriceType: "OFFPEAK", Label: "Pickleball weekday off-peak", IsActive: true},
-		{ID: "p-pic-wd-p", CourtType: model.CourtPickleball, DayType: "WEEKDAY", StartHour: 17, EndHour: 22, PricePerHour: 350, PriceType: "PEAK", Label: "Pickleball weekday peak", IsActive: true},
-		{ID: "p-pic-wd-op2", CourtType: model.CourtPickleball, DayType: "WEEKDAY", StartHour: 22, EndHour: 23, PricePerHour: 250, PriceType: "OFFPEAK", Label: "Pickleball weekday late", IsActive: true},
-		{ID: "p-pic-we-p", CourtType: model.CourtPickleball, DayType: "WEEKEND", StartHour: 9, EndHour: 22, PricePerHour: 380, PriceType: "PEAK", Label: "Pickleball weekend peak", IsActive: true},
-		{ID: "p-pic-we-op", CourtType: model.CourtPickleball, DayType: "WEEKEND", StartHour: 7, EndHour: 9, PricePerHour: 250, PriceType: "OFFPEAK", Label: "Pickleball weekend morning", IsActive: true},
-		{ID: "p-pic-we-op2", CourtType: model.CourtPickleball, DayType: "WEEKEND", StartHour: 22, EndHour: 23, PricePerHour: 250, PriceType: "OFFPEAK", Label: "Pickleball weekend late", IsActive: true},
-		{ID: "p-meet-all", CourtType: model.CourtMeetingRoom, DayType: "WEEKDAY", StartHour: 7, EndHour: 23, PricePerHour: 400, PriceType: "NORMAL", Label: "Meeting room weekday flat rate", IsActive: true},
-		{ID: "p-meet-all-we", CourtType: model.CourtMeetingRoom, DayType: "WEEKEND", StartHour: 7, EndHour: 23, PricePerHour: 500, PriceType: "NORMAL", Label: "Meeting room weekend flat rate", IsActive: true},
+		{ID: "p-bad-wd-op", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 180, PriceType: "OFFPEAK", Label: "แบดมินตัน วันธรรมดาช่วง Off-Peak", IsActive: true},
+		{ID: "p-bad-wd-p", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 17, EndHour: 22, PricePerHour: 280, PriceType: "PEAK", Label: "แบดมินตัน วันธรรมดาช่วง Peak", IsActive: true},
+		{ID: "p-bad-wd-op2", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 22, EndHour: 23, PricePerHour: 200, PriceType: "OFFPEAK", Label: "แบดมินตัน วันธรรมดาช่วงดึก", IsActive: true},
+		{ID: "p-bad-we-p", CourtType: model.CourtBadminton, DayType: "WEEKEND", StartHour: 9, EndHour: 22, PricePerHour: 300, PriceType: "PEAK", Label: "แบดมินตัน วันหยุดช่วง Peak", IsActive: true},
+		{ID: "p-bad-we-op", CourtType: model.CourtBadminton, DayType: "WEEKEND", StartHour: 7, EndHour: 9, PricePerHour: 220, PriceType: "OFFPEAK", Label: "แบดมินตัน วันหยุดช่วงเช้า Off-Peak", IsActive: true},
+		{ID: "p-bad-we-op2", CourtType: model.CourtBadminton, DayType: "WEEKEND", StartHour: 22, EndHour: 23, PricePerHour: 220, PriceType: "OFFPEAK", Label: "แบดมินตัน วันหยุดช่วงดึก Off-Peak", IsActive: true},
+		{ID: "p-bas-wd-op", CourtType: model.CourtBasketball, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 500, PriceType: "OFFPEAK", Label: "บาสเกตบอล วันธรรมดา Off-Peak", IsActive: true},
+		{ID: "p-bas-wd-p", CourtType: model.CourtBasketball, DayType: "WEEKDAY", StartHour: 17, EndHour: 22, PricePerHour: 800, PriceType: "PEAK", Label: "บาสเกตบอล วันธรรมดา Peak", IsActive: true},
+		{ID: "p-bas-wd-op2", CourtType: model.CourtBasketball, DayType: "WEEKDAY", StartHour: 22, EndHour: 23, PricePerHour: 600, PriceType: "OFFPEAK", Label: "บาสเกตบอล วันธรรมดาช่วงดึก", IsActive: true},
+		{ID: "p-bas-we-p", CourtType: model.CourtBasketball, DayType: "WEEKEND", StartHour: 9, EndHour: 22, PricePerHour: 900, PriceType: "PEAK", Label: "บาสเกตบอล วันหยุด Peak", IsActive: true},
+		{ID: "p-bas-we-op", CourtType: model.CourtBasketball, DayType: "WEEKEND", StartHour: 7, EndHour: 9, PricePerHour: 600, PriceType: "OFFPEAK", Label: "บาสเกตบอล วันหยุด Off-Peak", IsActive: true},
+		{ID: "p-bas-we-op2", CourtType: model.CourtBasketball, DayType: "WEEKEND", StartHour: 22, EndHour: 23, PricePerHour: 600, PriceType: "OFFPEAK", Label: "บาสเกตบอล วันหยุดช่วงดึก", IsActive: true},
+		{ID: "p-pic-wd-op", CourtType: model.CourtPickleball, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 220, PriceType: "OFFPEAK", Label: "พิคเคิลบอล วันธรรมดา Off-Peak", IsActive: true},
+		{ID: "p-pic-wd-p", CourtType: model.CourtPickleball, DayType: "WEEKDAY", StartHour: 17, EndHour: 22, PricePerHour: 350, PriceType: "PEAK", Label: "พิคเคิลบอล วันธรรมดา Peak", IsActive: true},
+		{ID: "p-pic-wd-op2", CourtType: model.CourtPickleball, DayType: "WEEKDAY", StartHour: 22, EndHour: 23, PricePerHour: 250, PriceType: "OFFPEAK", Label: "พิคเคิลบอล วันธรรมดาช่วงดึก", IsActive: true},
+		{ID: "p-pic-we-p", CourtType: model.CourtPickleball, DayType: "WEEKEND", StartHour: 9, EndHour: 22, PricePerHour: 380, PriceType: "PEAK", Label: "พิคเคิลบอล วันหยุด Peak", IsActive: true},
+		{ID: "p-pic-we-op", CourtType: model.CourtPickleball, DayType: "WEEKEND", StartHour: 7, EndHour: 9, PricePerHour: 250, PriceType: "OFFPEAK", Label: "พิคเคิลบอล วันหยุด Off-Peak", IsActive: true},
+		{ID: "p-pic-we-op2", CourtType: model.CourtPickleball, DayType: "WEEKEND", StartHour: 22, EndHour: 23, PricePerHour: 250, PriceType: "OFFPEAK", Label: "พิคเคิลบอล วันหยุดช่วงดึก", IsActive: true},
+		{ID: "p-meet-all", CourtType: model.CourtMeetingRoom, DayType: "WEEKDAY", StartHour: 7, EndHour: 23, PricePerHour: 400, PriceType: "NORMAL", Label: "ห้องประชุม ราคาคงที่วันธรรมดา", IsActive: true},
+		{ID: "p-meet-all-we", CourtType: model.CourtMeetingRoom, DayType: "WEEKEND", StartHour: 7, EndHour: 23, PricePerHour: 500, PriceType: "NORMAL", Label: "ห้องประชุม ราคาคงที่เสาร์-อาทิตย์", IsActive: true},
 	}
 	for _, r := range pricingRules {
 		db.Where(model.PricingRule{ID: r.ID}).FirstOrCreate(&r)
+	}
+
+	// Databases seeded by an earlier version got English pricing-rule labels
+	// and member-tier names; switch them to the Thai ones the app uses, but
+	// only where they are still exactly the old seed value.
+	oldRuleLabels := map[string]string{
+		"p-bad-wd-op":   "Badminton weekday off-peak",
+		"p-bad-wd-p":    "Badminton weekday peak",
+		"p-bad-wd-op2":  "Badminton weekday late",
+		"p-bad-we-p":    "Badminton weekend peak",
+		"p-bad-we-op":   "Badminton weekend morning",
+		"p-bad-we-op2":  "Badminton weekend late",
+		"p-bas-wd-op":   "Basketball weekday off-peak",
+		"p-bas-wd-p":    "Basketball weekday peak",
+		"p-bas-wd-op2":  "Basketball weekday late",
+		"p-bas-we-p":    "Basketball weekend peak",
+		"p-bas-we-op":   "Basketball weekend morning",
+		"p-bas-we-op2":  "Basketball weekend late",
+		"p-pic-wd-op":   "Pickleball weekday off-peak",
+		"p-pic-wd-p":    "Pickleball weekday peak",
+		"p-pic-wd-op2":  "Pickleball weekday late",
+		"p-pic-we-p":    "Pickleball weekend peak",
+		"p-pic-we-op":   "Pickleball weekend morning",
+		"p-pic-we-op2":  "Pickleball weekend late",
+		"p-meet-all":    "Meeting room weekday flat rate",
+		"p-meet-all-we": "Meeting room weekend flat rate",
+	}
+	for _, r := range pricingRules {
+		if old, ok := oldRuleLabels[r.ID]; ok {
+			db.Model(&model.PricingRule{}).Where("id = ? AND label = ?", r.ID, old).Update("label", r.Label)
+		}
+	}
+	oldTierNames := map[model.MemberType]string{
+		"NORMAL":    "Standard",
+		"STUDENT":   "Student",
+		"MEMBER":    "Member",
+		"CORPORATE": "Corporate",
+	}
+	for _, d := range discounts {
+		if old, ok := oldTierNames[d.MemberType]; ok {
+			db.Model(&model.MemberDiscount{}).Where("member_type = ? AND name = ?", d.MemberType, old).Update("name", d.Name)
+		}
 	}
 
 	log.Println("Default pricing_config/member_discounts/courts/pricing_rules rows verified.")

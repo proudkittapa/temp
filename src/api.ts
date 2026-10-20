@@ -5,17 +5,18 @@
 //     StorageService in mockData.ts; no backend needed.
 //   VITE_DATA_SOURCE=api - customer login/registration, court availability,
 //     bookings, slip upload, staff walk-in bookings, the staff
-//     slip-review queue and court closures (days off) go through the Go
-//     API + Postgres. Features the
+//     slip-review queue, court closures (days off) and pricing (rules,
+//     member discounts, half-court rate) go through the Go API + Postgres. Features the
 //     backend doesn't cover yet (POS, admin settings, rewards, ...) still
 //     use localStorage.
 //
 // VITE_API_BASE_URL defaults to "/api/v1", which Vite's dev server proxies
 // to the backend on :8080 (see vite.config.ts).
 import {
-  Booking, BookingStatus, Court, CourtType, DayOff, MemberType, Payment, PaymentMethod,
-  PaymentStatus, PriceType, User, UserRole
+  Booking, BookingStatus, Court, CourtType, DayOff, DayType, MemberDiscountRule, MemberType, Payment,
+  PaymentMethod, PaymentStatus, PriceType, PricingConfig, PricingRule, User, UserRole
 } from './types';
+import { StorageService } from './mockData';
 
 export const USE_BACKEND = import.meta.env.VITE_DATA_SOURCE === 'api';
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
@@ -328,6 +329,84 @@ export async function createDayOff(d: Omit<DayOff, 'id'>): Promise<{ dayOff: Day
 
 export async function deleteDayOff(id: string): Promise<void> {
   await request(`/admin/days-off/${encodeURIComponent(id)}`, { method: 'DELETE', session: 'admin' });
+}
+
+// ---- pricing (FR-2) ----
+
+interface ApiPricingRule {
+  id: string; court_type: string; day_type: string; start_hour: number; end_hour: number;
+  price_per_hour: number; price_type: string; label: string; is_active: boolean;
+}
+interface ApiMemberDiscount { member_type: string; name: string; discount_percent: number; is_active: boolean }
+
+const toRule = (r: ApiPricingRule): PricingRule => ({
+  id: r.id,
+  courtType: r.court_type as CourtType,
+  dayType: r.day_type as DayType,
+  startHour: r.start_hour,
+  endHour: r.end_hour,
+  pricePerHour: r.price_per_hour,
+  priceType: r.price_type as PriceType,
+  label: r.label,
+  isActive: r.is_active
+});
+
+const toDiscount = (d: ApiMemberDiscount): MemberDiscountRule => ({
+  id: d.member_type as MemberType,
+  name: d.name,
+  discountPercent: d.discount_percent,
+  isActive: d.is_active
+});
+
+export interface PricingSnapshot {
+  rules: PricingRule[];
+  config: PricingConfig;
+  memberDiscounts: MemberDiscountRule[];
+}
+
+export async function getPricing(): Promise<PricingSnapshot> {
+  const d = await request<{ rules: ApiPricingRule[]; config: { half_court_rate_percent: number }; member_discounts: ApiMemberDiscount[] }>('/pricing');
+  return {
+    rules: d.rules.map(toRule),
+    config: { id: 'global', halfCourtRatePercent: d.config.half_court_rate_percent },
+    memberDiscounts: d.member_discounts.map(toDiscount)
+  };
+}
+
+// The UI's price previews (calculatePrice / isHourOffPeak in mockData.ts)
+// read pricing from the localStorage keys below. In API mode the server
+// is the source of truth and charges from its own tables, so this copies
+// the server's pricing into those keys - otherwise an admin's price change
+// would alter what customers pay but not what they're shown.
+export async function syncPricingCache(): Promise<PricingSnapshot> {
+  const snap = await getPricing();
+  StorageService.set('pricing_rules', snap.rules);
+  StorageService.set('pricing_config', snap.config);
+  StorageService.set('member_discounts', snap.memberDiscounts);
+  return snap;
+}
+
+const ruleBody = (r: Omit<PricingRule, 'id'>) => ({
+  court_type: r.courtType, day_type: r.dayType, start_hour: r.startHour, end_hour: r.endHour,
+  price_per_hour: r.pricePerHour, price_type: r.priceType, label: r.label, is_active: r.isActive
+});
+
+// Admin only. Creates the rule when id is empty, otherwise replaces it.
+export async function savePricingRule(rule: PricingRule): Promise<PricingRule> {
+  const path = rule.id ? `/admin/pricing-rules/${encodeURIComponent(rule.id)}` : '/admin/pricing-rules';
+  return toRule(await request<ApiPricingRule>(path, { method: rule.id ? 'PUT' : 'POST', session: 'admin', body: ruleBody(rule) }));
+}
+
+export async function deletePricingRule(id: string): Promise<void> {
+  await request(`/admin/pricing-rules/${encodeURIComponent(id)}`, { method: 'DELETE', session: 'admin' });
+}
+
+export async function updateMemberDiscount(d: MemberDiscountRule): Promise<void> {
+  await request(`/admin/member-discounts/${encodeURIComponent(d.id)}`, {
+    method: 'PUT',
+    session: 'admin',
+    body: { name: d.name, discount_percent: d.discountPercent, is_active: d.isActive }
+  });
 }
 
 // ---- staff walk-ins ----

@@ -119,6 +119,24 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const original = memberDiscounts.find(d => d.id === id);
     if (!original) return;
 
+    if (api.USE_BACKEND) {
+      api.updateMemberDiscount({ ...original, name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive })
+        .then(() => {
+          setEditingDiscounts(prev => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+          onAddAuditLog('MEMBER_DISCOUNT_PERCENT_MODIFIED', 'PricingRule', id,
+            { name: original.name, discountPercent: original.discountPercent, isActive: original.isActive },
+            { name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive });
+          onRefreshAll(); // reloads pricing from the server
+          alert(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
+        })
+        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
     const updatedList = memberDiscounts.map(d => {
       if (d.id === id) {
         return {
@@ -159,7 +177,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   // Load state from localStorage on triggerRefresh
   useEffect(() => {
     setCourts(StorageService.get<Court[]>('courts', []));
-    setPricingRules(StorageService.get<PricingRule[]>('pricing_rules', []));
+    if (!api.USE_BACKEND) setPricingRules(StorageService.get<PricingRule[]>('pricing_rules', []));
     setOperatingHours(StorageService.get<OperatingHours[]>('operating_hours', []));
     setProducts(StorageService.get<Product[]>('products', []));
     setUsers(StorageService.get<User[]>('users', []));
@@ -168,7 +186,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     setOrders(StorageService.get<Order[]>('orders', []));
     setAuditLogs(StorageService.get<AuditLog[]>('audit_logs', []));
     if (!api.USE_BACKEND) setDaysOff(StorageService.get<DayOff[]>('days_off', []));
-    setMemberDiscounts(StorageService.get<MemberDiscountRule[]>('member_discounts', DEFAULT_MEMBER_DISCOUNTS));
+    if (!api.USE_BACKEND) setMemberDiscounts(StorageService.get<MemberDiscountRule[]>('member_discounts', DEFAULT_MEMBER_DISCOUNTS));
   }, [triggerRefresh]);
 
   // Calculations for Dashboards
@@ -292,6 +310,21 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       isActive: true
     };
 
+    if (api.USE_BACKEND) {
+      const existing = editingRuleId ? pricingRules.find(r => r.id === editingRuleId) : undefined;
+      api.savePricingRule({ ...newRule, id: editingRuleId || '', isActive: existing ? existing.isActive : true })
+        .then(saved => {
+          onAddAuditLog(editingRuleId ? 'PRICING_UPDATED' : 'PRICING_CREATED', 'PricingRule', saved.id, existing ?? null, saved);
+          setEditingRuleId(null);
+          setRuleLabel('');
+          setRulePrice(200);
+          onRefreshAll(); // reloads pricing from the server
+          alert('บันทึกกติกาตั้งราคาเรียบร้อย! มีผลทันทีในกลไกเซิร์ฟเวอร์');
+        })
+        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
     const currentRules = StorageService.get<PricingRule[]>('pricing_rules', []);
     let updated = [];
     
@@ -316,6 +349,16 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   const handleDeletePricingRule = (id: string) => {
     if (!window.confirm('คุณแน่ใจว่าต้องการลบสูตรกำหนดราคานี้ใช่ไหม?')) return;
+    if (api.USE_BACKEND) {
+      const ruleToDelete = pricingRules.find(r => r.id === id);
+      api.deletePricingRule(id)
+        .then(() => {
+          onAddAuditLog('PRICING_DELETED', 'PricingRule', id, ruleToDelete, null);
+          onRefreshAll();
+        })
+        .catch(err => alert(`ลบไม่สำเร็จ: ${err.message}`));
+      return;
+    }
     const currentRules = StorageService.get<PricingRule[]>('pricing_rules', []);
     const ruleToDelete = currentRules.find(r => r.id === id);
     const updated = currentRules.filter(r => r.id !== id);
@@ -405,8 +448,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setAdminApiError('เซสชันผู้จัดการหมดอายุหรือไม่มีสิทธิ์ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
-        const closures = await api.listDaysOff(getTodayDateStr());
-        if (!cancelled) setDaysOff(closures);
+        const [closures, pricing] = await Promise.all([api.listDaysOff(getTodayDateStr()), api.syncPricingCache()]);
+        if (cancelled) return;
+        setDaysOff(closures);
+        setPricingRules(pricing.rules);
+        setMemberDiscounts(pricing.memberDiscounts);
       } catch (err) {
         if (!cancelled) setAdminApiError(err instanceof Error ? err.message : String(err));
       }
