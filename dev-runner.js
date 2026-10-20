@@ -12,7 +12,11 @@ const apiMode = process.argv.includes('--api');
 
 console.log(`--- Starting Sports Arena Service Orchestrator${apiMode ? ' (API mode)' : ''} ---`);
 
-// 1. Spawn Go Backend
+// 1. Spawn Go Backend. Variables set here take precedence over
+// golang-backend/.env (main.go's loadEnv never overrides an already-set
+// variable), so PORT always matches the Vite proxy in vite.config.ts.
+// DATABASE_URL is deliberately not set: the backend reads it from .env, or
+// falls back to the same local default itself.
 console.log('[Orchestrator] Starting Go Backend on port 8080...');
 const goBackend = spawn('go', ['run', 'main.go'], {
   cwd: path.join(__dirname, 'golang-backend'),
@@ -21,9 +25,7 @@ const goBackend = spawn('go', ['run', 'main.go'], {
     PORT: '8080',
     // Local dev only: seed the demo accounts (password 123456) that match
     // mockData.ts, so the frontend's API mode has users to log in as.
-    SEED_DEMO_USERS: process.env.SEED_DEMO_USERS || 'true',
-    // Fallback URL if env is not already set
-    DATABASE_URL: process.env.DATABASE_URL || 'postgres://arena_user:ArenaSecurePass99@localhost:5432/arena_db?sslmode=disable'
+    SEED_DEMO_USERS: process.env.SEED_DEMO_USERS || 'true'
   }
 });
 

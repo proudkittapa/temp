@@ -69,6 +69,8 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, service.ErrDuplicateUser) {
 			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+		} else if errors.Is(err, service.ErrInvalidPhone) {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "registration failed, please try again"})
 		}

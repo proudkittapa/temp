@@ -6,6 +6,9 @@ import {
   isCourtSlotAvailable,
   calculatePrice,
   getDayType,
+  generatePromptPayPayload,
+  crc16,
+  bookingGroupOf,
 } from './mockData';
 import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType } from './types';
 
@@ -147,5 +150,56 @@ describe('calculatePrice (FR-2)', () => {
     // b_half_b at 500 base * 0.5 half-court rate = 250, then * 0.85 student discount
     const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.STUDENT, false, 'b_half_b');
     expect(result.total).toBe(213); // round(250 * 0.85) = round(212.5) = 213
+  });
+});
+
+describe('calculatePrice - UI agrees with the server', () => {
+  it('the half-court flag does not halve the full court (it is a full-share court)', () => {
+    const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.NORMAL, true, 'b_full_a');
+    expect(result.total).toBe(500);
+  });
+
+  it('an hour no pricing rule covers is closed, not priced at a fallback rate', () => {
+    for (const hour of ['03:00', '23:00']) {
+      const result = calculatePrice(CourtType.BADMINTON, '2026-06-15', hour, MemberType.NORMAL, false, 'bad-1');
+      expect(result.isOpen).toBe(false);
+      expect(result.total).toBe(0);
+    }
+    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '22:00', MemberType.NORMAL, false, 'bad-1').isOpen).toBe(true);
+  });
+});
+
+describe('generatePromptPayPayload (EMVCo / Thai QR)', () => {
+  // Expected strings are the output of the promptpay-qr npm package (v0.5.0)
+  // and identical to golang-backend/internal/pkg/promptpay's tests.
+  it('encodes a mobile number with sub-tag 01 and a valid CRC', () => {
+    expect(generatePromptPayPayload('0812345678', 100))
+      .toBe('00020101021229370016A000000677010111011300668123456785802TH53037645406100.006304BB8A');
+    expect(generatePromptPayPayload('081-234-5678', 100))
+      .toBe('00020101021229370016A000000677010111011300668123456785802TH53037645406100.006304BB8A');
+  });
+
+  it('encodes a 13-digit tax ID with sub-tag 02', () => {
+    expect(generatePromptPayPayload('0105561008012', 1530))
+      .toBe('00020101021229370016A000000677010111021301055610080125802TH530376454071530.006304797B');
+  });
+
+  it('uses the standard CRC-16/CCITT-FALSE checksum', () => {
+    expect(crc16('123456789')).toBe('29B1');
+  });
+
+  it('rejects an ID that is neither a phone nor a tax ID', () => {
+    expect(() => generatePromptPayPayload('12345', 100)).toThrow();
+  });
+});
+
+describe('bookingGroupOf', () => {
+  it('returns every hour of one checkout and nothing from another customer or date', () => {
+    const root = makeBooking({ id: 'r', bookingCode: 'BK-1', userId: 'u-1', date: '2026-09-20', startTime: '10:00' });
+    const sameGroup = makeBooking({ id: 'g2', bookingCode: 'BK-1', userId: 'u-1', date: '2026-09-20', startTime: '11:00' });
+    const otherUser = makeBooking({ id: 'x1', bookingCode: 'BK-1', userId: 'u-2', date: '2026-09-20' });
+    const otherDate = makeBooking({ id: 'x2', bookingCode: 'BK-1', userId: 'u-1', date: '2026-09-21' });
+    const ids = bookingGroupOf(root, [root, sameGroup, otherUser, otherDate]).map(b => b.id);
+    expect(ids).toEqual(['r', 'g2']);
   });
 });

@@ -98,6 +98,11 @@ cat .env
 # PROMPTPAY_ID=0105561008012                      # merchant PromptPay ID for customer QR codes
 # SEED_DEMO_USERS=true   # local dev only: demo accounts, password 123456
 ```
+A variable already set in the environment wins over `.env`, so
+`npm run dev:api` (which sets `PORT=8080` and `SEED_DEMO_USERS=true`) works
+whatever `.env` says. `PROMPTPAY_ID` may be a mobile number (`0812345678`,
+dashes/spaces allowed) or a 13-digit tax ID; the server refuses to start with
+anything else.
 
 ### 6. Launch Server
 Compile and start the engine using the Go toolchain:

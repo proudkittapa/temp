@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"arena-backend/internal/model"
@@ -49,17 +50,58 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, e
 	return &u, nil
 }
 
-// GetByIdentity finds user profile using either Phone or Email. Used heavily in Login controllers.
+// NormalizePhone keeps only the digits of a phone number, so "081-234-5678",
+// "081 234 5678" and "0812345678" are the same number. Phones are stored
+// this way (see AuthService.Register) and compared this way.
+func NormalizePhone(p string) string {
+	var b strings.Builder
+	for _, r := range p {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// phoneDigitsMatch compares users.phone by digits only, so accounts
+// registered before phones were normalized (stored as typed, e.g. with
+// dashes) are still found.
+const phoneDigitsMatch = "regexp_replace(phone, '[^0-9]', '', 'g') = ?"
+
+// GetByIdentity finds a user by email, or - when identity has no "@" - by
+// phone number compared digits-only. Used by login and the register
+// duplicate check.
 func (r *UserRepository) GetByIdentity(ctx context.Context, identity string) (*model.User, string, error) {
+	q := r.db.WithContext(ctx).Where("email = ?", identity)
+	if !strings.Contains(identity, "@") {
+		if digits := NormalizePhone(identity); digits != "" {
+			q = q.Or(phoneDigitsMatch, digits)
+		}
+	}
 	var u model.User
-	err := r.db.WithContext(ctx).Where("email = ? OR phone = ?", identity, identity).First(&u).Error
-	if err != nil {
+	if err := q.Order("created_at").First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, "", nil
 		}
 		return nil, "", fmt.Errorf("failed to retrieve user by email/phone check: %w", err)
 	}
 	return &u, u.PasswordHash, nil
+}
+
+// GetByPhone finds a user by phone number, compared digits-only.
+func (r *UserRepository) GetByPhone(ctx context.Context, phone string) (*model.User, error) {
+	digits := NormalizePhone(phone)
+	if digits == "" {
+		return nil, nil
+	}
+	var u model.User
+	if err := r.db.WithContext(ctx).Where(phoneDigitsMatch, digits).Order("created_at").First(&u).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to retrieve user by phone: %w", err)
+	}
+	return &u, nil
 }
 
 // AddPointsEntry applies a signed point delta to a user atomically within an

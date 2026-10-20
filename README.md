@@ -4,7 +4,8 @@ A multi-sport arena management platform: customer booking + PromptPay
 checkout, front-desk POS (walk-ins, F&B, equipment rental), and an admin
 console (pricing engine, maintenance scheduling, audit log). See
 `REQUIREMENTS.md` for the full functional spec and `BACKEND_PLAN.md` for the
-production Go/PostgreSQL architecture.
+production Go/PostgreSQL architecture. `WORKLOG.md` records what each
+change did and what is still open - add an entry there before pushing to `main`.
 
 - **Frontend** (`src/`): React 19 + TypeScript + Tailwind, Vite-bundled. By
   default it persists all state to the browser's `localStorage` (see

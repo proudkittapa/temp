@@ -258,7 +258,6 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			total += p.amount
 		}
 
-		qrString := s.paymentService.CreatePromptPayPayload(total)
 		pay := model.Payment{
 			ID:        ids.New("pay"),
 			BookingID: result.Bookings[0].ID,
@@ -269,7 +268,12 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			UpdatedAt: now,
 		}
 		if payMethod == model.PaymentPromptPay {
+			qrString, err := s.paymentService.CreatePromptPayPayload(total)
+			if err != nil {
+				return err
+			}
 			pay.QrPayload = &qrString
+			result.PromptPayPayload = qrString
 		}
 		if input.WalkIn != nil {
 			pay.VerifiedAt, pay.VerifiedBy = &now, &input.WalkIn.StaffID
@@ -279,7 +283,6 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		}
 		result.Payment = pay
 		result.TotalAmount = total
-		result.PromptPayPayload = qrString
 
 		if input.WalkIn != nil {
 			// Paid at the counter, so loyalty points (FR-4.1: 1 per hour)
@@ -415,7 +418,7 @@ func customerContact(u *model.User, w *WalkInDetails) (*string, *string) {
 		if strings.TrimSpace(w.CustomerName) != "" {
 			name = strings.TrimSpace(w.CustomerName)
 		}
-		if p := normalizePhone(w.CustomerPhone); p != "" {
+		if p := repository.NormalizePhone(w.CustomerPhone); p != "" {
 			phone = p
 		}
 	}
@@ -427,16 +430,6 @@ func customerContact(u *model.User, w *WalkInDetails) (*string, *string) {
 		pp = &phone
 	}
 	return np, pp
-}
-
-func normalizePhone(p string) string {
-	var b strings.Builder
-	for _, r := range p {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // uniqueBookingCode picks a booking code no existing row uses. Codes carry
@@ -946,13 +939,11 @@ func (s *BookingService) ListActiveCourts(ctx context.Context) ([]model.Court, e
 }
 
 // FindCustomerByPhone returns the registered customer with this phone, if
-// any - used to credit a walk-in booking to an existing account.
+// any - used to credit a walk-in booking to an existing account. Phones are
+// compared digits-only, so a member who registered as "081-234-5678" is
+// found when staff type "0812345678" (and vice versa).
 func (s *BookingService) FindCustomerByPhone(ctx context.Context, phone string) (*model.User, error) {
-	phone = normalizePhone(phone)
-	if phone == "" {
-		return nil, nil
-	}
-	u, _, err := s.usrRepo.GetByIdentity(ctx, phone)
+	u, err := s.usrRepo.GetByPhone(ctx, phone)
 	if err != nil || u == nil || u.Role != model.RoleCustomer {
 		return nil, err
 	}

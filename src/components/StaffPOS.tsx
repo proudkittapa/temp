@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_STAFF } from './DemoLogins';
 import { Check, X, ShoppingCart, Activity, RefreshCw, AlertTriangle, Coffee, ShieldCheck, Dumbbell, Receipt, Plus, Minus, CheckCircle2, UserCheck, AlertOctagon } from 'lucide-react';
@@ -231,6 +231,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return;
     }
 
+    // Outside opening hours (no pricing rule covers it) - the server refuses these
+    const slotCourt = courts.find(c => c.id === walkinCourtId);
+    if (slotCourt && !calculatePrice(slotCourt.type, walkinDate, walkinSlot, MemberType.NORMAL, false, walkinCourtId).isOpen) {
+      alert('ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ กรุณาเลือกช่วงเวลาอื่น');
+      return;
+    }
+
     // Special DayOff override check
     const hourNum = parseInt(walkinSlot.split(':')[0], 10);
     const blockedReason = daysOff.find(
@@ -398,6 +405,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const allPayments = StorageService.get<Payment[]>('payments', []);
     const allBookings = StorageService.get<Booking[]>('bookings', []);
 
+    const paymentObj = allPayments.find(p => p.id === paymentId);
+    if (!paymentObj) return;
+    if (paymentObj.status !== PaymentStatus.SLIP_UPLOADED && paymentObj.status !== PaymentStatus.PENDING) {
+      alert(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
+      onRefreshAll();
+      return;
+    }
+
     const updatedPayments = allPayments.map(p => {
       if (p.id === paymentId) {
         return {
@@ -410,30 +425,33 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return p;
     });
 
-    const paymentObj = allPayments.find(p => p.id === paymentId);
-    if (!paymentObj) return;
-
-    // Award points to user if booking is found (1 point per hour)
+    // The payment covers the whole booking group (up to 3 hours), so every
+    // hour still awaiting payment is confirmed - not just the row the
+    // payment hangs off - and points are awarded for exactly those hours
+    // (FR-4.1: 1 point per hour), as the backend does.
     const rootBooking = allBookings.find(b => b.id === paymentObj.bookingId);
+    const toConfirm = rootBooking
+      ? bookingGroupOf(rootBooking, allBookings).filter(b => b.status === BookingStatus.PENDING_PAYMENT)
+      : [];
+    const confirmIds = new Set(toConfirm.map(b => b.id));
+
     let ptsAdded = 0;
-    if (rootBooking && rootBooking.userId) {
-      const groupBookings = allBookings.filter(b => b.bookingCode === rootBooking.bookingCode);
-      const bookingHours = groupBookings.length; // Each booking represents 1 hour
-      ptsAdded = StorageService.addPointsHour(rootBooking.userId, bookingHours);
+    if (rootBooking && rootBooking.userId && toConfirm.length > 0) {
+      ptsAdded = StorageService.addPointsHour(rootBooking.userId, toConfirm.length);
     }
 
-    const updatedBookings = allBookings.map(b => {
-      if (b.id === paymentObj.bookingId) {
-        // Line Notification triggering
+    if (rootBooking && toConfirm.length > 0) {
+      const lines = toConfirm.map(b => {
         const courtName = courts.find(c => c.id === b.courtId)?.name || 'สนามกีฬาทั่วไป';
-        const ptsNote = ptsAdded > 0 ? `\n🎁 และได้รับแต้มสะสมเพิ่ม: +${ptsAdded} แต้ม!` : '';
-        const confirmMsg = `🎉 ยืนยันการจองแล้ว!\n📋 ${b.bookingCode} | สนาม ${courtName}\n📅 ${b.date} ${b.startTime}–${b.endTime}\nพบกันที่สนาม!${ptsNote}`;
-        pushLineMessage(b.userPhone, confirmMsg, "CONFIRMED");
+        return `- ${courtName} ${b.date} ${b.startTime}–${b.endTime}`;
+      }).join('\n');
+      const ptsNote = ptsAdded > 0 ? `\n🎁 และได้รับแต้มสะสมเพิ่ม: +${ptsAdded} แต้ม!` : '';
+      pushLineMessage(rootBooking.userPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${rootBooking.bookingCode}\n${lines}\nพบกันที่สนาม!${ptsNote}`, "CONFIRMED");
+    }
 
-        return { ...b, status: BookingStatus.CONFIRMED };
-      }
-      return b;
-    });
+    const updatedBookings = allBookings.map(b =>
+      confirmIds.has(b.id) ? { ...b, status: BookingStatus.CONFIRMED } : b
+    );
 
     StorageService.set('payments', updatedPayments);
     StorageService.set('bookings', updatedBookings);
@@ -441,7 +459,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.VERIFIED });
     
     onRefreshAll();
-    alert(`ยืนยันความถูกต้องเรียบร้อยแล้ว! อนุมัติสล็อตและส่งไลน์ไปแจ้งเรียบร้อย ${ptsAdded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${ptsAdded} แต้ม)` : ''}`);
+    alert(`ยืนยันความถูกต้องเรียบร้อยแล้ว! อนุมัติ ${toConfirm.length} สล็อตและส่งไลน์ไปแจ้งเรียบร้อย ${ptsAdded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${ptsAdded} แต้ม)` : ''}`);
   };
 
   // Phase 1 CORE: Reject Fraud Bank Slips
@@ -471,6 +489,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const allPayments = StorageService.get<Payment[]>('payments', []);
     const allBookings = StorageService.get<Booking[]>('bookings', []);
 
+    const paymentObj = allPayments.find(p => p.id === paymentId);
+    if (!paymentObj) return;
+    if (paymentObj.status !== PaymentStatus.SLIP_UPLOADED && paymentObj.status !== PaymentStatus.PENDING) {
+      alert(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
+      onRefreshAll();
+      return;
+    }
+
     const updatedPayments = allPayments.map(p => {
       if (p.id === paymentId) {
         return { ...p, status: PaymentStatus.REJECTED, refundReason: rejectReason };
@@ -478,18 +504,24 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return p;
     });
 
-    const paymentObj = allPayments.find(p => p.id === paymentId);
-    if (!paymentObj) return;
+    // Cancel every hour of the group still awaiting payment, so none of
+    // them is left pending - and blocking its slot - forever.
+    const rootBooking = allBookings.find(b => b.id === paymentObj.bookingId);
+    const cancelIds = new Set(
+      (rootBooking ? bookingGroupOf(rootBooking, allBookings) : [])
+        .filter(b => b.status === BookingStatus.PENDING_PAYMENT)
+        .map(b => b.id)
+    );
+    if (rootBooking) {
+      const rejectMsg = `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${rootBooking.bookingCode}\nเหตุผล: ${rejectReason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`;
+      pushLineMessage(rootBooking.userPhone, rejectMsg, "CANCELLED");
+    }
 
-    const updatedBookings = allBookings.map(b => {
-      if (b.id === paymentObj.bookingId) {
-        const rejectMsg = `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${b.bookingCode}\nเหตุผล: ${rejectReason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`;
-        pushLineMessage(b.userPhone, rejectMsg, "CANCELLED");
-
-        return { ...b, status: BookingStatus.CANCELLED, cancellationReason: `สลิปไม่ผ่านเกณฑ์: ${rejectReason}` };
-      }
-      return b;
-    });
+    const updatedBookings = allBookings.map(b =>
+      cancelIds.has(b.id)
+        ? { ...b, status: BookingStatus.CANCELLED, cancellationReason: `สลิปไม่ผ่านเกณฑ์: ${rejectReason}` }
+        : b
+    );
 
     StorageService.set('payments', updatedPayments);
     StorageService.set('bookings', updatedBookings);
@@ -1181,6 +1213,21 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           isBasketballHalfCourt, 
                           court.id
                         );
+
+                        // No pricing rule covers this hour: the server treats it
+                        // as outside opening hours and refuses the booking.
+                        if (!priceBase.isOpen) {
+                          return (
+                            <td 
+                              key={time} 
+                              className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] cursor-not-allowed select-none"
+                              title="นอกเวลาเปิดให้บริการ"
+                            >
+                              <span className="block text-[8px] font-semibold text-slate-500">🚫 ปิดบริการ</span>
+                              <span className="text-[7px] text-slate-400 block">นอกเวลาทำการ</span>
+                            </td>
+                          );
+                        }
 
                         if (isActiveSelection) {
                           return (

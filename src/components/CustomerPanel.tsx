@@ -12,7 +12,7 @@ import { QRCodeSVG } from 'qrcode.react';
 // How long an online booking waits for its slip before the backend cancels
 // it (service.PaymentHoldDuration in the Go backend).
 const PAYMENT_HOLD_MINUTES = 30;
-import { Calendar, Clock, CreditCard, CheckCircle, AlertTriangle, MessageSquare, ToggleLeft, ToggleRight, Trash2, Shield, Phone, FileImage, Sparkles, UserCheck } from 'lucide-react';
+import { Calendar, Clock, CreditCard, CheckCircle, AlertTriangle, MessageSquare, ToggleRight, Trash2, Shield, Phone, FileImage, Sparkles, UserCheck } from 'lucide-react';
 
 interface CustomerPanelProps {
   onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
@@ -60,7 +60,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedSlots, setSelectedSlots] = useState<{ courtId: string; startTime: string }[]>([]);
   
-  const [isHalfCourt, setIsHalfCourt] = useState<boolean>(false);
   const [memberName, setMemberName] = useState<string>('');
   const [memberPhone, setMemberPhone] = useState<string>('');
   const [memberType, setMemberType] = useState<MemberType>(MemberType.NORMAL);
@@ -395,10 +394,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     } else {
       setSelectedCourtId('');
     }
-    // Half court only for basketball
-    if (selectedType !== CourtType.BASKETBALL) {
-      setIsHalfCourt(false);
-    }
     setSelectedSlots([]);
   }, [selectedType, courts]);
 
@@ -451,7 +446,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     let original = 0;
     const currentEffectiveMemberType = loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL;
     selectedSlots.forEach(s => {
-      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, isHalfCourt, s.courtId);
+      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, false, s.courtId);
       total += detail.total;
       original += detail.original;
     });
@@ -559,6 +554,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       const targetCourt = courts.find(c => c.id === courtId);
       if (targetCourt?.offPeakOnly && !isHourOffPeak(targetCourt.type, selectedDate, parseInt(startTime.split(':')[0], 10))) {
         alert('⚠️ ขออภัยค่ะ สนามครึ่งสนาม (B / C) เปิดให้บริการจองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
+        return;
+      }
+
+      // Outside opening hours (no pricing rule covers it) - the server refuses these
+      if (targetCourt && !calculatePrice(targetCourt.type, selectedDate, startTime, MemberType.NORMAL, false, courtId).isOpen) {
+        alert('ขออภัยค่ะ ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ');
         return;
       }
 
@@ -758,12 +759,11 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     const bkCode = `BK${selectedDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newBookings: Booking[] = selectedSlots.map((slotItem, index) => {
-      const singlePrice = calculatePrice(selectedType, selectedDate, slotItem.startTime, loggedInUser.memberType || MemberType.NORMAL, isHalfCourt, slotItem.courtId);
-      // Snapshot the court's actual half-court status (not just the manual
-      // toggle) so the stored record reflects reality even if the toggle
-      // wasn't touched for a court that's a half-share by configuration.
+      const singlePrice = calculatePrice(selectedType, selectedDate, slotItem.startTime, loggedInUser.memberType || MemberType.NORMAL, false, slotItem.courtId);
+      // Half-court status comes from the court itself (B/C are half-shares),
+      // as on the server.
       const bookedCourt = courts.find(c => c.id === slotItem.courtId);
-      const isActuallyHalf = isHalfCourt || (bookedCourt ? bookedCourt.shareOfGroup < 1 : false);
+      const isActuallyHalf = bookedCourt ? bookedCourt.shareOfGroup < 1 : false;
 
       return {
         id: index === 0 ? mainBookingId : `bk-${Date.now()}-${index}`,
@@ -1504,6 +1504,21 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                 court.id
                               );
 
+                              // No pricing rule covers this hour: the server treats it
+                              // as outside opening hours and refuses the booking.
+                              if (!priceResult.isOpen) {
+                                return (
+                                  <td 
+                                    key={time} 
+                                    className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center cursor-not-allowed select-none min-h-[44px]"
+                                    title="นอกเวลาเปิดให้บริการ"
+                                  >
+                                    <span className="block text-[8px] font-black text-slate-500">🚫 ปิดบริการ</span>
+                                    <span className="text-[7px] block leading-tight text-slate-400">นอกเวลาทำการ</span>
+                                  </td>
+                                );
+                              }
+
                               if (isSelectedBySelf) {
                                 return (
                                   <td 
@@ -1673,30 +1688,15 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 </div>
               </div>
 
-              {/* Basket details - Half Court toggler */}
+              {/* Half-court is chosen by picking court B or C, not by a toggle:
+                  the price follows the court, as on the server. */}
               {selectedType === CourtType.BASKETBALL && (
-                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex items-center justify-between">
-                  <div className="space-y-1">
-                    <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                      <ToggleRight className="h-5 w-5 text-amber-700" />
-                      เช่าแบบครึ่งสนาม (สำหรับสตรีทบาสเกตบอล 3x3)
-                    </p>
-                    <p className="text-[10px] text-amber-700">สามารถเลือกสลับเล่นครึ่งสนามได้ ประหยัดลง 40% และเลือกสนาม B ได้ตามสะดวก</p>
-                  </div>
-                  <button
-                    id="btn-half-court-toggle"
-                    type="button"
-                    onClick={() => {
-                      setIsHalfCourt(!isHalfCourt);
-                    }}
-                    className="text-amber-700 focus:outline-none"
-                  >
-                    {isHalfCourt ? (
-                      <ToggleRight className="h-9 w-9 text-emerald-700 cursor-pointer" />
-                    ) : (
-                      <ToggleLeft className="h-9 w-9 text-slate-400 cursor-pointer" />
-                    )}
-                  </button>
+                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 space-y-1">
+                  <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                    <ToggleRight className="h-5 w-5 text-amber-700" />
+                    เช่าแบบครึ่งสนาม (สำหรับสตรีทบาสเกตบอล 3x3)
+                  </p>
+                  <p className="text-[10px] text-amber-700">เลือกสนาม B หรือ C ในตารางเพื่อเช่าครึ่งสนาม ราคาครึ่งหนึ่งของเต็มสนาม เปิดจองเฉพาะช่วง Off-Peak</p>
                 </div>
               )}
 
@@ -1709,7 +1709,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     <p className="font-bold text-slate-800 text-[11px]">รายการสล็อตเวลาที่ทำจอง ({selectedSlots.length} สล็อต):</p>
                     {selectedSlots.map((s, idx) => {
                       const cName = courts.find(c => c.id === s.courtId)?.name || 'สนาม';
-                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, memberType, isHalfCourt, s.courtId);
+                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, memberType, false, s.courtId);
                       return (
                         <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 font-medium font-sans">
                           <span>{idx + 1}. {cName} - เวลา {s.startTime} น.</span>

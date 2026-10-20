@@ -44,6 +44,7 @@ func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.Au
 var (
 	ErrInvalidCredentials = errors.New("invalid login credentials")
 	ErrDuplicateUser      = errors.New("this phone number or email is already registered")
+	ErrInvalidPhone       = errors.New("phone number must have at least 9 digits")
 )
 
 type AuthResult struct {
@@ -53,6 +54,12 @@ type AuthResult struct {
 
 // Register verifies credentials duplicate and inserts a secured password payload
 func (s *AuthService) Register(ctx context.Context, name, email, phone, password string) (*AuthResult, error) {
+	// Stored digits-only, so the same number typed with or without dashes
+	// or spaces is one account, and walk-in lookups by phone find it.
+	phone = repository.NormalizePhone(phone)
+	if len(phone) < 9 {
+		return nil, ErrInvalidPhone
+	}
 	// The unique indexes on users.phone/email are the real guarantee; this
 	// pre-check just gives a clear message in the common case.
 	for _, identity := range []string{phone, email} {

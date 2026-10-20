@@ -432,6 +432,15 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const u = api.USE_BACKEND ? api.getSession('admin')?.user ?? null : null;
     return isManagerRole(u) ? u : null;
   });
+  // Pricing rules, member discounts and the half-court rate are admin-only
+  // on the server (FR-2, RBAC matrix: "Configure Court Pricing" = Admin), so
+  // a manager logged in here doesn't get those tabs - every save would fail.
+  const canEditPricing = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
+  useEffect(() => {
+    if (!canEditPricing && (activeAdminTab === 'pricing' || activeAdminTab === 'member_discounts')) {
+      setActiveAdminTab('dashboard');
+    }
+  }, [canEditPricing, activeAdminTab]);
   const [adminIdentity, setAdminIdentity] = useState<string>('');
   const [adminPassword, setAdminPassword] = useState<string>('');
   const [adminApiError, setAdminApiError] = useState<string | null>(null);
@@ -977,12 +986,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           >
             📊 แดชบอร์ด
           </button>
-          <button 
-            onClick={() => setActiveAdminTab('pricing')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'pricing' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            ⚙️ Pricing Engine ตั้งราคา
-          </button>
+          {canEditPricing && (
+            <button 
+              onClick={() => setActiveAdminTab('pricing')} 
+              className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'pricing' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+            >
+              ⚙️ Pricing Engine ตั้งราคา
+            </button>
+          )}
           <button 
             onClick={() => setActiveAdminTab('courts')} 
             className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'courts' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
@@ -1001,12 +1012,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           >
             👥 บัญชีสตาฟเวร
           </button>
-          <button 
-            onClick={() => setActiveAdminTab('member_discounts')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'member_discounts' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            🌟 ตั้งค่าสิทธิ์ส่วนลด (Membership Tiers)
-          </button>
+          {canEditPricing && (
+            <button 
+              onClick={() => setActiveAdminTab('member_discounts')} 
+              className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'member_discounts' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+            >
+              🌟 ตั้งค่าสิทธิ์ส่วนลด (Membership Tiers)
+            </button>
+          )}
           <button 
             onClick={() => setActiveAdminTab('reports')} 
             className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'reports' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
@@ -1378,7 +1391,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         )}
 
         {/* Sub Module 2: Pricing Engine configurations */}
-        {activeAdminTab === 'pricing' && (
+        {activeAdminTab === 'pricing' && canEditPricing && (
           <div className="space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900">ตัวเครื่องมือตั้งและปรับราคาล่วงหน้า (Pricing Engine Configurator)</h3>
@@ -2602,7 +2615,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         )}
 
         {/* Sub Module: Membership Tiers & Discounts (dynamic management of privileges) */}
-        {activeAdminTab === 'member_discounts' && (
+        {activeAdminTab === 'member_discounts' && canEditPricing && (
           <div className="space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">

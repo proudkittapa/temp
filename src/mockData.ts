@@ -483,6 +483,14 @@ export function isCourtSlotAvailable(
   return !findConflictingBooking(courtId, date, hour, bookings, courts);
 }
 
+// Every booking row of root's group: one checkout's hours share its code,
+// owner and date and are paid by one payment (attached to the first row).
+// Same rule as the backend's bookingGroup, which also matches owner and date
+// so a code collision can never pull in someone else's booking.
+export function bookingGroupOf(root: Booking, bookings: Booking[]): Booking[] {
+  return bookings.filter(b => b.bookingCode === root.bookingCode && b.userId === root.userId && b.date === root.date);
+}
+
 export function calculatePrice(
   courtType: CourtType,
   dateStr: string,
@@ -490,31 +498,38 @@ export function calculatePrice(
   memberType: MemberType = MemberType.NORMAL,
   isHalfCourt: boolean = false,
   courtId?: string
-): { total: number; original: number; priceType: PriceType; discountMessage?: string } {
+): { total: number; original: number; priceType: PriceType; discountMessage?: string; isOpen: boolean } {
   const pricingRules = StorageService.get<PricingRule[]>('pricing_rules', DEFAULT_PRICING_RULES);
   const dayType = getDayType(dateStr);
   const hour = parseInt(startHourStr.split(':')[0], 10);
 
-  // 1. Find matching time/day rule
+  // 1. Find matching time/day rule. The pricing rules double as opening
+  // hours, exactly as on the server (SlotQuoter.Quote): an hour no active
+  // rule covers is closed, not priced at some fallback rate the server
+  // would refuse to book.
   const rule = pricingRules.find(
     r => r.courtType === courtType &&
          r.dayType === dayType &&
          hour >= r.startHour &&
          hour < r.endHour &&
          r.isActive
-  ) || pricingRules.find(r => r.courtType === courtType && r.isActive);
+  );
+  if (!rule) {
+    return { total: 0, original: 0, priceType: PriceType.NORMAL, discountMessage: '', isOpen: false };
+  }
 
-  let basePrice = rule ? rule.pricePerHour : 200;
+  let basePrice = rule.pricePerHour;
   const original = basePrice;
-  let priceType = rule ? rule.priceType : PriceType.NORMAL;
+  const priceType = rule.priceType;
 
   // 2. Adjust for half-court (FR-2.4). `shareOfGroup` on the Court record is
-  // the only source of truth for "is this a half-court" - no more matching
-  // against specific court IDs here. The rate itself comes from the single
-  // configurable PricingConfig instead of a hardcoded coefficient.
+  // the only source of truth for "is this a half-court", as on the server -
+  // the isHalfCourt argument is only used for a court we don't know. (A
+  // caller-supplied flag used to halve the full court's price too.) The
+  // rate comes from the configurable PricingConfig.
   const courts = StorageService.get<Court[]>('courts', DEFAULT_COURTS);
   const court = courts.find(c => c.id === courtId);
-  const isReallyHalf = isHalfCourt || (court ? court.shareOfGroup < 1 : false);
+  const isReallyHalf = court ? court.shareOfGroup < 1 : isHalfCourt;
   if (isReallyHalf) {
     const pricingConfig = StorageService.get<PricingConfig>('pricing_config', DEFAULT_PRICING_CONFIG);
     basePrice = basePrice * (pricingConfig.halfCourtRatePercent / 100);
@@ -536,16 +551,55 @@ export function calculatePrice(
     total: Math.round(finalPrice),
     original,
     priceType,
-    discountMessage
+    discountMessage,
+    isOpen: true
   };
 }
 
-// PromptPay QR simulation payload generator
+// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), the checksum EMVCo QR
+// codes end with. Mirrors golang-backend/internal/pkg/promptpay.
+export function crc16(data: string): string {
+  let crc = 0xffff;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+// Classifies a PromptPay ID into its tag-29 sub-tag and encoded value:
+// 01 = mobile (0066 + 9 digits), 02 = 13-digit tax/national ID, 03 =
+// 15-digit e-wallet. Decided from the number as given, before the mobile
+// number is rewritten as 0066XXXXXXXXX (which is also 13 characters).
+export function normalizePromptPayId(id: string): { subTag: string; value: string } {
+  if (/[^0-9 +-]/.test(id)) throw new Error(`Invalid PromptPay ID: ${id}`);
+  const d = id.replace(/[^0-9]/g, '');
+  if (d.length === 10 && d.startsWith('0')) return { subTag: '01', value: '0066' + d.slice(1) };
+  if (d.length === 11 && d.startsWith('66')) return { subTag: '01', value: '00' + d };
+  if (d.length === 13 && d.startsWith('0066')) return { subTag: '01', value: d };
+  if (d.length === 13) return { subTag: '02', value: d };
+  if (d.length === 15) return { subTag: '03', value: d };
+  throw new Error(`Invalid PromptPay ID: ${id}`);
+}
+
+const tlv = (tag: string, value: string) => tag + value.length.toString().padStart(2, '0') + value;
+
+// PromptPay (Thai QR / EMVCo) payload paying `amount` THB to the given ID -
+// the same string the Go backend produces, so a QR drawn in local mode is
+// scannable too.
 export function generatePromptPayPayload(phoneOrTaxId: string, amount: number): string {
-  // Simulate standard PromptPay format
-  const amountStr = amount.toFixed(2);
-  const lengthCode = amountStr.length.toString().padStart(2, '0');
-  return `00020101021130340016A00000067701011101130066${phoneOrTaxId.replace(/[^0-9]/g, '').padStart(10, '0')}5802TH54${lengthCode}${amountStr}6304MOCK`;
+  const { subTag, value } = normalizePromptPayId(phoneOrTaxId);
+  const body =
+    tlv('00', '01') +
+    tlv('01', '12') +
+    tlv('29', tlv('00', 'A000000677010111') + tlv(subTag, value)) +
+    tlv('58', 'TH') +
+    tlv('53', '764') +
+    tlv('54', amount.toFixed(2)) +
+    '6304';
+  return body + crc16(body);
 }
 
 // Master state initialization

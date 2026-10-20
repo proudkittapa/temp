@@ -22,7 +22,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// loadEnv parses custom environment files line by line and registers key-values with os.Setenv
+// loadEnv parses custom environment files line by line and registers
+// key-values with os.Setenv. A variable already set in the process
+// environment wins over the file, as with other dotenv loaders: dev-runner.js
+// sets PORT and SEED_DEMO_USERS for `npm run dev:api`, and a .env copied
+// from .env.example (SEED_DEMO_USERS=false, maybe another PORT) used to
+// silently override them - no demo accounts, or a backend the Vite proxy
+// can't reach.
 func loadEnv(filename string) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -53,6 +59,9 @@ func loadEnv(filename string) {
 			val = val[1 : len(val)-1]
 		}
 
+		if _, alreadySet := os.LookupEnv(key); alreadySet {
+			continue
+		}
 		os.Setenv(key, val)
 	}
 	if err := scanner.Err(); err != nil {
@@ -130,7 +139,10 @@ func main() {
 	auditLogService := service.NewAuditLogService(auditRepo)
 	membershipService := service.NewMembershipService(db, usrRepo)
 	priceEngineService := service.NewPriceEngineService(courtRepo, membershipService)
-	paymentService := service.NewPaymentService(os.Getenv("PROMPTPAY_ID"))
+	paymentService, err := service.NewPaymentService(os.Getenv("PROMPTPAY_ID"))
+	if err != nil {
+		log.Fatalf("PROMPTPAY_ID is invalid: %v\n", err)
+	}
 	bookingService := service.NewBookingService(db, bkRepo, usrRepo, courtRepo, priceEngineService, paymentService)
 	posService := service.NewPOSService(db, usrRepo)
 	dayOffHandler := handler.NewDayOffHandler(service.NewDayOffService(db))
