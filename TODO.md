@@ -1,5 +1,13 @@
 # TODO (planned, not started)
 
+## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
+Each needs a yes/no from the owner before it is built.
+- [ ] **Cash with no shift open:** staff are warned before taking cash when no drawer shift is open (that cash is in no shift's count), but can still go ahead. Block it instead?
+- [ ] **Blind cash count:** staff see the expected drawer total before counting. Hide it until the counted amount is entered?
+- [ ] **Manager permissions vs. REQUIREMENTS.md:** what managers may do with manual point changes and the dashboard differs from the spec. Which is right - the app or the spec?
+- [ ] **Basketball closure:** a closure on the full court doesn't block half courts B/C (and vice versa). Should a closure cover the whole court group?
+- [ ] **Business details:** the real business name and PromptPay account name for the payment screen and receipts (the payment screen now just says "check the recipient name in your banking app"). See also item 5.
+
 ## 1. LINE Login — sign in with LINE *or* phone number
 - [ ] Add "Login with LINE" next to the existing phone + password login (keep both).
 - [ ] Backend: OAuth flow (`/auth/line/start` → LINE → `/auth/line/callback`), verify the ID token, find/create the user by `users.line_user_id` (column already exists), then issue our normal JWT.
@@ -34,7 +42,7 @@
 - [ ] Receipts print a "VAT 7%" breakdown (price ÷ 1.07) under a hard-coded placeholder header — "SMART SPORT COMPLEX CLUB", "188 Ramkhamhaeng Rd…", TAX ID `0-1055-59092-49-0` (`StaffPOS.tsx` receipt modal) — so they are not valid tax invoices. Replace the placeholders with the real business details either way.
 - [ ] If the business is VAT-registered: add the seller's name, address and 13-digit tax ID (admin setting, server-side), a running tax-invoice number, and the customer's name/tax ID when asked for a full tax invoice (ใบกำกับภาษีเต็มรูป).
 - [ ] If not registered: remove the VAT lines and call it a receipt (ใบเสร็จรับเงิน).
-- Owner to decide which applies.
+- Owner to decide which applies, and send the real name / address / tax ID (also needed for the payment screen - item 0).
 
 ## 6. Test the features
 - [ ] Add items 1–5 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).

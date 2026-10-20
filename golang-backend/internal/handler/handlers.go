@@ -269,7 +269,7 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	}
 	servedURL := slipURLPrefix + fileName
 
-	previous, err := h.bookingService.SaveSlip(c.Request.Context(), payment.ID, servedURL, slipHash)
+	previous, err := h.bookingService.SaveSlip(c.Request.Context(), payment.ID, servedURL, slipHash, currentUserID(c))
 	if err != nil {
 		_ = os.Remove(filePath) // state changed since the check - don't keep the file
 		respondError(c, err)

@@ -52,36 +52,6 @@ const COURT_TYPE_LABEL: Record<CourtType, string> = {
   [CourtType.MEETING_ROOM]: '👥 ห้องประชุม'
 };
 
-// The server answers in English; customers get the common problems in
-// Thai (sign-in, sign-up, booking, slips). Anything unrecognised is shown as sent.
-function customerErrorThai(message: string): string {
-  const m = message.toLowerCase();
-  if (m.includes('invalid login credentials')) return 'เบอร์โทร/อีเมล หรือรหัสผ่านไม่ถูกต้อง';
-  if (m.includes('already registered')) return 'เบอร์โทรหรืออีเมลนี้สมัครไว้แล้ว — เข้าสู่ระบบ หรือกด "ลืมรหัสผ่าน"';
-  if (m.includes('at least 9 digits') || m.includes('phone number is too long')) return 'เบอร์โทรไม่ถูกต้อง (ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678)';
-  if (m.includes('suspended')) return 'บัญชีนี้ถูกระงับ กรุณาติดต่อพนักงาน';
-  if (m.includes('email address is not valid')) return 'อีเมลไม่ถูกต้อง (เว้นว่างได้ถ้าไม่มี)';
-  if (m.includes('at least 6 characters')) return 'รหัสผ่านต้องมีอย่างน้อย 6 ตัว';
-  if (m.includes('at most 72 characters')) return 'รหัสผ่านยาวเกินไป (ไม่เกิน 72 ตัว)';
-  if (m.includes('name is required')) return 'กรุณาใส่ชื่อ (ไม่เกิน 100 ตัวอักษร)';
-  if (m.includes('too many unpaid') || m.includes('awaiting payment')) return 'คุณมีการจองที่รอชำระ/รอตรวจสลิปอยู่ครบจำนวนแล้ว กรุณารอให้ยืนยันก่อนจองเพิ่ม';
-  if (m.includes('too many')) return 'ลองผิดหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่';
-  // Booking and slip problems
-  if (m.includes('slot already booked')) return 'ช่วงเวลานี้เพิ่งถูกจองไป กรุณาเลือกเวลาอื่น';
-  if (m.includes('has already started') || m.includes('has already passed')) return 'ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ (ติดต่อเคาน์เตอร์ได้)';
-  if (m.includes('off-peak hours')) return 'สนามนี้จองได้เฉพาะช่วง Off-Peak';
-  if (m.includes('is closed at') || m.includes('currently closed')) return 'สนามปิดบริการในช่วงเวลานี้ กรุณาเลือกเวลาหรือสนามอื่น';
-  if (m.includes('outside opening hours') || m.includes('no price set')) return 'ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ';
-  if (m.includes('days ahead')) return 'จองล่วงหน้าได้ไม่เกินจำนวนวันที่สนามกำหนด กรุณาเลือกวันที่ใกล้กว่านี้';
-  if (m.includes('slots per booking')) return 'จองได้สูงสุด 3 ชั่วโมงต่อครั้ง';
-  if (m.includes('slip image was already used')) return 'สลิปนี้เคยใช้กับการจองอื่นแล้ว กรุณาส่งสลิปของการโอนครั้งนี้';
-  if (m.includes('insufficient points') || m.includes('not enough points')) return 'แต้มไม่พอ';
-  if (m.includes('busy')) return 'ระบบกำลังทำรายการเดียวกันอยู่ กรุณาลองใหม่อีกครั้ง';
-  if (m.includes('invalid state')) return 'รายการนี้ถูกเปลี่ยนสถานะไปแล้ว กรุณากด "เรียงใหม่" เพื่อดูสถานะล่าสุด';
-  if (m.includes('failed to fetch') || m.includes('network')) return 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่';
-  return message;
-}
-
 // LINE message times: ISO timestamps, shown in Bangkok time. Older saved
 // messages stored only a local time string ("13:56:02"); show those as-is.
 function lineMessageTime(ts: string): string {
@@ -335,7 +305,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           setAuthPassword('');
           onRefreshAll();
         })
-        .catch(err => setAuthError(`❌ ${customerErrorThai(err.message)}`));
+        .catch(err => setAuthError(`❌ ${err.message}`));
       return;
     }
 
@@ -395,7 +365,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           onRefreshAll();
           notify('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
         })
-        .catch(err => setAuthError(`❌ ${customerErrorThai(err.message)}`));
+        .catch(err => setAuthError(`❌ ${err.message}`));
       return;
     }
 
@@ -710,7 +680,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           notify(`🎉 แลกรางวัลสำเร็จ!\nรหัสรับของรางวัล: ${v.code}\nแสดงรหัสนี้ที่เคาน์เตอร์ภายในวันที่ ${formatDate(v.expiresAt)}`);
           onRefreshAll();
         })
-        .catch(err => notify(`แลกรางวัลไม่สำเร็จ: ${customerErrorThai(err.message)}`));
+        .catch(err => notify(`แลกรางวัลไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -852,7 +822,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           onRefreshAll();
         })
         .catch(err => {
-          notify(`ขออภัยค่ะ จองไม่สำเร็จ: ${customerErrorThai(err.message)}`);
+          notify(`ขออภัยค่ะ จองไม่สำเร็จ: ${err.message}`);
           onRefreshAll(); // reload availability - someone may have taken the slot
         });
       return;
@@ -968,7 +938,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           setSelectedSlots([]);
           onRefreshAll();
         })
-        .catch(err => notify(`ส่งสลิปไม่สำเร็จ: ${customerErrorThai(err.message)}`));
+        .catch(err => notify(`ส่งสลิปไม่สำเร็จ: ${err.message}`));
       return;
     }
 

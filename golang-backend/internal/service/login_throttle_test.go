@@ -138,3 +138,58 @@ func TestLoginThrottleBurstOnlyLetsFiveThrough(t *testing.T) {
 		t.Fatal("locked account accepted another attempt")
 	}
 }
+
+func TestLoginThrottleAccountKeySharedByPhoneAndEmail(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	th := testThrottle(&now)
+	ctx := context.Background()
+	acct := AccountKeyForUser("u-1")
+	// Login keys every failure on one account - typed as its phone or its
+	// email, from any IP - with this key, so they add up to the 20 allowed.
+	for i := 0; i < 20; i++ {
+		ip := "10.0.0." + string(rune('a'+i))
+		w, done, err := th.BeginAccount(ctx, acct, ip)
+		if err != nil || w != 0 {
+			t.Fatalf("attempt %d refused early (%v, %v)", i+1, w, err)
+		}
+		_ = done(false)
+	}
+	if w, _, _ := th.BeginAccount(ctx, acct, "10.9.9.9"); w == 0 {
+		t.Fatal("21st attempt on the account was allowed")
+	}
+	// Another account is unaffected.
+	if w, _, _ := th.BeginAccount(ctx, AccountKeyForUser("u-2"), "10.9.9.9"); w != 0 {
+		t.Fatalf("other account blocked (%v)", w)
+	}
+}
+
+// A store that, like Postgres, keeps only microseconds.
+type microStore struct{ *memAttemptStore }
+
+func (m microStore) record(ctx context.Context, keys []string, at time.Time) error {
+	return m.memAttemptStore.record(ctx, keys, at.Truncate(time.Microsecond))
+}
+
+func TestLoginThrottleWithMicrosecondStore(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 123456789, time.UTC) // has nanoseconds
+	th := newLoginThrottle(microStore{newMemAttemptStore()})
+	th.now = func() time.Time { return now }
+	ctx := context.Background()
+	for i := 1; i <= 5; i++ {
+		now = now.Add(time.Second + 7) // keep the nanoseconds
+		w, done, err := th.BeginAccount(ctx, "0812345678", "1.1.1.1")
+		if err != nil || w != 0 {
+			t.Fatalf("attempt %d refused (%v, %v) - the limit is 5", i, w, err)
+		}
+		_ = done(false)
+	}
+	now = now.Add(time.Second + 7)
+	if w, _, _ := th.BeginAccount(ctx, "0812345678", "1.1.1.1"); w == 0 {
+		t.Fatal("6th attempt allowed")
+	}
+	// The refused attempt left no rows behind.
+	times, _ := th.store.since(ctx, hashKey("acct", "0812345678"), now.Add(-time.Hour))
+	if len(times) != 5 {
+		t.Fatalf("%d failures stored, want 5", len(times))
+	}
+}

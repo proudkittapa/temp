@@ -402,7 +402,10 @@ curl "http://localhost:8080/api/v1/admin/audit-logs?search=refund&target_type=Pa
 The dashboard counts paid hours (confirmed, completed, no-show) by playing
 date and counter sales by sale time (Bangkok day). Occupancy = sold
 court-hours ÷ (physical courts × 16 h), a half court counting half. The
-audit log is admin-only (RBAC table in REQUIREMENTS.md).
+audit log is admin-only (RBAC table in REQUIREMENTS.md). Besides staff and
+admin actions it records the customer's side: `USER_REGISTERED`,
+`BOOKING_CREATED` (online booking) and `SLIP_UPLOADED` (including
+replacements).
 
 ### 8f. Cash drawer shifts and voids (FR-6.1/6.2)
 One drawer, so one shift is open at a time. Expected cash = opening float +
@@ -463,7 +466,10 @@ curl -X PUT http://localhost:8080/api/v1/admin/users/<user_id>/active \
 ### Login limits
 Within any 15 minutes: 5 wrong passwords for one account *from one IP* lock
 that account from that IP (the owner elsewhere can still log in); 20 for one
-account from anywhere lock the account; 50 from one IP lock the IP. Answers
+account from anywhere lock the account; 50 from one IP lock the IP. An
+account's phone number and email count together (the limit is keyed by the
+account, not by what was typed); an identity that isn't an account is
+counted by itself. Answers
 are 429 with `Retry-After`. Failures are stored (hashed) in the
 `login_failures` table, so the limits survive restarts and hold across
 several backend instances. Behind a reverse proxy, set `TRUSTED_PROXIES`

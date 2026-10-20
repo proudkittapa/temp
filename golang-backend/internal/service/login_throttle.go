@@ -70,9 +70,20 @@ func hashKey(kind, value string) string {
 }
 
 func (t *LoginThrottle) keys(identity, ip string) (pair, acct, ipKey string) {
-	id := identityKey(identity)
-	return hashKey("pair", id+"|"+ip), hashKey("acct", id), hashKey("ip", ip)
+	return t.accountKeys(identityKey(identity), ip)
 }
+
+// accountKeys takes an account key already in canonical form (identityKey,
+// or AccountKeyForUser once the identity is known to be an account).
+func (t *LoginThrottle) accountKeys(account, ip string) (pair, acct, ipKey string) {
+	return hashKey("pair", account+"|"+ip), hashKey("acct", account), hashKey("ip", ip)
+}
+
+// AccountKeyForUser keys the limits by the account itself, so its phone
+// number and its email share one count - otherwise switching between them
+// doubled the guesses allowed. ("user:" can't collide with an identityKey:
+// phones are digits only and emails contain "@".)
+func AccountKeyForUser(userID string) string { return "user:" + userID }
 
 // RetryAfter reports how long until this identity/IP may try again; zero
 // means now.
@@ -105,8 +116,16 @@ func (t *LoginThrottle) RetryAfter(ctx context.Context, identity, ip string) (ti
 // Otherwise call done(true) after a correct password - it clears the
 // account's failures - or done(false), which keeps the recorded failure.
 func (t *LoginThrottle) Begin(ctx context.Context, identity, ip string) (time.Duration, func(ok bool) error, error) {
-	now := t.now()
-	pair, acct, ipKey := t.keys(identity, ip)
+	return t.BeginAccount(ctx, identityKey(identity), ip)
+}
+
+// BeginAccount is Begin for a canonical account key (see accountKeys).
+func (t *LoginThrottle) BeginAccount(ctx context.Context, account, ip string) (time.Duration, func(ok bool) error, error) {
+	// Postgres keeps microseconds: without truncating, the stored row no
+	// longer equals `now`, so this attempt was counted as a prior one (4
+	// tries instead of 5) and remove() never matched refused attempts.
+	now := t.now().Truncate(time.Microsecond)
+	pair, acct, ipKey := t.accountKeys(account, ip)
 	keys := []string{pair, acct, ipKey}
 	if err := t.store.record(ctx, keys, now); err != nil {
 		return 0, nil, err

@@ -197,16 +197,22 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 // UserRepository.FindByIdentity) - checking only the oldest locked the
 // other account's owner out.
 func (s *AuthService) Login(ctx context.Context, identity, password, clientIP string) (*AuthResult, error) {
-	wait, done, err := s.throttle.Begin(ctx, identity, clientIP)
+	users, err := s.usrRepo.FindByIdentity(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	// Throttle per account when the identity is one (its phone and email
+	// count together), else per typed identity.
+	account := identityKey(identity)
+	if len(users) > 0 {
+		account = AccountKeyForUser(users[0].ID)
+	}
+	wait, done, err := s.throttle.BeginAccount(ctx, account, clientIP)
 	if err != nil {
 		return nil, err
 	}
 	if wait > 0 {
 		return nil, &TooManyAttemptsError{RetryAfter: wait}
-	}
-	users, err := s.usrRepo.FindByIdentity(ctx, identity)
-	if err != nil {
-		return nil, err
 	}
 
 	var user *model.User

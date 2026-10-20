@@ -456,7 +456,24 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 				CreatedAt: now,
 			}).Error
 		}
-		return nil
+		// Online bookings are audit-logged too (they used to appear only
+		// once a slip was approved).
+		var actorName string
+		if bookingUser != nil {
+			actorName = bookingUser.Name
+		}
+		return tx.Create(&model.AuditLog{
+			ID:         ids.New("log"),
+			UserID:     input.UserID,
+			UserName:   actorName,
+			Action:     "BOOKING_CREATED",
+			TargetType: "Booking",
+			TargetID:   result.Bookings[0].ID,
+			AfterState: model.AuditJSON(map[string]any{
+				"booking_code": code, "slots": len(result.Bookings), "total": total, "payment_method": payMethod,
+			}),
+			CreatedAt: now,
+		}).Error
 	})
 	if err != nil {
 		return nil, err
@@ -1034,7 +1051,7 @@ func slipAcceptable(p *model.Payment) error {
 // files are caught - a re-screenshot of the same slip still needs staff
 // to compare transfer references. Returns the slip URL it replaced, if
 // any, so the caller can delete the old file.
-func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash string) (string, error) {
+func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash, actorID string) (string, error) {
 	var previous string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		p, err := lockPayment(tx, paymentID)
@@ -1057,12 +1074,30 @@ func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, sli
 			previous = *p.SlipURL
 		}
 		now := s.now()
-		return tx.Model(p).Updates(map[string]interface{}{
+		before := p.Status
+		if err := tx.Model(p).Updates(map[string]interface{}{
 			"status":           model.PaymentSlipUploaded,
 			"slip_url":         servedURL,
 			"slip_hash":        slipHash,
 			"slip_uploaded_at": now,
 			"updated_at":       now,
+		}).Error; err != nil {
+			return err
+		}
+		// In the audit log, so the trail shows when the money was claimed
+		// (and slip replacements), not only the approval.
+		var actor model.User
+		_ = tx.Select("name").Take(&actor, "id = ?", actorID).Error // name is cosmetic
+		return tx.Create(&model.AuditLog{
+			ID:          ids.New("log"),
+			UserID:      actorID,
+			UserName:    actor.Name,
+			Action:      "SLIP_UPLOADED",
+			TargetType:  "Payment",
+			TargetID:    p.ID,
+			BeforeState: model.AuditJSON(map[string]any{"status": before}),
+			AfterState:  model.AuditJSON(map[string]any{"status": model.PaymentSlipUploaded, "replaced_previous_slip": previous != ""}),
+			CreatedAt:   now,
 		}).Error
 	})
 	// Two uploads of one file racing past the check above meet the unique

@@ -18,6 +18,7 @@ import {
   AuditLog, Order, OrderItem, OrderStatus, OrderType, Product, ProductCat, ProductVariant, Shift
 } from './types';
 import { StorageService } from './mockData';
+import { thaiErrorText } from './errorText';
 
 export const USE_BACKEND = import.meta.env.VITE_DATA_SOURCE === 'api';
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
@@ -55,9 +56,13 @@ export function logout(kind: SessionKind) {
   saveSession(kind, null);
 }
 
+// message is in Thai for the screens (see errorText.ts); serverMessage keeps
+// the backend's own English text.
 export class ApiError extends Error {
+  readonly serverMessage: string;
   constructor(message: string, readonly status: number) {
-    super(message);
+    super(thaiErrorText(message));
+    this.serverMessage = message;
   }
 }
 

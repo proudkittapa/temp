@@ -18,10 +18,63 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Thai errors everywhere, audit trail, login limit per account
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `ba0fa54`)
+- **Background:** Owner picked items 6-8 of the open-problems list ("fix
+  6-8, leave the rest, the rest note in the todo").
+
+### Changed
+1. **Thai error messages on every screen** (`src/errorText.ts`, `src/api.ts`):
+   the server's English errors are translated once, in `ApiError`, so
+   staff, manager and admin screens get Thai like customers do (the
+   customer-only translator in `CustomerPanel.tsx` is gone). About 100
+   rules cover sign-in, booking, slips, refunds/cancel, shifts, sales,
+   stock, rentals, vouchers, points, courts, closures and pricing; numbers,
+   court names, times and product names are kept ("สนามแบดมินตัน 3
+   18:00-19:00 ถูกจองไปแล้ว", "คืนเงินได้ไม่เกิน 180 บาท"). Unknown messages
+   are shown as sent; `ApiError.serverMessage` keeps the original.
+2. **Audit trail of the customer's side** (`booking_service.go`,
+   `handlers.go`): online bookings are logged as `BOOKING_CREATED` and slip
+   uploads (and replacements) as `SLIP_UPLOADED`, in the same transaction
+   as the change. Before, an online booking first appeared at approval.
+3. **Login limit per account** (`login_throttle.go`, `auth_service.go`):
+   the per-account limits were keyed by the typed identity, so an account's
+   phone and email each got their own 5/20 tries. Login now looks the
+   account up first and keys by it (`AccountKeyForUser`); unknown
+   identities are keyed as before.
+4. **Bug found while testing 3:** Postgres stores microseconds, the throttle
+   compared nanosecond times, so (a) the current attempt counted as a
+   prior one - only 4 tries were allowed, not 5 - and (b) refused attempts
+   were never removed, lengthening lockouts. Times are truncated to
+   microseconds; new test with a microsecond store fails without the fix.
+5. **TODO.md item 0:** the owner decisions left open (cash with no shift,
+   blind count, manager permissions, basketball closure, business
+   details); LINE, forgot password, tablet layout and device testing were
+   already items 1-6.
+6. Docs: `golang-backend/README.md` (limit per account, new audit actions).
+
+### Verified
+- `go vet`, `go test ./...` (new `TestLoginThrottleAccountKeySharedByPhoneAndEmail`,
+  `TestLoginThrottleWithMicrosecondStore`), `tsc`, vitest 36/36 (new
+  `errorText.test.ts` with exact server strings).
+- Live on Postgres: 3 wrong passwords by phone + 2 by email → the 6th try
+  (even with the right password) gets 429, and only the 5 failures are
+  stored; an online booking and its slip upload appear in `audit_logs` and
+  in the admin Audit Log tab; admin saving an overlapping price rule shows
+  "ช่วงเวลาซ้อนกับกติกา ... — แก้ไขหรือปิดกติกานั้นก่อน"; a locked-out
+  customer sees "ลองผิดหลายครั้งเกินไป กรุณารอ 14 นาทีแล้วลองใหม่".
+
+### Not done / follow-ups
+- Everything in TODO.md item 0 (owner decisions) and items 1-6.
+
+---
+
 ## 2026-10-21 — First-time user walkthrough fixes
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `c194b36`)
+- **Commit(s):** `ba0fa54` (on `main`, parent `c194b36`)
 - **Background:** Owner asked to "recheck everything makes sense, act as if
   using the app for the first time". Walked through API mode on an empty
   database (`arena_fresh`) as a new customer (sign up, book, pay, upload a
@@ -98,9 +151,8 @@ Entry format:
   refresh, ledger redeem, suspended customer signed out) pass.
 
 ### Not done / follow-ups
-- Staff and admin screens still show the server's English error messages.
-- Creating an online booking is not written to the audit log (only the
-  slip approval is); walk-ins and sales are.
+- (Staff/admin English errors and the missing online-booking audit entry
+  were fixed in the "Thai errors everywhere" entry above.)
 - Taking cash with no shift open is warned, not blocked - owner to decide
   whether to block it.
 - The real business name / PromptPay account name should be shown on the
