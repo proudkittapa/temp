@@ -64,6 +64,31 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const [selectedCourtId, setSelectedCourtId] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedSlots, setSelectedSlots] = useState<{ courtId: string; startTime: string }[]>([]);
+
+  // Booking view: a wide grid on desktop, a list of courts with big hour
+  // buttons on phones. 'auto' picks by screen width; the toggle overrides it
+  // and is remembered on this device.
+  const [isNarrow, setIsNarrow] = useState<boolean>(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 639px)');
+    const onChange = () => setIsNarrow(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const [viewPref, setViewPref] = useState<'auto' | 'grid' | 'list'>(() => {
+    try { return (localStorage.getItem('sports_complex_booking_view') as 'grid' | 'list') || 'auto'; } catch { return 'auto'; }
+  });
+  const viewMode = viewPref === 'auto' ? (isNarrow ? 'list' : 'grid') : viewPref;
+  const chooseView = (v: 'grid' | 'list') => {
+    setViewPref(v);
+    try { localStorage.setItem('sports_complex_booking_view', v); } catch { /* private mode: not remembered */ }
+  };
+  // The rewards club is long; on phones it starts folded so the booking
+  // steps come first.
+  const [showRewards, setShowRewards] = useState<boolean>(() => !(typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches));
+
+  // Courts expanded in the list view.
+  const [openCourts, setOpenCourts] = useState<Record<string, boolean>>({});
   
   const [memberName, setMemberName] = useState<string>('');
   const [memberPhone, setMemberPhone] = useState<string>('');
@@ -84,6 +109,15 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
   // UI state
   const [activeStep, setActiveStep] = useState<number>(1); // 1: Select Slot, 2: Info & Checkout, 3: QR Payment & Upload Slip
+
+  // Moving between steps scrolls the booking area into view - on a phone the
+  // account box above it would otherwise hide the new step.
+  const firstStepRender = React.useRef(true);
+  useEffect(() => {
+    if (firstStepRender.current) { firstStepRender.current = false; return; }
+    document.getElementById('booking-steps-indicator')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [activeStep]);
+
   const [currentBooking, setCurrentBooking] = useState<Booking | null>(null);
   // The group's payment shown in step 3: its amount is the whole group's
   // total (currentBooking is only the first hour), and its createdAt drives
@@ -937,8 +971,109 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     { name: 'สลิปยอดฝากเงิน (SCB Bank)', url: 'https://images.unsplash.com/photo-1628157582853-a796fa650a6a?w=300&q=80' },
   ];
 
+  // What one court-hour shows on the booking screen - shared by the grid
+  // and the phone list so they can never disagree. Order matters: a booking
+  // beats a closure beats "already started" beats off-peak-only beats price.
+  type SlotState =
+    | { kind: 'booked'; pending: boolean; mine: boolean }
+    | { kind: 'closed'; reason: string }
+    | { kind: 'started' }
+    | { kind: 'peakBlocked' }
+    | { kind: 'notOpen' }
+    | { kind: 'free' | 'selected'; price: number; isPeak: boolean };
+  const slotStatus = (court: Court, time: string, hourNum: number): SlotState => {
+    // A reservation on this court or a mutex-group sibling (FR-1.2, e.g. the full court)
+    const matchedBooking = findConflictingBooking(court.id, selectedDate, time, bookings, courts);
+    if (matchedBooking) {
+      return { kind: 'booked', pending: matchedBooking.status === BookingStatus.PENDING_PAYMENT, mine: !!loggedInUser && matchedBooking.userId === loggedInUser.id };
+    }
+    const closure = daysOff.find(
+      d => d.date === selectedDate &&
+           (d.courtId === 'all' || d.courtId === court.id) &&
+           (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hourNum >= d.startHour && hourNum < d.endHour))
+    );
+    if (closure) return { kind: 'closed', reason: closure.reason };
+    // Online, an hour can only be booked before it starts (the server
+    // refuses it after - the counter can still sell it).
+    if (slotTiming(selectedDate, time).started) return { kind: 'started' };
+    // Peak/off-peak from the same pricing rules the price uses.
+    const isPeak = !isHourOffPeak(court.type, selectedDate, hourNum);
+    if (court.offPeakOnly && isPeak) return { kind: 'peakBlocked' };
+    const price = calculatePrice(court.type, selectedDate, time, loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL, court);
+    // No pricing rule covers this hour: the server refuses it.
+    if (!price.isOpen) return { kind: 'notOpen' };
+    const selected = selectedSlots.some(sl => sl.courtId === court.id && sl.startTime === time);
+    return { kind: selected ? 'selected' : 'free', price: price.total, isPeak };
+  };
+  const SLOT_LABEL: Record<Exclude<SlotState['kind'], 'free' | 'selected'>, string> = {
+    booked: 'จองแล้ว', closed: 'ปิดสนาม', started: 'หมดเวลาจอง', peakBlocked: 'เฉพาะ Off-Peak', notOpen: 'ปิดบริการ'
+  };
+
+  // Phone list view: one card per court; tapping it shows its hours as big
+  // buttons (3 per row). Unavailable hours stay visible, greyed, with why.
+  const renderCourtList = () => {
+    const list = courts.filter(c => c.type === selectedType);
+    if (list.length === 0) return <p className="text-center text-slate-400 py-10 font-bold">ไม่มีสนามประเภทนี้</p>;
+    const slots = getAvailableSlots();
+    return (
+      <div id="court-list" className="space-y-2">
+        {list.map(court => {
+          const states = slots.map(sl => ({ time: sl.start, st: slotStatus(court, sl.start, sl.hourNum) }));
+          const freeCount = states.filter(x => x.st.kind === 'free' || x.st.kind === 'selected').length;
+          const selectedHere = states.filter(x => x.st.kind === 'selected').length;
+          const open = openCourts[court.id] ?? selectedHere > 0;
+          return (
+            <div key={court.id} className={`border rounded-xl bg-white ${selectedHere ? 'border-emerald-500' : 'border-slate-200'}`}>
+              <button type="button" onClick={() => setOpenCourts(o => ({ ...o, [court.id]: !open }))}
+                className="w-full flex items-center justify-between gap-2 px-4 min-h-[52px] text-left">
+                <span>
+                  <span className="block font-bold text-slate-900 text-base">{court.name}</span>
+                  <span className="text-xs text-slate-500">
+                    {freeCount > 0 ? `ว่าง ${freeCount} ชม.` : 'เต็ม / ไม่เปิด'}
+                    {court.offPeakOnly && ' · เฉพาะ Off-Peak'}
+                    {selectedHere > 0 && <span className="text-emerald-700 font-bold"> · เลือก {selectedHere}</span>}
+                  </span>
+                </span>
+                <span className="text-slate-400 text-lg">{open ? '▴' : '▾'}</span>
+              </button>
+              {open && (
+                <div className="grid grid-cols-3 gap-2 px-3 pb-3">
+                  {states.map(({ time, st }) => {
+                    const bookable = st.kind === 'free' || st.kind === 'selected';
+                    return (
+                      <button key={time} type="button" disabled={!bookable}
+                        onClick={() => handleToggleSlotInGrid(court.id, time)}
+                        className={`min-h-[52px] rounded-lg border px-1 py-1 text-center leading-tight ${
+                          st.kind === 'selected' ? 'bg-emerald-600 border-emerald-600 text-white'
+                          : st.kind === 'free' ? (st.isPeak ? 'bg-amber-50 border-amber-200 text-slate-900' : 'bg-white border-slate-300 text-slate-900')
+                          : 'bg-slate-100 border-slate-100 text-slate-400'
+                        }`}>
+                        <span className="block text-sm font-bold">{time}</span>
+                        <span className="block text-xs">
+                          {bookable ? `${formatBaht((st as { price: number }).price)}฿${(st as { isPeak: boolean }).isPeak ? ' · Peak' : ''}` : SLOT_LABEL[st.kind as keyof typeof SLOT_LABEL]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Quick date buttons: today, tomorrow, the day after (within the window).
+  const quickDates = [0, 1, 2].map(n => {
+    const d = new Date(`${getTodayDateStr()}T00:00:00`);
+    d.setDate(d.getDate() + n);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return { iso, label: ['วันนี้', 'พรุ่งนี้', 'มะรืน'][n] };
+  }).filter(q => q.iso <= lastBookableDate());
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-20">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-28">
       {apiError && (
         <div className="lg:col-span-12 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -946,18 +1081,30 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         </div>
       )}
       
-      {/* Dynamic Line Notification Simulator Button */}
+      {/* Phones: the selection and the next step stay in reach at the bottom */}
+      {isNarrow && activeStep === 1 && selectedSlots.length > 0 && (
+        <div id="mobile-booking-bar" className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center justify-between gap-3">
+          <span>
+            <span className="block text-sm font-bold text-slate-900">{selectedSlots.length} ชม. · {formatBaht(currentPriceDetails().total)} บาท</span>
+            <button type="button" onClick={() => setSelectedSlots([])} className="text-xs text-rose-600 underline">ล้างที่เลือก</button>
+          </span>
+          <button type="button" onClick={handleProceedToCheckout} className="bg-emerald-700 text-white font-bold rounded-xl px-5 min-h-[48px] text-base">จองต่อ →</button>
+        </div>
+      )}
+
+      {/* Dynamic Line Notification Simulator Button (demo). On phones: a
+          small round button that never covers the booking bar or forms. */}
       <button 
         id="btn-line-sim-toggle"
         onClick={() => setShowLineSimulator(!showLineSimulator)}
-        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-3 rounded-full shadow-2xl transition duration-200"
+        className={`fixed z-30 items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl transition duration-200 bottom-4 right-4 p-3 sm:bottom-6 sm:right-6 sm:px-5 sm:py-3 ${isNarrow && activeStep === 1 && selectedSlots.length > 0 ? 'hidden' : 'flex'}`}
       >
         <span className="relative flex h-3 w-3">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-100 opacity-75"></span>
           <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
         </span>
         <MessageSquare className="h-5 w-5" />
-        <span className="font-sans font-medium text-sm">LINE OA ลูกค้า ({lineMessages.length})</span>
+        <span className="hidden sm:inline font-sans font-medium text-sm">LINE OA ลูกค้า ({lineMessages.length})</span>
       </button>
 
       {/* Main Form Left Arena */}
@@ -987,7 +1134,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   <div>
                     <h3 className="text-sm font-black text-slate-100 flex items-center gap-2">
                       สวัสดีคุณ {loggedInUser.name}
-                      <span className="px-2.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold uppercase tracking-wider">
+                      <span className="px-2.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-xs font-bold uppercase tracking-wider">
                         สยามก๊วนคลับ
                       </span>
                     </h3>
@@ -1004,7 +1151,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   </button>
                   <button
                     onClick={handleDeleteAccount}
-                    className="bg-rose-950/40 hover:bg-rose-900 border border-rose-900/40 text-rose-300 text-[10px] font-bold py-1.5 px-3 rounded-lg transition"
+                    className="bg-rose-950/40 hover:bg-rose-900 border border-rose-900/40 text-rose-300 text-xs font-bold py-1.5 px-3 rounded-lg transition"
                   >
                     🗑️ ขอลบข้อมูลบัญชีของฉัน (Delete Account)
                   </button>
@@ -1014,38 +1161,40 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               {/* Profile Details segment */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                 <div className="space-y-1 font-sans">
-                  <span className="text-[10px] text-slate-400 font-bold block">เบอร์โทรศัพท์ผู้ติดต่อหลัก:</span>
+                  <span className="text-xs text-slate-400 font-bold block">เบอร์โทรศัพท์ผู้ติดต่อหลัก:</span>
                   <span className="font-mono text-slate-200 font-bold text-xs">{loggedInUser.phone || 'ไม่ระบุ'}</span>
                 </div>
                 <div className="space-y-1 font-sans">
-                  <span className="text-[10px] text-slate-400 font-bold block">ระดับสิทธิ์แสตมป์ส่วนลดประจำตัว:</span>
+                  <span className="text-xs text-slate-400 font-bold block">ระดับสิทธิ์แสตมป์ส่วนลดประจำตัว:</span>
                   <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px] leading-tight">
                     🌟 {memberTierLabel(loggedInUser.memberType)}
                     {loggedInUser.memberType === MemberType.CORPORATE && loggedInUser.orgName ? ` [${loggedInUser.orgName}]` : ''}
                   </span>
                 </div>
                 <div className="space-y-1 font-sans">
-                  <span className="text-[10px] text-slate-400 font-bold block">วันที่เริ่มจัดทะเบียนร่วมก๊วน:</span>
-                  <span className="font-mono text-slate-300 text-xs">{loggedInUser.createdAt || 'ไม่ระบุ'}</span>
+                  <span className="text-xs text-slate-400 font-bold block">วันที่เริ่มจัดทะเบียนร่วมก๊วน:</span>
+                  <span className="font-mono text-slate-300 text-xs">{loggedInUser.createdAt ? formatDate(loggedInUser.createdAt) : 'ไม่ระบุ'}</span>
                 </div>
                 <div className="space-y-1 font-sans bg-amber-950/20 border border-amber-900/40 p-2 rounded-lg">
-                  <span className="text-[10px] text-amber-400 font-bold block">🏆 แต้มสะสมปัจจุบัน (Reward Points):</span>
+                  <span className="text-xs text-amber-400 font-bold block">🏆 แต้มสะสมปัจจุบัน (Reward Points):</span>
                   <span className="text-amber-300 font-black text-sm flex items-center gap-1 font-mono">
                     {loggedInUser.points || 0} แต้ม
                   </span>
-                  <span className="text-[9px] text-slate-400 block leading-tight">(1 แต้ม / ชม.จอง หรือ 100 บ. ซื้อของ)</span>
+                  <span className="text-xs text-slate-400 block leading-tight">(1 แต้ม / ชม.จอง หรือ 100 บ. ซื้อของ)</span>
                 </div>
               </div>
 
               {/* 🌟 USER LOYALTY POINTS & REWARD CLUBS */}
               <div className="mt-5 border-t border-slate-800 pt-5 space-y-4">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-amber-400" />
-                  <h4 className="text-[11px] font-black uppercase text-amber-450 tracking-wider">
-                    คะแนนและการแลกรับรางวัล (Customer Loyalty & Vouchers Club)
-                  </h4>
-                </div>
+                <button type="button" id="rewards-toggle" onClick={() => setShowRewards(v => !v)} className="w-full flex items-center justify-between gap-2 min-h-[40px] text-left">
+                  <span className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-amber-400" />
+                    <span className="text-sm font-black text-amber-400">แต้มสะสมและของรางวัล ({loggedInUser.points || 0} แต้ม)</span>
+                  </span>
+                  <span className="text-slate-400">{showRewards ? '▴' : '▾'}</span>
+                </button>
 
+                {showRewards && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Left Column: List of Redeemable Rewards */}
                   <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800 space-y-3">
@@ -1053,7 +1202,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
                         🎁 เลือกของรางวัลพรีเมียม
                       </span>
-                      <span className="text-[10px] text-amber-400 font-bold bg-amber-950/40 px-2 py-0.5 rounded border border-amber-900/60 font-mono">
+                      <span className="text-xs text-amber-400 font-bold bg-amber-950/40 px-2 py-0.5 rounded border border-amber-900/60 font-mono">
                         คงเหลือ: {loggedInUser?.points || 0} แต้ม
                       </span>
                     </div>
@@ -1068,18 +1217,18 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                 <span className="text-sm leading-none">{reward.emoji}</span>
                                 {reward.name}
                               </span>
-                              <p className="text-[9.5px] text-slate-400 leading-snug">
+                              <p className="text-xs text-slate-400 leading-snug">
                                 {reward.description}
                               </p>
                             </div>
                             <div className="flex flex-col items-end shrink-0 gap-1.5">
-                              <span className="text-[10px] font-black text-amber-300 bg-amber-950/20 px-2 py-0.5 rounded font-mono">
+                              <span className="text-xs font-black text-amber-300 bg-amber-950/20 px-2 py-0.5 rounded font-mono">
                                 {reward.cost} แต้ม
                               </span>
                               <button
                                 type="button"
                                 onClick={() => handleRedeemReward(reward)}
-                                className={`text-[10px] font-bold py-1 px-3.5 rounded-md transition duration-200 shadow-sm ${
+                                className={`text-xs font-bold py-1 px-3.5 rounded-md transition duration-200 shadow-sm ${
                                   canRedeem 
                                     ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-extrabold hover:shadow-md hover:brightness-110 active:scale-95 cursor-pointer' 
                                     : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-755'
@@ -1107,10 +1256,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                           <div key={voucher.id} className="bg-gradient-to-br from-emerald-950/30 to-slate-900 border border-emerald-900/40 p-2.5 rounded-lg space-y-1 relative overflow-hidden">
                             <span className="absolute -right-5 -bottom-5 text-4xl opacity-10 leading-none">🎖️</span>
                             <div className="flex justify-between items-start gap-1">
-                              <span className="text-[10.5px] font-bold text-emerald-300">
+                              <span className="text-xs font-bold text-emerald-300">
                                 {voucher.rewardName}
                               </span>
-                              <span className="text-[9px] text-slate-500 font-mono shrink-0">
+                              <span className="text-xs text-slate-500 font-mono shrink-0">
                                 {voucher.redeemedAt}
                                 {voucher.status && voucher.status !== 'ACTIVE' && (
                                   <span className="ml-1 font-bold text-slate-300">{voucher.status === 'REDEEMED' ? '· รับแล้ว' : '· หมดอายุ'}</span>
@@ -1118,7 +1267,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                               </span>
                             </div>
                             <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
-                              <span className="text-[9.5px] text-slate-400">
+                              <span className="text-xs text-slate-400">
                                 รหัสสำหรับยืนยันกับสตาฟ:
                               </span>
                               <span className="font-mono text-xs font-black text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800/40 tracking-wider">
@@ -1126,13 +1275,13 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                               </span>
                             </div>
                             {FREE_HOUR_REWARD_IDS.includes(voucher.rewardId) && (voucher.status || 'ACTIVE') === 'ACTIVE' && (
-                              <p className="text-[9.5px] text-emerald-300/80">🏸 แจ้งรหัสนี้ที่เคาน์เตอร์เพื่อจองสนามช่วง Off-Peak ฟรี 1 ชั่วโมง</p>
+                              <p className="text-xs text-emerald-300/80">🏸 แจ้งรหัสนี้ที่เคาน์เตอร์เพื่อจองสนามช่วง Off-Peak ฟรี 1 ชั่วโมง</p>
                             )}
                           </div>
                         ))}
 
                         {redemptions.filter(v => v.userId === loggedInUser?.id).length === 0 && (
-                          <div className="text-center py-8 text-slate-500 text-[10px] font-medium leading-relaxed">
+                          <div className="text-center py-8 text-slate-500 text-xs font-medium leading-relaxed">
                             ยังไม่มีคูปองเวาเชอร์ที่แลกไว้ 🏷️ <br />
                             สะสมแต้มจากการจองแตะสล็อตเล่นเพื่อปลดล็อกได้ค่ะ!
                           </div>
@@ -1149,12 +1298,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         const userConfirmedBookings = bookings.filter(b => b.userId === loggedInUser?.id && isPaidBooking(b));
                         return (
                           <div className="space-y-1.5 font-sans">
-                            <div className="flex justify-between items-center text-[10px]">
+                            <div className="flex justify-between items-center text-xs">
                               <span className="text-slate-400 mb-1">ชั่วโมงสนามได้รับก๊วนที่จองสำเร็จ:</span>
                               <span className="font-bold text-emerald-450 font-mono">{userConfirmedBookings.length} ชม. ({userConfirmedBookings.length} แต้ม)</span>
                             </div>
                             
-                            <div className="max-h-[80px] overflow-y-auto space-y-1 text-[9.5px]">
+                            <div className="max-h-[80px] overflow-y-auto space-y-1 text-xs">
                               {userConfirmedBookings.map(kb => (
                                 <div key={kb.id} className="flex justify-between text-slate-400 border-b border-slate-900/60 pb-0.5">
                                   <span>📅 วันเล่น {kb.date} ({kb.startTime})</span>
@@ -1162,7 +1311,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                 </div>
                               ))}
                               {userConfirmedBookings.length === 0 && (
-                                <div className="text-[9px] text-slate-400">
+                                <div className="text-xs text-slate-400">
                                   (ยังไม่มีประวัติตารางจองจริงที่สตาฟตรวจสอบยืนยันสลิป แต้มเดิมของคุณถูกแอดโดยผู้จัดการระบบ)
                                 </div>
                               )}
@@ -1173,6 +1322,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     </div>
                   </div>
                 </div>
+                )}
               </div>
             </div>
           ) : (
@@ -1182,7 +1332,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 <Shield className="h-5 w-5 text-emerald-500 shrink-0" />
                 <div>
                   <h3 className="text-xs font-black text-slate-100 uppercase tracking-widest leading-none">ก๊วนผู้เล่น & ส่วนลดอัตโนมัติ (Customer Account Center)</h3>
-                  <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+                  <p className="text-xs text-slate-400 mt-1 leading-normal">
                     ตามหลักมาตรฐานความมั่นคงใหม่ ลูกค้าสยามสปอร์ตคอมเพล็กซ์จะต้องล็อคอินเข้าสู่ระบบก่อน เพื่อระบุสิทธิ์ส่วนลดที่ติดกับบัญชีจริงของคุณ!
                   </p>
                 </div>
@@ -1228,7 +1378,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 {authTab === 'register' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1">ระบุชื่อเล่นก๊วน / ชื่อจริงผู้ประสานงาน:</label>
+                      <label className="block text-xs font-bold text-slate-400 mb-1">ระบุชื่อเล่นก๊วน / ชื่อจริงผู้ประสานงาน:</label>
                       <input
                         type="text"
                         required
@@ -1239,16 +1389,16 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       />
                     </div>
                     <div className="bg-slate-950/40 p-2.5 rounded-lg border border-slate-800/80 flex flex-col justify-center">
-                      <span className="text-[10px] font-bold text-emerald-400 block">🌟 สิทธิ์เริ่มต้นบัญชีของคุณ:</span>
-                      <span className="text-[10px] text-slate-300 font-medium">ลูกค้าทั่วไป (Normal) - ลด 0%</span>
-                      <p className="text-[9px] text-slate-500 mt-1 leading-normal">* คุณจะได้รับสิทธิ์ทั่วไปโดยทันที เพื่อเปิดสิทธิ์ส่วนลดอื่นๆ (เช่น นักศึกษา/บริษัท MOU/สมาชิก) กรุณาแจ้งให้เจ้าหน้าที่ Admin ตรวจสอบหลักฐานและตั้งค่าให้หลังบ้านค่ะ</p>
+                      <span className="text-xs font-bold text-emerald-400 block">🌟 สิทธิ์เริ่มต้นบัญชีของคุณ:</span>
+                      <span className="text-xs text-slate-300 font-medium">ลูกค้าทั่วไป (Normal) - ลด 0%</span>
+                      <p className="text-xs text-slate-500 mt-1 leading-normal">* คุณจะได้รับสิทธิ์ทั่วไปโดยทันที เพื่อเปิดสิทธิ์ส่วนลดอื่นๆ (เช่น นักศึกษา/บริษัท MOU/สมาชิก) กรุณาแจ้งให้เจ้าหน้าที่ Admin ตรวจสอบหลักฐานและตั้งค่าให้หลังบ้านค่ะ</p>
                     </div>
                   </div>
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 mb-1">
+                    <label className="block text-xs font-bold text-slate-400 mb-1">
                       {authTab === 'forgot' ? 'ระบุเบอร์โทร หรือ อีเมลที่กู้คืน:' : 'ระบุ อีเมล / เบอร์โทรศัพท์ก๊วน:'}
                     </label>
                     <input
@@ -1263,7 +1413,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                   {authTab !== 'forgot' && (
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1">กำหนดรหัสผ่านเข้าใช้ (Password):</label>
+                      <label className="block text-xs font-bold text-slate-400 mb-1">กำหนดรหัสผ่านเข้าใช้ (Password):</label>
                       <input
                         type="password"
                         required
@@ -1277,7 +1427,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                   {authTab === 'register' && (
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1">ระบุเบอร์ติดต่อหลัก (Phone):</label>
+                      <label className="block text-xs font-bold text-slate-400 mb-1">ระบุเบอร์ติดต่อหลัก (Phone):</label>
                       <input
                         type="tel"
                         required
@@ -1307,28 +1457,28 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         </div>
 
         {/* Step Indicator */}
-        <div id="booking-steps-indicator" className="bg-white p-5 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold text-sm ${activeStep >= 1 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>1</div>
+        <div id="booking-steps-indicator" className="scroll-mt-32 sm:scroll-mt-24 bg-white p-3 sm:p-5 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center font-bold text-sm ${activeStep >= 1 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>1</div>
             <div>
-              <p className="text-xs font-semibold text-slate-800">ขั้นตอนที่ 1</p>
-              <p className="text-[10px] text-slate-500">เลือกสนามและเช็กตาราง</p>
+              <p className="text-xs font-semibold text-slate-800"><span className="hidden sm:inline">ขั้นตอนที่ 1</span><span className="sm:hidden">เลือกเวลา</span></p>
+              <p className="hidden sm:block text-xs text-slate-500">เลือกสนามและเช็กตาราง</p>
             </div>
           </div>
-          <div className="h-px bg-slate-200 flex-1 mx-4 max-w-[80px]" />
-          <div className="flex items-center gap-3">
-            <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold text-sm ${activeStep >= 2 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>2</div>
+          <div className="h-px bg-slate-200 flex-1 mx-2 sm:mx-4 max-w-[80px]" />
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center font-bold text-sm ${activeStep >= 2 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>2</div>
             <div>
-              <p className="text-xs font-semibold text-slate-800">ขั้นตอนที่ 2</p>
-              <p className="text-[10px] text-slate-500">กรอกเบอร์โทร & เช็คราคา</p>
+              <p className="text-xs font-semibold text-slate-800"><span className="hidden sm:inline">ขั้นตอนที่ 2</span><span className="sm:hidden">ข้อมูล</span></p>
+              <p className="hidden sm:block text-xs text-slate-500">กรอกเบอร์โทร & เช็คราคา</p>
             </div>
           </div>
-          <div className="h-px bg-slate-200 flex-1 mx-4 max-w-[80px]" />
-          <div className="flex items-center gap-3">
-            <div className={`h-8 w-8 rounded-full flex items-center justify-center font-bold text-sm ${activeStep >= 3 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>3</div>
+          <div className="h-px bg-slate-200 flex-1 mx-2 sm:mx-4 max-w-[80px]" />
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center font-bold text-sm ${activeStep >= 3 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>3</div>
             <div>
-              <p className="text-xs font-semibold text-slate-800">ขั้นตอนที่ 3</p>
-              <p className="text-[10px] text-slate-500">ชำระ QR & อัพโหลดสลิป</p>
+              <p className="text-xs font-semibold text-slate-800"><span className="hidden sm:inline">ขั้นตอนที่ 3</span><span className="sm:hidden">ชำระเงิน</span></p>
+              <p className="hidden sm:block text-xs text-slate-500">ชำระ QR & อัพโหลดสลิป</p>
             </div>
           </div>
         </div>
@@ -1384,8 +1534,17 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     setSelectedDate(e.target.value);
                     setSelectedSlots([]);
                   }}
-                  className="w-full bg-white border border-slate-205 rounded-lg py-2 px-3 text-xs text-slate-800 font-bold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 focus:outline-none"
+                  className="w-full bg-white border border-slate-205 rounded-lg py-2.5 px-3 text-sm text-slate-800 font-bold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 focus:outline-none"
                 />
+                <div id="quick-dates" className="flex gap-2 mt-2">
+                  {quickDates.map(q => (
+                    <button key={q.iso} type="button"
+                      onClick={() => { setSelectedDate(q.iso); setSelectedSlots([]); }}
+                      className={`flex-1 min-h-[40px] rounded-lg border text-sm font-bold ${selectedDate === q.iso ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-slate-200 text-slate-700'}`}>
+                      {q.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1393,16 +1552,23 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
             {selectedDate && (
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5 font-sans">
-                      🎾 ตารางจองสนามและมอนิเตอร์ดีมานด์ภาพรวม (Comprehensive Court Occupancy Grid)
-                    </h3>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
-                      ตรวจสอบช่วงเวลาสนามว่าง/เต็มทุกชั่วโมง คลิกที่ช่อง "🟢 ว่าง" เพื่อนับจองสล็อตเวลาได้ทันทีสลับช่องได้อิสระ
-                    </p>
+                  <div className="w-full sm:w-auto flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">🎾 เลือกสนามและเวลา</h3>
+                      <p className="text-xs text-slate-500 mt-0.5">แตะช่อง "ว่าง" เพื่อเลือก (สูงสุด 3 ชั่วโมงต่อการจอง)</p>
+                    </div>
+                    {/* Grid / list toggle (remembered on this device) */}
+                    <div id="view-toggle" className="flex bg-slate-100 p-1 rounded-lg shrink-0">
+                      {(['grid', 'list'] as const).map(v => (
+                        <button key={v} type="button" onClick={() => chooseView(v)}
+                          className={`px-3 min-h-[36px] rounded-md text-sm font-bold ${viewMode === v ? 'bg-white text-emerald-800 shadow-sm' : 'text-slate-600'}`}>
+                          {v === 'grid' ? 'ตาราง' : 'รายการ'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2 text-[10px] font-sans">
+                  <div className={`${viewMode === 'grid' ? 'flex' : 'hidden'} flex-wrap items-center gap-2 text-xs font-sans`}>
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-500 rounded" /> 🔴 จองแล้ว / เต็ม</span>
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-200 rounded" /> ⚠️ ปิดสนาม</span>
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-amber-100 rounded" /> 🟡 ว่าง (Peak)</span>
@@ -1421,20 +1587,23 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     </p>
                   )}
 
+                  {viewMode === 'list' && renderCourtList()}
+
                   {/* Grid-based occupancy matrix */}
+                  {viewMode === 'grid' && (
                   <div className="overflow-x-auto border border-slate-200 rounded-xl bg-slate-50/50">
                     <table className="w-full text-left border-collapse min-w-[1100px]">
                       <thead>
-                        <tr className="bg-slate-100 text-[10px] uppercase font-black text-slate-500 border-b border-slate-200">
+                        <tr className="bg-slate-100 text-xs uppercase font-black text-slate-500 border-b border-slate-200">
                           <th className="p-3 bg-slate-100 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-36">สนาม (Court Name)</th>
                           {getAvailableSlots().map((slot) => (
-                            <th key={slot.start} className="p-2 text-center text-[9px] min-w-[75px] border-l border-slate-200">
+                            <th key={slot.start} className="p-2 text-center text-xs min-w-[75px] border-l border-slate-200">
                               {slot.start} น.
                             </th>
                           ))}
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200 bg-white text-[10px]">
+                      <tbody className="divide-y divide-slate-200 bg-white text-xs">
                         {courts.filter(c => c.type === selectedType).map((court) => (
                           <tr key={court.id} className="hover:bg-slate-50/55 transition-colors">
                             {/* Court Title Left sticky column */}
@@ -1442,7 +1611,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                               <div className="flex flex-col">
                                 <span className="text-[11px] font-black">{court.name}</span>
                                 {court.offPeakOnly && (
-                                  <span className="text-[8px] text-emerald-800 font-bold bg-emerald-50 px-1 py-0.2 rounded w-max mt-0.5">Off-Peak เท่านั้น</span>
+                                  <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-1 py-0.2 rounded w-max mt-0.5">Off-Peak เท่านั้น</span>
                                 )}
                               </div>
                             </td>
@@ -1450,146 +1619,52 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                             {/* Hourly timeline slot cells */}
                             {getAvailableSlots().map((slot) => {
                               const time = slot.start;
-                              const hourNum = slot.hourNum;
-
-                              // 1. Is it blocked by a reservation on this court OR a
-                              // mutex-group sibling (FR-1.2, e.g. the full court)?
-                              const matchedBooking = findConflictingBooking(court.id, selectedDate, time, bookings, courts);
-
-                              // 2. Is it blocked by admin closure / operational days off?
-                              const matchedClosure = daysOff.find(
-                                d => d.date === selectedDate &&
-                                     (d.courtId === 'all' || d.courtId === court.id) &&
-                                     (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hourNum >= d.startHour && hourNum < d.endHour))
-                              );
-
-                              // 3. Peak/Offpeak check, read from the same PricingRule
-                              // config the price itself uses (instead of a separately
-                              // hardcoded peak window that could drift from it).
-                              const isPeak = !isHourOffPeak(court.type, selectedDate, hourNum);
-
-                              // 4. Half-court offpeak-only constraint (FR-1.2)
-                              const isRestrictedPeakBasketball = !!court.offPeakOnly && isPeak;
-
-                              // 5. Currently selected by this user in checkout drawer
-                              const isSelectedBySelf = selectedSlots.some(s => s.courtId === court.id && s.startTime === time);
-
-                              // Render slot cells conditionally
-                              if (matchedBooking) {
-                                const isPending = matchedBooking.status === BookingStatus.PENDING_PAYMENT;
-                                const isSelfBooking = loggedInUser && matchedBooking.userId === loggedInUser.id;
-                                return (
-                                  <td 
-                                    key={time} 
-                                    className="p-1 border-l border-slate-200 text-center bg-rose-500/10 text-rose-700 min-h-[44px] cursor-not-allowed select-none border-l-rose-250 font-bold"
-                                    title={`จองแล้วโดย${isSelfBooking ? 'ตัวคุณเอง' : 'ลูกค้าท่านอื่น'}`}
-                                  >
-                                    <span className="block text-[8.5px] font-black uppercase text-rose-600">🔴 จองแล้ว</span>
-                                    <span className="text-[8px] opacity-75 font-mono">
-                                      {isPending ? '⏳ รอนุมัติ' : '✓ โอนแล้ว'}
-                                    </span>
-                                  </td>
-                                );
+                              const st = slotStatus(court, time, slot.hourNum);
+                              const blocked = 'cursor-not-allowed select-none p-1 border-l border-slate-200 text-center min-h-[44px]';
+                              switch (st.kind) {
+                                case 'booked':
+                                  return (
+                                    <td key={time} className={`${blocked} bg-rose-500/10 text-rose-700 font-bold`} title={`จองแล้วโดย${st.mine ? 'ตัวคุณเอง' : 'ลูกค้าท่านอื่น'}`}>
+                                      <span className="block text-[11px] font-black text-rose-600">🔴 จองแล้ว</span>
+                                      <span className="text-[11px] opacity-75">{st.pending ? '⏳ รออนุมัติ' : '✓ ชำระแล้ว'}</span>
+                                    </td>
+                                  );
+                                case 'closed':
+                                  return (
+                                    <td key={time} className={`${blocked} bg-rose-100 text-rose-800 font-bold`} title={`ซ่อมบำรุง/ปิดสนาม: ${st.reason}`}>
+                                      <span className="block text-[11px] font-black text-rose-700">⚠️ ปิดสนาม</span>
+                                      <span className="text-[11px] block leading-tight truncate max-w-[70px] text-slate-500">{st.reason}</span>
+                                    </td>
+                                  );
+                                case 'started':
+                                case 'peakBlocked':
+                                case 'notOpen':
+                                  return (
+                                    <td key={time} className={`${blocked} bg-slate-100 text-slate-500`}
+                                      title={st.kind === 'started' ? 'เลยเวลาจองออนไลน์แล้ว ติดต่อเคาน์เตอร์ได้' : st.kind === 'peakBlocked' ? 'ครึ่งสนามเปิดเฉพาะเวลา Off-Peak' : 'นอกเวลาเปิดให้บริการ'}>
+                                      <span className="block text-[11px] font-bold">{st.kind === 'started' ? '⌛' : '🚫'} {SLOT_LABEL[st.kind]}</span>
+                                    </td>
+                                  );
+                                case 'selected':
+                                  return (
+                                    <td key={time} onClick={() => handleToggleSlotInGrid(court.id, time)}
+                                      className="p-1 border-l border-slate-200 bg-emerald-600 text-white text-center font-bold cursor-pointer border-l-emerald-700">
+                                      <span className="block text-[11px] font-black">⭐ เลือกแล้ว</span>
+                                      <span className="text-xs block">{formatBaht(st.price)}฿</span>
+                                    </td>
+                                  );
+                                default:
+                                  return (
+                                    <td key={time} onClick={() => handleToggleSlotInGrid(court.id, time)}
+                                      className={`p-1 border-l border-slate-200 text-center cursor-pointer transition min-h-[44px] ${
+                                        st.isPeak ? 'bg-amber-50 hover:bg-amber-100 text-amber-900' : 'bg-emerald-50/15 hover:bg-emerald-500/10 text-slate-800'
+                                      }`}>
+                                      <span className="block text-[11px] font-semibold text-slate-500 leading-none">🟢 ว่าง</span>
+                                      <span className="text-xs font-black block mt-0.5 text-slate-800">{formatBaht(st.price)}฿</span>
+                                      <span className="text-[11px] text-slate-500">{st.isPeak ? '⚡ Peak' : 'Off-Peak'}</span>
+                                    </td>
+                                  );
                               }
-
-                              if (matchedClosure) {
-                                return (
-                                  <td 
-                                    key={time} 
-                                    className="p-1 border-l border-slate-200 bg-rose-100 text-rose-800 text-center cursor-not-allowed select-none min-h-[44px] border-l-rose-200 font-bold"
-                                    title={`ซ่อมบำรุง/ปิดสนาม: ${matchedClosure.reason}`}
-                                  >
-                                    <span className="block text-[8px] font-black text-rose-700">⚠️ ปิดสนาม</span>
-                                    <span className="text-[7.5px] block leading-tight truncate max-w-[70px] text-slate-500">
-                                      {matchedClosure.reason}
-                                    </span>
-                                  </td>
-                                );
-                              }
-
-                              // Online, an hour can only be booked before it starts (the
-                              // server refuses it after - the counter can still sell it).
-                              if (slotTiming(selectedDate, time).started) {
-                                return (
-                                  <td 
-                                    key={time} 
-                                    className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center cursor-not-allowed select-none min-h-[44px]"
-                                    title="เลยเวลาจองออนไลน์แล้ว ติดต่อเคาน์เตอร์ได้"
-                                  >
-                                    <span className="block text-[8px] font-black text-slate-500">⌛ หมดเวลาจอง</span>
-                                    <span className="text-[7px] block leading-tight text-slate-400">ติดต่อเคาน์เตอร์</span>
-                                  </td>
-                                );
-                              }
-
-                              if (isRestrictedPeakBasketball) {
-                                return (
-                                  <td 
-                                    key={time} 
-                                    className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center cursor-not-allowed select-none min-h-[44px]"
-                                    title="สนามครึ่งสนามจะเปิดให้บริการเฉพาะเวลา Off-Peak"
-                                  >
-                                    <span className="block text-[8px] font-black text-slate-500">🚫 ปิดช่วง Peak</span>
-                                    <span className="text-[7px] block leading-tight text-slate-400">เฉพาะ Offpeak</span>
-                                  </td>
-                                );
-                              }
-
-                              // Calculate single hour price
-                              const priceResult = calculatePrice(
-                                selectedType, 
-                                selectedDate, 
-                                time, 
-                                loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL,
-                                court
-                              );
-
-                              // No pricing rule covers this hour: the server treats it
-                              // as outside opening hours and refuses the booking.
-                              if (!priceResult.isOpen) {
-                                return (
-                                  <td 
-                                    key={time} 
-                                    className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center cursor-not-allowed select-none min-h-[44px]"
-                                    title="นอกเวลาเปิดให้บริการ"
-                                  >
-                                    <span className="block text-[8px] font-black text-slate-500">🚫 ปิดบริการ</span>
-                                    <span className="text-[7px] block leading-tight text-slate-400">นอกเวลาทำการ</span>
-                                  </td>
-                                );
-                              }
-
-                              if (isSelectedBySelf) {
-                                return (
-                                  <td 
-                                    key={time} 
-                                    onClick={() => handleToggleSlotInGrid(court.id, time)}
-                                    className="p-1 border-l border-slate-200 bg-emerald-600 text-white text-center font-bold relative group cursor-pointer animate-pulse border-l-emerald-700"
-                                  >
-                                    <span className="block text-[9px] font-black uppercase">⭐ เลือกแล้ว</span>
-                                    <span className="text-[8.5px] font-mono block">{formatBaht(priceResult.total)}฿</span>
-                                  </td>
-                                );
-                              }
-
-                              // Vacant cell styles depending on peak
-                              return (
-                                <td 
-                                  key={time} 
-                                  onClick={() => handleToggleSlotInGrid(court.id, time)}
-                                  className={`p-1 border-l border-slate-200 text-center cursor-pointer transition min-h-[44px] ${
-                                    isPeak 
-                                      ? 'bg-amber-50 hover:bg-amber-100 text-amber-900 hover:text-amber-950 border-l-amber-200' 
-                                      : 'bg-emerald-50/15 hover:bg-emerald-500/10 text-slate-800 hover:text-emerald-900'
-                                  }`}
-                                >
-                                  <span className="block text-[8.5px] font-semibold text-slate-500 leading-none">🟢 ว่าง</span>
-                                  <span className="text-[9.5px] font-mono font-black block mt-0.5 text-slate-800">{formatBaht(priceResult.total)}฿</span>
-                                  <span className="text-[7.5px] text-slate-400 font-mono scale-[0.85] inline-block">
-                                    {isPeak ? '⚡ Peak' : 'Off-Peak'}
-                                  </span>
-                                </td>
-                              );
                             })}
                           </tr>
                         ))}
@@ -1604,9 +1679,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       </tbody>
                     </table>
                   </div>
+                  )}
                 </div>
 
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-[10px] text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200 gap-2 font-mono">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200 gap-2">
                   <span className="font-semibold text-emerald-800 flex items-center gap-1">
                     💡 คำแนะนำผู้เล่น: เลือกสล็อตที่กล่องสีเขียว/เหลืองเพื่อจอง และสำหรับสนามบาสเกตบอลครึ่งสนาม (B, C) จะอนุญาตให้กดเลือกได้เฉพาะช่วง Off-Peak (เวลานอกช่วงเร่งด่วน) เท่านั้น
                   </span>
@@ -1630,7 +1706,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         <div key={idx} className="bg-white px-3 py-2 rounded-lg border border-emerald-100 flex items-center justify-between text-xs">
                           <div>
                             <p className="font-bold text-slate-800">{cName}</p>
-                            <p className="text-[10px] text-slate-500">เวลา {s.startTime} น.</p>
+                            <p className="text-xs text-slate-500">เวลา {s.startTime} น.</p>
                           </div>
                           <button 
                             onClick={() => {
@@ -1648,7 +1724,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                 <div className="flex justify-between items-center border-t border-emerald-100 pt-3">
                   <div>
-                    <span className="text-[10px] text-slate-400 block font-medium">คำนวณราคาเฉลี่ยสมาชิกรวม:</span>
+                    <span className="text-xs text-slate-400 block font-medium">คำนวณราคาเฉลี่ยสมาชิกรวม:</span>
                     <span className="text-sm font-extrabold text-emerald-800 font-mono">{formatBaht(currentPriceDetails().total)} บาท</span>
                   </div>
                   <button
@@ -1720,7 +1796,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       {loggedInUser?.memberType === MemberType.CORPORATE && loggedInUser.orgName ? ` [${loggedInUser.orgName}]` : ''}
                     </span>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-2 leading-normal">
+                  <p className="text-xs text-slate-400 mt-2 leading-normal">
                     * ลูกค้าไม่สามารถกดแก้ไขประเภทส่วนลดด้วยตนเองได้ในหน้านี้ เพื่อป้องกันการแอบอ้างสิทธิ์ของ พนง. ลูกค้าสามารถเปลี่ยนสลับบทบาทหรือติดต่อฝ่ายเคาน์เตอร์แคชเชียร์สตาฟเพื่ออัปเกรดสถานะบัตรของท่านได้ ตลอด 24 ชม.
                   </p>
                 </div>
@@ -1734,7 +1810,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     <ToggleRight className="h-5 w-5 text-amber-700" />
                     เช่าแบบครึ่งสนาม (สำหรับสตรีทบาสเกตบอล 3x3)
                   </p>
-                  <p className="text-[10px] text-amber-700">เลือกสนาม B หรือ C ในตารางเพื่อเช่าครึ่งสนาม ราคาครึ่งหนึ่งของเต็มสนาม เปิดจองเฉพาะช่วง Off-Peak</p>
+                  <p className="text-xs text-amber-700">เลือกสนาม B หรือ C ในตารางเพื่อเช่าครึ่งสนาม ราคาครึ่งหนึ่งของเต็มสนาม เปิดจองเฉพาะช่วง Off-Peak</p>
                 </div>
               )}
 
@@ -1751,7 +1827,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       return (
                         <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 font-medium font-sans">
                           <span>{idx + 1}. {cName} - เวลา {s.startTime} น.</span>
-                          <span className="font-bold text-slate-800">{formatBaht(detail.total)} บาท <span className="text-[10px] text-slate-400 font-normal line-through">({detail.original}.-)</span></span>
+                          <span className="font-bold text-slate-800">{formatBaht(detail.total)} บาท <span className="text-xs text-slate-400 font-normal line-through">({detail.original}.-)</span></span>
                         </div>
                       );
                     })}
@@ -1795,7 +1871,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         {activeStep === 3 && currentBooking && (
           <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm space-y-6">
             <div className="text-center space-y-2">
-              <span className="inline-flex text-[10px] items-center gap-1 font-bold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
+              <span className="inline-flex text-xs items-center gap-1 font-bold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
                 <AlertTriangle className="h-3 w-3" /> ชำระเงินล่วงหน้าเพื่อยืนยันสิทธิ์คอร์ท
               </span>
               <h2 className="text-lg font-bold text-slate-900">ชำระเงินค่านัดผ่าน QR Thai PromptPay</h2>
@@ -1809,8 +1885,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 {/* PromptPay Banner Header */}
                 <div className="w-56 h-10 bg-sky-900 rounded flex items-center justify-between px-3">
                   <div className="text-white text-xs font-extrabold flex flex-col">
-                    <span className="text-[7.5px] tracking-widest text-[#579FFF]">PROMPT PAY</span>
-                    <span className="text-[10px] select-none -mt-1 leading-none font-sans">พร้อมเพย์</span>
+                    <span className="text-[11px] tracking-widest text-[#579FFF]">PROMPT PAY</span>
+                    <span className="text-xs select-none -mt-1 leading-none font-sans">พร้อมเพย์</span>
                   </div>
                   {/* Visual logo simulation */}
                   <div className="flex gap-2">
@@ -1825,14 +1901,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   {currentPayment?.status === PaymentStatus.EXPIRED ? (
                     // The hold ran out: don't invite a new payment - only a
                     // slip for money already sent (late payment).
-                    <div id="expired-payment-notice" className="h-44 w-44 flex flex-col items-center justify-center text-center gap-1 text-[10.5px] text-rose-700 font-bold">
+                    <div id="expired-payment-notice" className="h-44 w-44 flex flex-col items-center justify-center text-center gap-1 text-xs text-rose-700 font-bold">
                       <span className="text-2xl">⌛</span>
                       หมดเวลาชำระแล้ว กรุณาอย่าโอนเงินเพิ่ม
                     </div>
                   ) : qrCodePayload ? (
                     <QRCodeSVG value={qrCodePayload} size={176} level="M" />
                   ) : (
-                    <div className="h-44 w-44 flex items-center justify-center text-[10px] text-slate-400">ไม่พบ QR</div>
+                    <div className="h-44 w-44 flex items-center justify-center text-xs text-slate-400">ไม่พบ QR</div>
                   )}
                 </div>
 
@@ -1877,15 +1953,15 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         <FileImage className="h-7 w-7 text-emerald-700" />
                         <div>
                           <p className="font-bold text-slate-800">{sample.name}</p>
-                          <p className="text-[10px] text-slate-500">จำลองอัพโหลดภาพถ่ายสลิปเพื่อส่งให้แอดมิน</p>
+                          <p className="text-xs text-slate-500">จำลองอัพโหลดภาพถ่ายสลิปเพื่อส่งให้แอดมิน</p>
                         </div>
                       </button>
                     ))}
                   </div>
 
                   <div className="mt-4 text-center">
-                    <p className="text-[10px] text-slate-400">--- หรือ ---</p>
-                    <label className="inline-flex cursor-pointer mt-2 text-[10px] bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg font-bold text-slate-700 transition">
+                    <p className="text-xs text-slate-400">--- หรือ ---</p>
+                    <label className="inline-flex cursor-pointer mt-2 text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg font-bold text-slate-700 transition">
                       <FileImage className="h-3 w-3 mr-1" /> เลือกไฟล์จริงจากเครื่อง
                       <input 
                         type="file" 
@@ -1933,9 +2009,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div>
               <p className="text-sm font-bold tracking-tight">ตรวจสอบสถานะการจองล่าสุดทั้งหมด</p>
-              <p className="text-[10px] text-slate-400">สถานะการจองและสลิปการชำระเงินของคุณ</p>
+              <p className="text-xs text-slate-400">สถานะการจองและสลิปการชำระเงินของคุณ</p>
             </div>
-            <span className="text-[10px] bg-slate-800 text-slate-300 font-bold px-2.5 py-1 rounded-full">เรียงใหม่</span>
+            <span className="text-xs bg-slate-800 text-slate-300 font-bold px-2.5 py-1 rounded-full">เรียงใหม่</span>
           </div>
 
           <div className="space-y-3 max-h-[250px] overflow-y-auto pr-1">
@@ -1958,7 +2034,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 return (
                   <p className="text-xs text-slate-500 text-center py-6 leading-relaxed">
                     🌟 ไม่พบประวัติการจองล่วงหน้าสำหรับบัญชีคุณในขณะนี้ <br/>
-                    <span className="text-[10px] text-slate-400">(ระบบจะแสดงเฉพาะรอบจองที่ยังไม่ถึงเวลาเล่นของท่านเท่านั้น รอบที่เคยผ่านไปแล้วจะไม่แสดงเพื่อความรวดเร็วและเป็นส่วนตัวค่ะ)</span>
+                    <span className="text-xs text-slate-400">(ระบบจะแสดงเฉพาะรอบจองที่ยังไม่ถึงเวลาเล่นของท่านเท่านั้น รอบที่เคยผ่านไปแล้วจะไม่แสดงเพื่อความรวดเร็วและเป็นส่วนตัวค่ะ)</span>
                   </p>
                 );
               }
@@ -1991,7 +2067,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-slate-200">{booking.bookingCode}</span>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${statusBadge}`}>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${statusBadge}`}>
                           {booking.status === BookingStatus.CONFIRMED && 'อนุมัติเรียบร้อย'}
                           {booking.status === BookingStatus.PENDING_PAYMENT && (matchedPayment?.status === PaymentStatus.SLIP_UPLOADED ? 'รอสต๊าฟเช็คสลิป' : 'รอชำระเงิน / รอสลิป')}
                           {booking.status === BookingStatus.CANCELLED && (
@@ -2003,28 +2079,28 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         </span>
                       </div>
                       <p className="font-bold text-slate-100">{courtName}</p>
-                      <p className="text-[10px] text-slate-400">
+                      <p className="text-xs text-slate-400">
                         วันที่จอง: {booking.date} | เวลา: {booking.startTime} - {booking.endTime} น.
                       </p>
-                      <p className="text-[10px] text-slate-400">
+                      <p className="text-xs text-slate-400">
                         ผู้ติดต่อ: {booking.userName} | โทร: {booking.userPhone}
                       </p>
                     </div>
 
                     <div className="flex flex-col items-start sm:items-end justify-between gap-1">
                       <p className="font-bold text-emerald-400 text-sm">{formatBaht(booking.totalAmount)} บาท</p>
-                      <span className="text-[9.5px] text-slate-400">
+                      <span className="text-xs text-slate-400">
                         หลักฐานสลิป: {matchedPayment?.slipUrl ? (
                           <a href={matchedPayment.slipUrl} target="_blank" rel="noreferrer" className="text-sky-400 underline font-bold hover:text-sky-300">กดดูรูปสลิป</a>
                         ) : 'ไม่มีการอัพโหลด'}
                       </span>
                       {!!matchedPayment?.refundAmount && (
-                        <span className="text-[9.5px] font-bold text-sky-300">
+                        <span className="text-xs font-bold text-sky-300">
                           💸 คืนเงินแล้ว {formatBaht(matchedPayment.refundAmount)} บาท{matchedPayment.refundReason ? ` (${matchedPayment.refundReason})` : ''}
                         </span>
                       )}
                       {booking.status === BookingStatus.CANCELLED && booking.cancellationReason && !lateSlip && matchedPayment?.status !== PaymentStatus.EXPIRED && (
-                        <span className="text-[9.5px] text-slate-400">เหตุผล: {booking.cancellationReason}</span>
+                        <span className="text-xs text-slate-400">เหตุผล: {booking.cancellationReason}</span>
                       )}
                       {showUploadButton && matchedPayment && (
                         <button
@@ -2033,7 +2109,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                             const root = bookingById.get(matchedPayment.bookingId) || booking;
                             handleReopenPayment(root, matchedPayment);
                           }}
-                          className="mt-1 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition"
+                          className="mt-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition"
                         >
                           {matchedPayment.status === PaymentStatus.EXPIRED ? '📤 โอนแล้วแต่หมดเวลา? ส่งสลิป'
                             : matchedPayment.status === PaymentStatus.SLIP_UPLOADED ? '🔁 ส่งสลิปใหม่' : '📤 ชำระเงิน / อัปโหลดสลิป'}
@@ -2056,7 +2132,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
             {/* Phone Ear Speaker & Cam */}
             <div className="h-6 bg-slate-800 w-full flex justify-center items-center relative">
               <div className="h-3 w-20 bg-slate-950 rounded-b-xl absolute top-0" />
-              <div className="flex justify-between w-full px-5 text-[9px] text-slate-400 select-none">
+              <div className="flex justify-between w-full px-5 text-xs text-slate-400 select-none">
                 <span>05:30 น.</span>
                 <span className="flex gap-1 items-center">📶 🛜 🔋 100%</span>
               </div>
@@ -2068,7 +2144,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 <div className="h-8 w-8 rounded-full bg-emerald-500 flex items-center justify-center font-bold text-white text-xs shadow-inner">SP</div>
                 <div>
                   <p className="font-bold text-xs">สนามกีฬาคอมเพล็กซ์ LINE OA</p>
-                  <p className="text-[9px] text-emerald-400 flex items-center gap-0.5">● แอดมินและระบบ AI พร้อมตอบ</p>
+                  <p className="text-xs text-emerald-400 flex items-center gap-0.5">● แอดมินและระบบ AI พร้อมตอบ</p>
                 </div>
               </div>
               <button onClick={() => setShowLineSimulator(false)} className="text-slate-400 hover:text-white text-xs px-2 py-1">ย่อ</button>
@@ -2079,7 +2155,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               
               {/* Automated welcome message */}
               <div className="flex items-start gap-2 max-w-[85%]">
-                <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-[8px] font-bold text-white shrink-0">SP</div>
+                <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-[11px] font-bold text-white shrink-0">SP</div>
                 <div className="bg-[#293646] p-2.5 rounded-xl text-[11px] text-slate-200">
                   สวัสดีค่ะ ยินดีต้อนรับสู่ LINE OA ของสปอร์ตคอมเพล็กซ์ 🏸🏀 <br />ระบบจะส่งข้อมูลยืนยันการจอง และแจ้งเตือนล่วงหน้าให้ท่านที่นี่โดยอัติโนมัติค่ะ
                 </div>
@@ -2088,9 +2164,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               {/* Loop client side LINE alerts */}
               {lineMessages.map((msg) => (
                 <div key={msg.id} className="flex flex-col items-start gap-1 max-w-[85%]">
-                  <span className="text-[8px] text-slate-400 pl-8 font-mono">{msg.timestamp.split('T')[1].slice(0, 5)} น.</span>
+                  <span className="text-[11px] text-slate-400 pl-8 font-mono">{msg.timestamp.split('T')[1].slice(0, 5)} น.</span>
                   <div className="flex items-start gap-2">
-                    <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-[8px] font-bold text-white shrink-0">SP</div>
+                    <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-[11px] font-bold text-white shrink-0">SP</div>
                     <div className="bg-emerald-950 border border-emerald-900/60 p-3 rounded-2xl text-[11px] text-emerald-100 whitespace-pre-wrap font-sans">
                       {msg.text}
                     </div>
@@ -2099,7 +2175,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               ))}
 
               {lineMessages.length === 0 && (
-                <p className="text-[10px] text-slate-500 text-center pt-10">ไม่มีแจ้งเตือนในขณะนี้ ยืนยันการจองเพื่อเริ่มรับ Push message ทาง LINE</p>
+                <p className="text-xs text-slate-500 text-center pt-10">ไม่มีแจ้งเตือนในขณะนี้ ยืนยันการจองเพื่อเริ่มรับ Push message ทาง LINE</p>
               )}
             </div>
 

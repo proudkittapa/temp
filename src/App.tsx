@@ -112,15 +112,15 @@ export default function App() {
 
       {/* Role switcher (demo / dev only - see SHOW_ROLE_SWITCHER) */}
       {SHOW_ROLE_SWITCHER && (
-      <div className="bg-slate-900 text-white py-6 border-b border-slate-850">
+      <div className="bg-slate-900 text-white py-3 sm:py-6 border-b border-slate-850">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-800 pb-2.5">
             <span className="bg-emerald-600 text-[9px] font-black tracking-widest px-2.5 py-1 rounded-md uppercase">Simulator Controls</span>
-            <p className="text-xs text-slate-400 font-semibold">คุณกำลังอยู่ในการจำลองระบบ คุณสามารถกดสลับบทบาทด้านล่างเพื่อทดสอบระบบหน้า-หลังได้อย่างอิสระ:</p>
+            <p className="hidden sm:block text-xs text-slate-400 font-semibold">คุณกำลังอยู่ในการจำลองระบบ คุณสามารถกดสลับบทบาทด้านล่างเพื่อทดสอบระบบหน้า-หลังได้อย่างอิสระ:</p>
           </div>
 
           {/* Interactive Role Toggle Grid */}
-          <div id="role-switcher-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div id="role-switcher-grid" className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
             {ROLES_LIST.map((roleObj) => {
               const IconComp = roleObj.icon;
               const isSelected = currentRole === roleObj.role;
@@ -132,7 +132,7 @@ export default function App() {
                     window.history.replaceState(null, '', roleObj.role === UserRole.CUSTOMER ? window.location.pathname : hashForRole(roleObj.role));
                     triggerCompleteRefresh();
                   }}
-                  className={`p-3.5 rounded-xl border text-left cursor-pointer transition select-none ${
+                  className={`p-2.5 sm:p-3.5 rounded-xl border text-left cursor-pointer transition select-none ${
                     isSelected 
                       ? 'bg-slate-800 border-emerald-600 ring-2 ring-emerald-600 text-white' 
                       : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:bg-slate-800 hover:border-slate-700'
@@ -142,7 +142,7 @@ export default function App() {
                     <IconComp className={`h-4.5 w-4.5 shrink-0 ${isSelected ? 'text-emerald-400' : 'text-slate-500'}`} />
                     <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-350'}`}>{roleObj.label}</span>
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{roleObj.desc}</p>
+                  <p className="hidden sm:block text-[10px] text-slate-500 mt-0.5 leading-snug">{roleObj.desc}</p>
                 </div>
               );
             })}

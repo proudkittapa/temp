@@ -18,10 +18,60 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Customer booking on phones
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `f57397e`)
+- **Background:** Owner approved the plan: automatic phone layout with a
+  grid/list toggle; show all hours (taken ones greyed); quick day buttons;
+  Staff POS / Admin tablet layout left for a later round.
+
+### Changed (`src/components/CustomerPanel.tsx`, `src/App.tsx`)
+1. **`slotStatus()`**: the booked / closed / started / off-peak-only /
+   no-price / free / selected decision that every grid cell made inline is
+   one function now, used by the grid and the new list - they can't
+   disagree. Grid cells render from it (same states, same order).
+2. **View mode:** list under 640px (matchMedia, follows rotation), grid
+   above; "ตาราง / รายการ" toggle remembered in localStorage
+   (`sports_complex_booking_view`, try/catch).
+3. **List view:** a card per court ("ว่าง X ชม.", off-peak-only, how many
+   picked), tap to open; hours as 52px buttons, 3 per row, with price and
+   Peak; unavailable hours greyed with the reason. Courts with a selection
+   open by default.
+4. **Quick dates** วันนี้ / พรุ่งนี้ / มะรืน (within the booking window), all
+   screen sizes.
+5. **Phones:** fixed bottom bar with hours + total + "จองต่อ →" and "ล้างที่
+   เลือก"; the demo LINE button shrinks to an icon and hides while the bar
+   shows; the rewards club starts folded (toggle with the point balance);
+   step labels shortened; changing step scrolls the booking area into view
+   (below the sticky header, `scroll-mt`); the demo role switcher is two
+   compact rows. Member-since date was a raw ISO timestamp in API mode -
+   now `formatDate`.
+6. **Readability:** 63 text sizes of 7-10.5px on the customer page raised to
+   11-12px; section titles shortened.
+
+### Verified
+- `tsc`, vitest 29/29.
+- Playwright `mob1.cjs` at 375/390/430px (local) and 390px (API): list
+  view by default, quick date, open a court, pick 2 hours → bottom bar
+  "2 ชม. · 324 บาท", LINE button hidden → "จองต่อ" → step 2 → step 3 (API:
+  real booking created); **no sideways scrolling** at any step, no page
+  errors. `desk1.cjs`/`desk2.cjs` at 1400px: grid by default, toggle +
+  reload remembered, no bottom bar, step indicator visible below the header
+  after "next". Smoke test both modes clean. Screenshots reviewed.
+
+### Not done / follow-ups
+- Staff POS / Admin on tablets (TODO item 3).
+- The backend/Postgres in this sandbox were stopped twice by the
+  environment between runs (not an app problem) - restart them if API tests
+  suddenly see no courts.
+
+---
+
 ## 2026-10-20 — In-page dialogs, Gregorian dates, availability before login, VAT to TODO
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `83728ff`)
+- **Commit(s):** `f57397e` (on `main`, parent `83728ff`)
 - **Owner's decisions:** VAT → TODO; replace pop-ups; Gregorian dates
   (2026); let guests see availability. Mobile redesign: recommendation
   given, waiting for the go-ahead.

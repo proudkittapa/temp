@@ -20,9 +20,9 @@
 - [ ] A public HTTPS address (deployed app) for the login callback and webhook; a temporary tunnel is fine for testing.
 
 ## 3. Mobile-friendly UI
-- [ ] Make the customer pages work well on phones (most customers will book from LINE / mobile): booking grid (currently a wide table), checkout + QR step, booking history, login/register.
-- [ ] Staff POS usable on a tablet.
-- [ ] Check at 375px width (iPhone SE) and 390–430px; no sideways scrolling, buttons big enough to tap.
+- [x] Customer pages on phones: list view with big hour buttons under 640px (grid/list toggle, remembered), bottom booking bar, one-column steps, folded rewards, text ≥ 11-12px; checked at 375/390/430px with no sideways scrolling (2026-10-20).
+- [ ] Staff POS and Admin usable on a tablet (next round).
+- [ ] Try the customer flow on real phones, inside the LINE app too.
 
 ## 4. Forgot password — reset with the phone number
 - [ ] Customers who forget their password reset it using their registered phone number: request a reset → a one-time code is sent to that phone (SMS, or LINE once item 2 exists) → enter the code + a new password.
