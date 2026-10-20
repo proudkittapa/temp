@@ -4,7 +4,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
   User, UserRole
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
+import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
 import { QRCodeSVG } from 'qrcode.react';
@@ -533,7 +533,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       );
 
       if (blockedItem) {
-        alert(`ขออภัยค่ะ! สนามบินปิดระงับบริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
+        alert(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
         return;
       }
 
@@ -611,7 +611,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       );
 
       if (blockedItem) {
-        alert(`ขออภัยค่ะ! สนามบินปิดระงับบริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
+        alert(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
         return;
       }
 
@@ -1134,6 +1134,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                 {voucher.claimCode}
                               </span>
                             </div>
+                            {FREE_HOUR_REWARD_IDS.includes(voucher.rewardId) && (voucher.status || 'ACTIVE') === 'ACTIVE' && (
+                              <p className="text-[9.5px] text-emerald-300/80">🏸 แจ้งรหัสนี้ที่เคาน์เตอร์เพื่อจองสนามช่วง Off-Peak ฟรี 1 ชั่วโมง</p>
+                            )}
                           </div>
                         ))}
 
@@ -1420,7 +1423,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 {/* Overlay lock notice if not logged in */}
                 <div className="relative">
                   {!loggedInUser && (
-                    <div className="absolute inset-0 bg-white/75 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center p-4 text-center rounded-2xl">
+                    <div className="absolute inset-0 bg-white/75 backdrop-blur-[2px] z-30 flex flex-col items-center justify-center p-4 text-center rounded-2xl">
                       <div className="bg-slate-900 border border-slate-800 text-white p-5 rounded-2xl shadow-xl max-w-sm space-y-3">
                         <Shield className="h-6 w-6 text-amber-500 mx-auto animate-pulse" />
                         <h3 className="text-xs font-black text-slate-100 uppercase tracking-widest">🔒 ต้องเข้าสู่ระบบก่อนจึงจะเลือกจองได้</h3>
@@ -1955,7 +1958,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div>
               <p className="text-sm font-bold tracking-tight">ตรวจสอบสถานะการจองล่าสุดทั้งหมด</p>
-              <p className="text-[10px] text-slate-400">จารึกสถานะและสลิปการจองของร้านอาหารสปอร์ตคอมเพล็กซ์แห่งประเทศไทย</p>
+              <p className="text-[10px] text-slate-400">สถานะการจองและสลิปการชำระเงินของคุณ</p>
             </div>
             <span className="text-[10px] bg-slate-800 text-slate-300 font-bold px-2.5 py-1 rounded-full">เรียงใหม่</span>
           </div>

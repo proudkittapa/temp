@@ -638,6 +638,12 @@ export function calculatePrice(
 export const OPENING_HOUR = 7;
 export const CLOSING_HOUR = 23;
 
+// Rewards whose voucher pays for one free off-peak court hour (booked by
+// staff at the counter) rather than an item handed over. Browser-only mode
+// uses the "court" id; the backend catalog marks it with kind
+// FREE_OFFPEAK_HOUR.
+export const FREE_HOUR_REWARD_IDS = ['court', 'rw-hour'];
+
 // The merchant PromptPay ID QR codes pay to in browser-only mode (the Go
 // backend's DefaultPromptPayID).
 export const LOCAL_PROMPTPAY_ID = '0105561008012';

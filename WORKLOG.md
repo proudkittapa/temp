@@ -18,10 +18,86 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Staff can use the free-hour reward; UX clean-up (fake dashboard data, wording)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `80ec384`)
+- **Background:** The owner asked to "allow the staff to use the reward"
+  (the free 1-hour off-peak court voucher could be redeemed but never used)
+  and "is the UI easy to use? anything weird?".
+
+### Changed
+1. **Free-hour voucher → booking.** New payment method `VOUCHER`
+   (`model.PaymentVoucher`, `PaymentMethod.VOUCHER`); reward catalog items
+   have a `kind` (`ITEM` / `FREE_OFFPEAK_HOUR`, `rw-hour` migrated);
+   vouchers record the `booking_id` they paid for. `POST /staff/bookings`
+   with `payment_method: VOUCHER` + `voucher_code`: exactly one hour, off-peak
+   only, booked for the voucher's owner, 0 THB, confirmed at once, no points,
+   voucher locked and set REDEEMED in the same transaction. `/dispense`
+   refuses free-hour vouchers. Cancelling the booking re-activates the
+   voucher and never records a refund. `booking_service.go`,
+   `booking_admin.go`, `reward_service.go`, `booking_api.go`, `main.go`.
+2. **Staff POS.** Walk-in has a third option "🎟️ คูปองชั่วโมงฟรี" with a
+   code box; the voucher tab shows "🏸 ใช้จองชั่วโมงฟรี" for a free hour,
+   which opens the walk-in form with the code, name and phone filled in.
+   Same rules in browser-only mode (localStorage `redemptions`, reward ids
+   in `FREE_HOUR_REWARD_IDS`). Cancel skips the refund question when
+   nothing was paid. Customer voucher list explains how to use the hour.
+3. **Points fix found while testing:** cancelling or marking no-show on a
+   0-THB hour took back a point that was never given. Only hours with an
+   amount > 0 are reversed now (backend and local mode).
+4. **Admin dashboard showed made-up numbers:** a fixed 28% occupancy when
+   nothing was booked, a revenue chart generated from a formula (340,000 THB
+   bars next to a 400 THB all-time total), a fixed peak-hour curve, a fake
+   70/30 drink/snack split, and a default date of 2026-06-20. All now come
+   from recorded bookings/orders (occupancy = sold court-hours ÷ physical
+   courts × 16 h, half courts count half), default date = today. Reports
+   tab: month/year default to now, the year list had a broken value
+   (`2570` instead of 2027), and the CSV ignored the month, had no quoting
+   (commas in names broke rows, `=` could run as a formula) and no BOM (Thai
+   garbled in Excel) — fixed, with payment method/status/refund columns.
+5. **API mode honesty:** dashboard, CSV report and audit-log tabs still read
+   localStorage; they now say so (TODO.md item 5 for server endpoints).
+   Local audit entries are named after the signed-in user, not always
+   "คุณ กิตติ"/"คุณ วิชัย"; Staff POS header shows the real user and role.
+6. **Wording/visual:** "สนามบิน" (airport) → "สนาม" in closure alerts;
+   booking-history subtitle said "ร้านอาหาร" (restaurant); role-save alert
+   said "สภากรรมาธิการ"; removed the "Download ZIP" header link (the file
+   doesn't exist) and the "100% Client-Side Sandbox" footer (now says which
+   mode is running); the mobile "please log in" overlay was hidden behind
+   the sticky court-name column.
+
+### Verified
+- `go build`, `go vet`, `go test ./...` pass; `tsc --noEmit` clean; vitest
+  29/29.
+- Live API (`/var/tmp/e2e5.sh`): free-hour lookup kind, dispense refused,
+  peak hour refused, 2 hours refused, water voucher refused, no code
+  refused, off-peak → 0 THB VOUCHER VERIFIED CONFIRMED 0 points booked for
+  the owner (not the typed phone), reuse refused, manager cancel with
+  refund=true → refund 0, voucher ACTIVE again, points unchanged, rebook OK.
+- Playwright both modes: voucher tab → "ใช้จองชั่วโมงฟรี" → prefilled form
+  → peak refused → off-peak booked, success banner; local cancel → no refund
+  prompt, voucher ACTIVE. Click-through smoke test of all tabs in both modes:
+  no page errors, no failed API calls. Screenshots of dashboard/CSV checked.
+
+### Not done / follow-ups
+- Server-side admin dashboard/report/audit log and server-side F&B/rental
+  orders (TODO.md item 5).
+- UX items reported to the owner but not changed: the role-switcher
+  ("Simulator Controls") is the only navigation and is visible to customers;
+  booking grid is a wide table on phones (TODO item 3); many 7–10 px fonts;
+  cancel/refund use browser prompt()/confirm() chains; lots of alert()s;
+  receipt prints a VAT 7% breakdown with no tax ID; the grid is hidden until
+  login so customers can't check availability first; dates are shown in
+  Buddhist years in some places (header clock, receipts) and ISO Gregorian
+  in others (dashboard, booking codes).
+
+---
+
 ## 2026-10-20 — Cancellations & refunds, late payments, rewards, cash, 2-decimal prices, statuses, booking window
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `8f1f20f`)
+- **Commit(s):** `80ec384` (on `main`, parent `8f1f20f`)
 - **Background:** The owner asked to fix the "things that don't make sense"
   list: 1 cancel/refund, 2 late payments, 3 reward redemption, 4 cash,
   5 rounding to 2 decimals, 6 use the unused statuses, 7 a configurable

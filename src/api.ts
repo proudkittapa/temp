@@ -423,6 +423,8 @@ export interface WalkInInput {
   paymentMethod: PaymentMethod;
   // Staff confirmed booking through a day-off/maintenance block.
   overrideClosure?: boolean;
+  // With paymentMethod VOUCHER: the free-hour reward voucher paying for it.
+  voucherCode?: string;
 }
 
 // Books a counter walk-in, paid on the spot (confirmed immediately). Goes
@@ -441,7 +443,8 @@ export async function createWalkInBooking(input: WalkInInput): Promise<CreatedBo
       customer_name: input.customerName,
       customer_phone: input.customerPhone,
       payment_method: input.paymentMethod,
-      override_closure: !!input.overrideClosure
+      override_closure: !!input.overrideClosure,
+      voucher_code: input.voucherCode || undefined
     }
   });
   return {
@@ -614,7 +617,9 @@ export async function setMaxAdvanceDays(days: number): Promise<void> {
 
 // ---- loyalty rewards (FR-4.2/4.3) ----
 
-export interface RewardItem { id: string; name: string; emoji: string; pointsCost: number }
+// kind FREE_OFFPEAK_HOUR: the voucher pays for one off-peak hour, booked by
+// staff at the counter; ITEM: a thing handed over at the counter.
+export interface RewardItem { id: string; name: string; emoji: string; pointsCost: number; kind: string }
 
 export interface VoucherInfo {
   id: string;
@@ -622,6 +627,7 @@ export interface VoucherInfo {
   rewardId: string;
   rewardName: string;
   rewardEmoji: string;
+  rewardKind: string;
   pointsSpent: number;
   status: 'ACTIVE' | 'REDEEMED' | 'EXPIRED';
   createdAt: string;
@@ -632,19 +638,19 @@ export interface VoucherInfo {
 }
 
 interface ApiVoucher {
-  id: string; code: string; reward_id: string; reward_name: string; reward_emoji: string; points_spent: number;
+  id: string; code: string; reward_id: string; reward_name: string; reward_emoji: string; reward_kind: string; points_spent: number;
   status: string; created_at: string; expires_at: string; dispensed_at?: string; user_name?: string; user_phone?: string;
 }
 
 const toVoucher = (v: ApiVoucher): VoucherInfo => ({
-  id: v.id, code: v.code, rewardId: v.reward_id, rewardName: v.reward_name, rewardEmoji: v.reward_emoji,
+  id: v.id, code: v.code, rewardId: v.reward_id, rewardName: v.reward_name, rewardEmoji: v.reward_emoji, rewardKind: v.reward_kind,
   pointsSpent: v.points_spent, status: v.status as VoucherInfo['status'], createdAt: v.created_at,
   expiresAt: v.expires_at, dispensedAt: v.dispensed_at, userName: v.user_name, userPhone: v.user_phone
 });
 
 export async function listRewards(): Promise<RewardItem[]> {
-  return (await request<{ id: string; name: string; emoji: string; points_cost: number }[]>('/rewards'))
-    .map(r => ({ id: r.id, name: r.name, emoji: r.emoji, pointsCost: r.points_cost }));
+  return (await request<{ id: string; name: string; emoji: string; points_cost: number; kind: string }[]>('/rewards'))
+    .map(r => ({ id: r.id, name: r.name, emoji: r.emoji, pointsCost: r.points_cost, kind: r.kind }));
 }
 
 export async function redeemReward(rewardId: string): Promise<VoucherInfo> {

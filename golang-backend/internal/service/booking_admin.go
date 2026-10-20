@@ -239,7 +239,8 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 			}).Error; err != nil {
 				return err
 			}
-			if b.Status == model.BookingConfirmed {
+			// Only paid hours earned a point - a free (voucher) hour didn't.
+			if b.Status == model.BookingConfirmed && b.TotalAmount > 0 {
 				paidHours++
 			}
 			paidAmount = RoundBaht(paidAmount + b.TotalAmount)
@@ -250,6 +251,21 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 			fmt.Sprintf("%dh of booking %s cancelled: %s", paidHours, root.BookingCode, reason), &root.ID)
 		if err != nil {
 			return err
+		}
+
+		// A free hour paid with a voucher: give the voucher back instead of
+		// a (zero) refund.
+		if p.Method == model.PaymentVoucher {
+			cancelIDs := make([]string, len(cancel))
+			for i, b := range cancel {
+				cancelIDs[i] = b.ID
+			}
+			if err := tx.Model(&model.Voucher{}).Where("booking_id IN ?", cancelIDs).Updates(map[string]interface{}{
+				"status": model.VoucherActive, "dispensed_at": nil, "dispensed_by": nil, "booking_id": nil,
+			}).Error; err != nil {
+				return err
+			}
+			refund = false
 		}
 
 		switch {
@@ -437,8 +453,10 @@ func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, act
 			return err
 		}
 		b.Status = model.BookingNoShow
-		if _, err := s.reversePoints(ctx, tx, b.UserID, 1, actorID, fmt.Sprintf("No-show %s %s (%s)", b.Date, b.StartTime, b.BookingCode), &b.ID); err != nil {
-			return err
+		if b.TotalAmount > 0 { // a free (voucher) hour earned no point to take back
+			if _, err := s.reversePoints(ctx, tx, b.UserID, 1, actorID, fmt.Sprintf("No-show %s %s (%s)", b.Date, b.StartTime, b.BookingCode), &b.ID); err != nil {
+				return err
+			}
 		}
 		return tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: actorID, UserName: actorName,

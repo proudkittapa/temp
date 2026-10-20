@@ -5,7 +5,7 @@ import {
   OperatingHours, User, UserRole, MemberType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR, isPaidBooking, lastBookableDate } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR, isPaidBooking, lastBookableDate, roundBaht } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
@@ -15,6 +15,9 @@ import {
   DollarSign, Eye, Calendar, Settings, Clock, ThumbsUp, Users, Coffee, 
   Layers, Hammer, BarChart3, Save, Plus, Trash2, FileDown, Search, ArrowRight, Activity, ShieldCheck
 } from 'lucide-react';
+
+// Bookable hours per court per day (dashboard occupancy).
+const HOURS_PER_DAY = CLOSING_HOUR - OPENING_HOUR;
 
 interface AdminPanelProps {
   currentUserRole: UserRole;
@@ -41,9 +44,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   // Search filters
   const [auditSearch, setAuditSearch] = useState<string>('');
   const [auditTypeFilter, setAuditTypeFilter] = useState<string>('ALL');
-  const [reportsMonth, setReportsMonth] = useState<string>('06');
-  const [reportsYear, setReportsYear] = useState<string>('2026');
-  const [dashboardSelectedDate, setDashboardSelectedDate] = useState<string>('2026-06-20');
+  const [reportsMonth, setReportsMonth] = useState<string>(() => getTodayDateStr().slice(5, 7));
+  const [reportsYear, setReportsYear] = useState<string>(() => getTodayDateStr().slice(0, 4));
+  const [dashboardSelectedDate, setDashboardSelectedDate] = useState<string>(() => getTodayDateStr());
   const [dashboardSelectedSport, setDashboardSelectedSport] = useState<CourtType>(CourtType.BADMINTON);
 
   // Pricing edit dialog state
@@ -207,12 +210,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     });
     const dailyOrderRevenue = dailyOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
 
-    // Occupancy Rate specifically on dashboardSelectedDate
-    const slotsInDayCount = 16;
-    const totalSlotsPossible = courts.length * slotsInDayCount;
-    const activeTargetSlotsBooked = bookings.filter(b => b.date === targetDateStr && isPaidBooking(b)).length;
-    let occupancyRate = Math.round((activeTargetSlotsBooked / (totalSlotsPossible || 1)) * 100);
-    if (occupancyRate === 0) occupancyRate = 28; // aesthetic baseline fallback
+    // Occupancy on dashboardSelectedDate: share of physical court-hours sold
+    // (a half-court booking fills half of its court).
+    const occupancyRate = Math.round(occupiedShare(dailyBookings) / (physicalCourtCount() * HOURS_PER_DAY || 1) * 1000) / 10;
 
     // All-time Metrics
     const confirmedBookings = bookings.filter(b => isPaidBooking(b));
@@ -237,60 +237,58 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     };
   };
 
-  // Recharts Chart Data builders
+  // Physical courts: a full court and its half-court sides share one
+  // mutex group and count once.
+  const physicalCourtCount = () => new Set(courts.map(c => c.mutexGroupId || c.id)).size;
+  const occupiedShare = (list: Booking[]) =>
+    list.reduce((sum, b) => sum + (courts.find(c => c.id === b.courtId)?.shareOfGroup ?? 1), 0);
+
+  // Recharts chart data, all from recorded bookings and orders: the six
+  // months up to the dashboard date.
   const getRevenueChartData = () => {
-    const months = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.'];
-    return months.map((m, index) => {
-      // Simulate healthy growing sports complex trend
-      const scalar = index + 1;
+    const monthNames = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+    const [y, m] = dashboardSelectedDate.split('-').map(Number);
+    return Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(y, m - 1 - (5 - i), 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       return {
-        name: m,
-        'รายได้ค่าคอร์ท': 52000 * scalar + (index * 3500),
-        'รายได้เครื่องดื่ม/เช่าแร็ก': 12000 * scalar + (index * 1200)
+        name: `${monthNames[d.getMonth()]} ${String(d.getFullYear() + 543).slice(2)}`,
+        'รายได้ค่าคอร์ท': roundBaht(bookings.filter(b => b.date.startsWith(key) && isPaidBooking(b)).reduce((s, b) => s + Number(b.totalAmount), 0)),
+        'รายได้เครื่องดื่ม/เช่าแร็ก': roundBaht(orders.filter(o => o.createdAt.startsWith(key) && o.status !== OrderStatus.CANCELLED).reduce((s, o) => s + Number(o.totalAmount), 0))
       };
     });
   };
 
+  // Average occupancy per hour over the 30 days up to the dashboard date.
   const getDayCapacityChartData = () => {
-    const hoursLabel = ['7:00', '9:00', '11:00', '13:00', '15:00', '17:00', '19:00', '21:00'];
-    return hoursLabel.map((h, i) => {
-      // Peak curve simulation (higher booking count in evening)
-      const weight = i < 2 ? 15 : i < 5 ? 30 : 85; 
-      return {
-        hourName: h,
-        'เฉลี่ยอัตรา (%)': weight
-      };
-    });
+    const end = dashboardSelectedDate;
+    const startD = new Date(`${end}T00:00:00`);
+    startD.setDate(startD.getDate() - 29);
+    const start = `${startD.getFullYear()}-${String(startD.getMonth() + 1).padStart(2, '0')}-${String(startD.getDate()).padStart(2, '0')}`;
+    const inRange = bookings.filter(b => b.date >= start && b.date <= end && isPaidBooking(b));
+    const capacity = physicalCourtCount() * 30 || 1;
+    const out = [];
+    for (let h = OPENING_HOUR; h < CLOSING_HOUR; h++) {
+      const label = `${String(h).padStart(2, '0')}:00`;
+      out.push({ hourName: label, 'เฉลี่ยอัตรา (%)': Math.round(occupiedShare(inRange.filter(b => b.startTime === label)) / capacity * 100) });
+    }
+    return out;
   };
 
-  // F&B Pie chart breakdown
+  // F&B / rental split of counter sales, by the sold products' category.
   const getPieChartData = () => {
-    const rawOrders = orders.filter(o => o.status !== OrderStatus.CANCELLED);
-    let drinkCount = 0;
-    let snackCount = 0;
-    let rentCount = 0;
-
-    rawOrders.forEach(o => {
-      if (o.type === OrderType.FB) {
-        drinkCount += Number(o.totalAmount) * 0.7;
-        snackCount += Number(o.totalAmount) * 0.3;
-      } else {
-        rentCount += Number(o.totalAmount);
-      }
-    });
-
-    if (drinkCount === 0 && snackCount === 0) {
-      return [
-        { name: 'เครื่องดื่มเเกลือแร่', value: 450 },
-        { name: 'มันฝรั่งเลย์/ขนม', value: 210 },
-        { name: 'ค่าเช่าแร็กเกต์หลัก', value: 380 }
-      ];
-    }
-
+    let food = 0, equipment = 0, rental = 0;
+    orders.filter(o => o.status !== OrderStatus.CANCELLED).forEach(o => o.items.forEach(it => {
+      const prod = products.find(p => p.id === it.productId);
+      const amount = it.qty * it.unitPrice;
+      if (prod?.isRental || o.type === OrderType.EQUIPMENT_RENT) rental += amount;
+      else if (prod?.category === ProductCat.EQUIPMENT) equipment += amount;
+      else food += amount;
+    }));
     return [
-      { name: 'เครื่องดื่มเกลือแร่', value: Math.round(drinkCount) },
-      { name: 'มันฝรั่งเลย์/ขนม', value: Math.round(snackCount) },
-      { name: 'ค่าเช่าแร็กเกต์หลัก', value: Math.round(rentCount) }
+      { name: 'อาหารและเครื่องดื่ม', value: roundBaht(food) },
+      { name: 'อุปกรณ์กีฬา (ขาย)', value: roundBaht(equipment) },
+      { name: 'ค่าเช่าอุปกรณ์', value: roundBaht(rental) }
     ];
   };
 
@@ -808,7 +806,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     });
 
     onRefreshAll();
-    alert(`💾 [ระบบสปอร์ตคลับ]: ดำเนินการอัปเกรด/ปรับปรุงสิทธิ์ของคุณ "${afterUser.name}" เรียบร้อยแล้ว!\n\n• ระดับสมาชิก: ${beforeUser.memberType || 'NORMAL'} ➔ ${afterUser.memberType}\n• บทบาทสภากรรมาธิการ: ${beforeUser.role} ➔ ${afterUser.role}`);
+    alert(`บันทึกสิทธิ์ของ "${afterUser.name}" เรียบร้อยแล้ว\n\n• ระดับสมาชิก: ${beforeUser.memberType || 'NORMAL'} ➔ ${afterUser.memberType}\n• บทบาท: ${beforeUser.role} ➔ ${afterUser.role}`);
   };
 
   // Discard pending changes
@@ -1041,13 +1039,22 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   // Simulated Excel XLSX/CSV download (Module 4 Spec)
   const handleDownloadCSVReport = () => {
-    const headings = 'BookingCode,CourtName,CustomerName,Phone,Date,Time,PriceType,Amount,PaymentStatus\n';
-    const rows = bookings.map(b => {
-      const courtName = courts.find(c => c.id === b.courtId)?.name || 'สนาม';
-      return `${b.bookingCode},${courtName},${b.userName},${b.userPhone},${b.date},${b.startTime},${b.priceType},${b.totalAmount},${b.status}`;
+    // Quote every field (names can hold commas) and neutralise leading
+    // = + - @ so a customer name can't run as a spreadsheet formula.
+    const cell = (v: unknown) => {
+      const t = String(v ?? '');
+      return `"${(/^[=+\-@]/.test(t) ? `'${t}` : t).replace(/"/g, '""')}"`;
+    };
+    const month = `${reportsYear}-${reportsMonth}`;
+    const headings = ['BookingCode', 'CourtName', 'CustomerName', 'Phone', 'Date', 'Time', 'PriceType', 'Amount', 'BookingStatus', 'PaymentMethod', 'PaymentStatus', 'Refunded'].join(',') + '\n';
+    const rows = bookings.filter(b => b.date.startsWith(month)).sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime)).map(b => {
+      const courtName = courts.find(c => c.id === b.courtId)?.name || '';
+      const pay = payments.find(p => p.bookingId === b.id);
+      return [b.bookingCode, courtName, b.userName, b.userPhone, b.date, b.startTime, b.priceType, b.totalAmount, b.status, pay?.method || '', pay?.status || '', pay?.refundAmount || 0].map(cell).join(',');
     }).join('\n');
 
-    const combined = headings + rows;
+    // The BOM makes Excel read the file as UTF-8 (Thai names stay readable).
+    const combined = '\uFEFF' + headings + rows;
     const blob = new Blob([combined], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -1058,7 +1065,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     document.body.removeChild(link);
 
     onAddAuditLog('REPORT_CSV_EXPORTED', 'Report', 'csv-gen', null, { month: reportsMonth, year: reportsYear });
-    alert('สร้างไฟล์และดาวน์โหลดรายงานความจุบัญชีสถิติ (.CSV) เรียบร้อย! สำหรับนำไปเปิดบน Excel');
+    alert(`ดาวน์โหลดรายงานการจองเดือน ${reportsMonth}/${Number(reportsYear) + 543} แล้ว (.CSV เปิดด้วย Excel ได้)`);
   };
 
   // Filtering Audit Logs (Module 4 search spec)
@@ -1183,6 +1190,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         {/* Sub Module 1: Main Dashboard (Recharts Visuals) */}
         {activeAdminTab === 'dashboard' && (
           <div className="space-y-6">
+            {api.USE_BACKEND && (
+              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                ⚠️ หน้านี้ยังอ่านข้อมูลที่บันทึกในเบราว์เซอร์นี้ ไม่ใช่ข้อมูลการจองและการชำระเงินบนเซิร์ฟเวอร์ ใช้ยอดจาก "ยอดลิ้นชักวันนี้" ใน Staff POS แทน (ดู TODO.md)
+              </p>
+            )}
             
             {/* Header with Date Selection */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 gap-4">
@@ -1232,7 +1244,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-250 text-xs shadow-xs">
                   <span className="text-indigo-800 block font-bold text-[10px]">อัตราเข้าใช้สนามประจำวัน (Occupancy)</span>
                   <span className="text-2xl font-extrabold text-indigo-950 mt-1 block">{getDashboardStats().occupancyRate}%</span>
-                  <p className="text-[9px] text-indigo-700 mt-1">ของช่วงสปอร์ตคลับ 16 สล็อตรายชั่วโมง</p>
+                  <p className="text-[9px] text-indigo-700 mt-1">ชั่วโมงสนามที่ขายได้ จาก {physicalCourtCount()} สนาม × {HOURS_PER_DAY} ชั่วโมง</p>
                 </div>
               </div>
             </div>
@@ -1272,8 +1284,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               {/* Line graph of revenue growth */}
               <div className="col-span-1 lg:col-span-8 bg-slate-50 p-5 rounded-2xl border border-slate-200/60">
                 <div className="mb-4">
-                  <h4 className="text-xs font-bold text-slate-800">กราฟวิเคราะห์รายรับแยกประเภท (รายสัปดาห์สะสม)</h4>
-                  <p className="text-[10px] text-slate-400 mt-0.5">แบ่งตามรายรับการประจักษ์จองสนามกีฬาเปรียบเทียบตู้ POS ตู้เย็นแช่น้ำ</p>
+                  <h4 className="text-xs font-bold text-slate-800">รายรับแยกประเภท 6 เดือนล่าสุด (บาท)</h4>
+                  <p className="text-[10px] text-slate-400 mt-0.5">ค่าสนามที่ชำระแล้ว เทียบกับยอดขาย/เช่าที่เคาน์เตอร์ ถึงเดือนของวันที่เลือก</p>
                 </div>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -1294,7 +1306,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               <div className="col-span-1 lg:col-span-4 bg-slate-50 p-5 rounded-2xl border border-slate-200/60 flex flex-col justify-between">
                 <div>
                   <h4 className="text-xs font-bold text-slate-800">สัดส่วนรายรับจากเช่าของ / อาหาร</h4>
-                  <p className="text-[10px] text-slate-400 mt-0.5">สถิติเครื่องแยกประเภท POS สต๊าฟกิตติบัดนี้</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">ยอดขายเคาน์เตอร์สะสมทั้งหมด แยกตามประเภทสินค้า</p>
                 </div>
 
                 <div className="h-44 relative flex items-center justify-center my-4">
@@ -1318,7 +1330,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   </ResponsiveContainer>
                   {/* Total indicator overlay */}
                   <div className="absolute text-center">
-                    <p className="text-[9px] text-slate-400 uppercase font-bold tracking-tight">คาดการณ์</p>
+                    <p className="text-[9px] text-slate-400 uppercase font-bold tracking-tight">รวม</p>
                     <p className="font-extrabold text-slate-800 text-sm">{getDashboardStats().fbSales} บ.</p>
                   </div>
                 </div>
@@ -1342,8 +1354,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/60">
               <div className="mb-4">
                 <span className="text-xs bg-amber-100 text-amber-800 font-extrabold px-2.5 py-1 rounded-full uppercase text-[9px]">Peak / Off-Peak Rate Analysis</span>
-                <h4 className="text-xs font-bold text-slate-800 mt-2">กราฟอัตราความหนาแน่นของผู้เล่นจำแนกตามรายคาบช่วงชั่วโมงเล่น (07:00 - 23:00)</h4>
-                <p className="text-[10px] text-slate-400 mt-0.5">วิจัยข้อมูลเพื่อใช้กำหนดเงื่อนไขชั่วโมงทองคำ (Peak Hour Pricing Rule) คุ้มทุนสูงสุด</p>
+                <h4 className="text-xs font-bold text-slate-800 mt-2">อัตราการใช้สนามเฉลี่ยรายชั่วโมง (%) ช่วง 30 วันถึงวันที่เลือก</h4>
+                <p className="text-[10px] text-slate-400 mt-0.5">ใช้ดูว่าช่วงไหนคนเต็ม เพื่อกำหนดช่วง Peak / Off-Peak</p>
               </div>
 
               <div className="h-56">
@@ -2522,6 +2534,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         {/* Sub Module 5: Consolidated reports downloadable excel simulated CSV */}
         {activeAdminTab === 'reports' && (
           <div className="space-y-6">
+            {api.USE_BACKEND && (
+              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                ⚠️ หน้านี้ยังอ่านข้อมูลที่บันทึกในเบราว์เซอร์นี้ ไม่ใช่ข้อมูลการจองและการชำระเงินบนเซิร์ฟเวอร์ ใช้ยอดจาก "ยอดลิ้นชักวันนี้" ใน Staff POS แทน (ดู TODO.md)
+              </p>
+            )}
             <div>
               <h3 className="text-base font-bold text-slate-900">สรุปพิมพ์ดาวน์โหลดรายงานรายได้ (Exporter Console)</h3>
               <p className="text-xs text-slate-500">ข้อมูลจะรี่เรียงออกมาจัดรูปตามมติบัญชี สำหรับยื่นปิดงบดุลประจำปีกับสำนักบัญชีสัญญารุ่นไทย</p>
@@ -2560,8 +2577,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     onChange={(e) => setReportsYear(e.target.value)}
                     className="w-full bg-white border border-slate-200 rounded p-2 text-xs"
                   >
-                    <option value="2026">2569 (2026)</option>
-                    <option value="2570">2570 (2027)</option>
+                    {[-1, 0, 1].map(d => Number(getTodayDateStr().slice(0, 4)) + d).map(y => (
+                      <option key={y} value={String(y)}>{y + 543} ({y})</option>
+                    ))}
                   </select>
                 </div>
 
@@ -2586,6 +2604,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         {/* Sub Module 6: Anti-Fraud Audit LOG interactive system (Anti-Fraud and DB track specifications) */}
         {activeAdminTab === 'audit_logs' && (
           <div className="space-y-4">
+            {api.USE_BACKEND && (
+              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                ⚠️ หน้านี้ยังอ่านข้อมูลที่บันทึกในเบราว์เซอร์นี้ ไม่ใช่ข้อมูลการจองและการชำระเงินบนเซิร์ฟเวอร์ ใช้ยอดจาก "ยอดลิ้นชักวันนี้" ใน Staff POS แทน (ดู TODO.md)
+              </p>
+            )}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-1">

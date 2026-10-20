@@ -50,6 +50,8 @@ type PaymentMethod string
 const (
 	PaymentPromptPay PaymentMethod = "PROMPTPAY"
 	PaymentCash      PaymentMethod = "CASH"
+	// PaymentVoucher: a free hour paid with a loyalty reward voucher.
+	PaymentVoucher PaymentMethod = "VOUCHER"
 )
 
 type PaymentStatus string
@@ -423,8 +425,17 @@ type RewardCatalogItem struct {
 	Name       string `json:"name" db:"name" gorm:"column:name"`
 	Emoji      string `json:"emoji" db:"emoji" gorm:"column:emoji"`
 	PointsCost int    `json:"points_cost" db:"points_cost" gorm:"column:points_cost"`
-	IsActive   bool   `json:"is_active" db:"is_active" gorm:"column:is_active"`
+	// Kind says what redeeming gives: ITEM is handed over at the counter;
+	// FREE_OFFPEAK_HOUR is used by staff to book one off-peak hour at 0 THB.
+	Kind     string `json:"kind" db:"kind" gorm:"column:kind;default:ITEM"`
+	IsActive bool   `json:"is_active" db:"is_active" gorm:"column:is_active"`
 }
+
+// Reward kinds (RewardCatalogItem.Kind).
+const (
+	RewardKindItem            = "ITEM"
+	RewardKindFreeOffPeakHour = "FREE_OFFPEAK_HOUR"
+)
 
 type VoucherStatus string
 
@@ -448,6 +459,9 @@ type Voucher struct {
 	ExpiresAt   time.Time  `json:"expires_at" db:"expires_at" gorm:"column:expires_at"`
 	DispensedAt *time.Time `json:"dispensed_at,omitempty" db:"dispensed_at" gorm:"column:dispensed_at"`
 	DispensedBy *string    `json:"dispensed_by,omitempty" db:"dispensed_by" gorm:"column:dispensed_by"`
+	// The booking a FREE_OFFPEAK_HOUR voucher paid for (cancelling that
+	// booking makes the voucher usable again).
+	BookingID *string `json:"booking_id,omitempty" db:"booking_id" gorm:"column:booking_id"`
 }
 
 // 14. Front-desk cash drawer session (FR-6). Cash totals are computed from

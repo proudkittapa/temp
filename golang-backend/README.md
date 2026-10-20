@@ -213,6 +213,7 @@ curl -X POST http://localhost:8080/api/v1/staff/payments/<payment_id>/reject \
 Goes through the same availability checks and pricing as online bookings,
 and is credited to the registered customer with that phone (member price,
 loyalty points). `CASH` is created CONFIRMED with a VERIFIED payment.
+`VOUCHER` (with `voucher_code`) books a free off-peak hour, see 8c.
 `PROMPTPAY` is created PENDING_PAYMENT with the QR payload in the response;
 staff confirm it with `POST /staff/payments/:id/verify` once the transfer
 has arrived (that also awards the points) or cancel it with `/reject`, and
@@ -303,6 +304,20 @@ curl -X POST http://localhost:8080/api/v1/staff/vouchers/RW-123456/dispense -H "
 ```
 Redeeming deducts the points (ledger `REDEEM`) and issues an `RW-XXXXXX`
 voucher valid for 30 days; it can be handed out once.
+
+The free court hour (`rw-hour`, kind `FREE_OFFPEAK_HOUR`) is not handed out
+with `/dispense` (refused); staff book the hour with it as a walk-in paid by
+`VOUCHER`. It must be exactly one off-peak hour; the booking goes to the
+voucher's owner, costs 0, is confirmed at once, earns no points, and uses
+the voucher up (`vouchers.booking_id`). Cancelling that booking gives the
+voucher back instead of a refund:
+```bash
+curl -X POST http://localhost:8080/api/v1/staff/bookings \
+  -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"date": "2026-06-22", "slots": [{"court_id": "bad-3", "start_time": "09:00"}],
+       "customer_name": "Somchai", "customer_phone": "0811111111",
+       "payment_method": "VOUCHER", "voucher_code": "RW-123456"}'
+```
 
 ### 9. Admin Points Modification & Audit Recording
 ```bash

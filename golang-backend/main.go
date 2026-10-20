@@ -455,11 +455,17 @@ func seedDefaults(db *gorm.DB) {
 		{ID: "rw-water", Name: "น้ำดื่มเย็น", Emoji: "🥤", PointsCost: 5, IsActive: true},
 		{ID: "rw-energy", Name: "เครื่องดื่มเกลือแร่สปอนเซอร์", Emoji: "⚡", PointsCost: 8, IsActive: true},
 		{ID: "rw-towel", Name: "เช่าผ้าเย็นสะอาด", Emoji: "🧼", PointsCost: 10, IsActive: true},
-		{ID: "rw-hour", Name: "สนาม Off-Peak ฟรี 1 ชั่วโมง", Emoji: "🏸", PointsCost: 25, IsActive: true},
+		{ID: "rw-hour", Name: "สนาม Off-Peak ฟรี 1 ชั่วโมง", Emoji: "🏸", PointsCost: 25, IsActive: true, Kind: model.RewardKindFreeOffPeakHour},
 	}
 	for _, r := range rewards {
+		if r.Kind == "" {
+			r.Kind = model.RewardKindItem
+		}
 		check("reward "+r.ID, db.Where(model.RewardCatalogItem{ID: r.ID}).FirstOrCreate(&r).Error)
 	}
+	// rw-hour rows created before reward kinds existed default to ITEM.
+	check("reward kind rw-hour", db.Model(&model.RewardCatalogItem{}).Where("id = ?", "rw-hour").
+		Update("kind", model.RewardKindFreeOffPeakHour).Error)
 	// Payments expired by an earlier version were stored as REJECTED with an
 	// "Expired: ..." reason; give them the EXPIRED status, so a late slip
 	// can still be accepted for them.

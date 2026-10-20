@@ -4,7 +4,8 @@ import { initializeState, StorageService } from './mockData';
 import CustomerPanel from './components/CustomerPanel';
 import StaffPOS from './components/StaffPOS';
 import AdminPanel from './components/AdminPanel';
-import { Shield, Sparkles, User, Users, Briefcase, Star, Clock, Download } from 'lucide-react';
+import { Shield, Sparkles, User, Users, Briefcase, Star, Clock } from 'lucide-react';
+import * as api from './api';
 
 export default function App() {
   const [currentRole, setCurrentRole] = useState<UserRole>(UserRole.CUSTOMER);
@@ -33,10 +34,15 @@ export default function App() {
   // Helper function to append to Audit Log (Module 6 Anti-Fraud Compliance)
   const handleAddNewAuditLog = (action: string, targetType: AuditLog['targetType'], targetId: string, before?: Record<string, unknown> | null, after?: Record<string, unknown> | null, reason?: string) => {
     const currentLogs = StorageService.get<AuditLog[]>('audit_logs', []);
+    const sessionUser = api.USE_BACKEND
+      ? api.getSession(currentRole === UserRole.CUSTOMER ? 'customer' : currentRole === UserRole.ADMIN ? 'admin' : 'staff')?.user
+      : undefined;
     const newLog: AuditLog = {
       id: 'al-' + Date.now(),
-      userId: currentRole === UserRole.CUSTOMER ? 'guest-customer' : 'current-user',
-      userName: currentRole === UserRole.CUSTOMER ? 'ลูกค้าภายนอก (Customer)' : 
+      // With the backend, name whoever is actually signed in to this panel.
+      userId: sessionUser?.id ?? (currentRole === UserRole.CUSTOMER ? 'guest-customer' : 'current-user'),
+      userName: sessionUser ? `${sessionUser.name} (${sessionUser.role})` :
+                currentRole === UserRole.CUSTOMER ? 'ลูกค้าภายนอก (Customer)' :
                 currentRole === UserRole.STAFF ? 'คุณ กิตติ (Staff)' :
                 currentRole === UserRole.MANAGER ? 'คุณ วิชัย (Manager)' : 'คุณ สมชาย (Admin)',
       action,
@@ -86,16 +92,6 @@ export default function App() {
               <Clock className="h-3.5 w-3.5 text-emerald-800" />
               เวลาเซิร์ฟเวอร์ประเทศไทย: {currentUtcTime || 'กำลังดึงเวลา...'}
             </span>
-            <a
-              href="/sports-complex-management-system.zip"
-              download="sports-complex-management-system.zip"
-              id="btn-download-project-zip"
-              className="inline-flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-xs hover:shadow transition duration-150 cursor-pointer"
-              title="ดาวน์โหลดไฟล์โปรเจกต์ทั้งหมดเป็น .ZIP (Download Complete Project ZIP)"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>Download ZIP</span>
-            </a>
           </div>
         </div>
       </header>
@@ -174,8 +170,8 @@ export default function App() {
 
       {/* Footer Branding */}
       <footer className="bg-white border-t border-slate-100 py-6 text-center text-xs text-slate-405 text-slate-500">
-        <p className="font-semibold text-slate-800">Sports Complex Management Thailand — 100% Client-Side Persistent Sandbox Execution</p>
-        <p className="text-[10px] mt-1 text-slate-400">พัฒนาตรงเป้าตามรายละเอียดคู่มือความมั่นคงระบบ คลุมด้วยความมั่นคงต้านโกงสลิปสเตจและทรูอัลกอริทึมปิดกล่อง</p>
+        <p className="font-semibold text-slate-800">Sports Complex Management Thailand</p>
+        <p className="text-[10px] mt-1 text-slate-400">{api.USE_BACKEND ? 'เชื่อมต่อเซิร์ฟเวอร์' : 'โหมดสาธิต: ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น'}</p>
       </footer>
 
     </div>

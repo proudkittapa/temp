@@ -35,7 +35,8 @@ func respondError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrTooManyUnpaid):
 		status = http.StatusTooManyRequests
 	case errors.Is(err, service.ErrDuplicateSlip), errors.Is(err, service.ErrSlipChanged),
-		errors.Is(err, service.ErrLatePaymentSlotGone), errors.Is(err, service.ErrInsufficientPointsForReward):
+		errors.Is(err, service.ErrLatePaymentSlotGone), errors.Is(err, service.ErrInsufficientPointsForReward),
+		errors.Is(err, service.ErrVoucherNotUsable):
 		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"success": false, "error": err.Error()})
@@ -124,13 +125,14 @@ func (h *ArenaHandler) CreateWalkInBooking(c *gin.Context) {
 		PaymentMethod   model.PaymentMethod   `json:"payment_method"`
 		OverrideClosure bool                  `json:"override_closure"`
 		Notes           string                `json:"notes"`
+		VoucherCode     string                `json:"voucher_code"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 		return
 	}
-	if input.PaymentMethod != "" && input.PaymentMethod != model.PaymentCash && input.PaymentMethod != model.PaymentPromptPay {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "payment_method must be CASH or PROMPTPAY"})
+	if input.PaymentMethod != "" && input.PaymentMethod != model.PaymentCash && input.PaymentMethod != model.PaymentPromptPay && input.PaymentMethod != model.PaymentVoucher {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "payment_method must be CASH, PROMPTPAY or VOUCHER"})
 		return
 	}
 	customer, err := h.bookingService.FindCustomerByPhone(c.Request.Context(), input.CustomerPhone)
@@ -155,6 +157,7 @@ func (h *ArenaHandler) CreateWalkInBooking(c *gin.Context) {
 			CustomerPhone:   input.CustomerPhone,
 			PaymentMethod:   input.PaymentMethod,
 			OverrideClosure: input.OverrideClosure,
+			VoucherCode:     input.VoucherCode,
 		},
 	})
 	if err != nil {

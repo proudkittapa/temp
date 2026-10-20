@@ -45,6 +45,7 @@ type VoucherView struct {
 	model.Voucher
 	RewardName  string `json:"reward_name"`
 	RewardEmoji string `json:"reward_emoji"`
+	RewardKind  string `json:"reward_kind"`
 	UserName    string `json:"user_name,omitempty"`
 	UserPhone   string `json:"user_phone,omitempty"`
 }
@@ -95,7 +96,7 @@ func (s *RewardService) Redeem(ctx context.Context, userID, rewardID string) (*V
 		}).Error; err != nil {
 			return err
 		}
-		out = &VoucherView{Voucher: v, RewardName: item.Name, RewardEmoji: item.Emoji}
+		out = &VoucherView{Voucher: v, RewardName: item.Name, RewardEmoji: item.Emoji, RewardKind: item.Kind}
 		return nil
 	})
 	return out, err
@@ -148,7 +149,7 @@ func (s *RewardService) views(db *gorm.DB, vouchers []model.Voucher, withUser bo
 	}
 	out := make([]VoucherView, len(vouchers))
 	for i, v := range vouchers {
-		out[i] = VoucherView{Voucher: v, RewardName: items[v.RewardID].Name, RewardEmoji: items[v.RewardID].Emoji}
+		out[i] = VoucherView{Voucher: v, RewardName: items[v.RewardID].Name, RewardEmoji: items[v.RewardID].Emoji, RewardKind: items[v.RewardID].Kind}
 		if withUser {
 			out[i].UserName, out[i].UserPhone = users[v.UserID].Name, users[v.UserID].Phone
 		}
@@ -204,6 +205,15 @@ func (s *RewardService) Dispense(ctx context.Context, code, staffID, staffName s
 		}
 		if v.Status != model.VoucherActive {
 			return fmt.Errorf("%w: voucher %s is %s", ErrInvalidState, code, v.Status)
+		}
+		// A free court hour isn't handed over: staff use the code to book
+		// the hour (walk-in with payment_method VOUCHER), which uses it up.
+		var item model.RewardCatalogItem
+		if err := tx.First(&item, "id = ?", v.RewardID).Error; err != nil {
+			return err
+		}
+		if item.Kind == model.RewardKindFreeOffPeakHour {
+			return fmt.Errorf("%w: %s is a free court hour - book the hour with it in the walk-in form", ErrInvalidState, code)
 		}
 		if err := tx.Model(&v).Updates(map[string]interface{}{
 			"status": model.VoucherRedeemed, "dispensed_at": now, "dispensed_by": staffID,

@@ -114,6 +114,43 @@ type WalkInDetails struct {
 	// OverrideClosure lets staff knowingly book through a day-off block
 	// (the counter UI asks them to confirm first).
 	OverrideClosure bool
+	// VoucherCode pays for one off-peak hour with a FREE_OFFPEAK_HOUR reward
+	// voucher (PaymentMethod VOUCHER): the hour costs 0, the voucher is used
+	// up in the same transaction, and the booking belongs to the voucher's
+	// owner. No loyalty points are earned for a free hour.
+	VoucherCode string
+}
+
+// ErrVoucherNotUsable: the code isn't an active, unexpired free-hour voucher.
+var ErrVoucherNotUsable = errors.New("voucher can't be used for a free hour")
+
+// loadFreeHourVoucher finds an ACTIVE, unexpired FREE_OFFPEAK_HOUR voucher.
+// With lock=true the row is locked so it can be used up exactly once.
+func loadFreeHourVoucher(db *gorm.DB, code string, now time.Time, lock bool) (*model.Voucher, error) {
+	q := db
+	if lock {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var v model.Voucher
+	if err := q.First(&v, "code = ?", strings.ToUpper(strings.TrimSpace(code))).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: no voucher %s", ErrVoucherNotUsable, code)
+		}
+		return nil, err
+	}
+	var item model.RewardCatalogItem
+	if err := db.First(&item, "id = ?", v.RewardID).Error; err != nil {
+		return nil, err
+	}
+	switch {
+	case item.Kind != model.RewardKindFreeOffPeakHour:
+		return nil, fmt.Errorf("%w: %s is a %s voucher, not a free court hour", ErrVoucherNotUsable, v.Code, item.Name)
+	case v.Status != model.VoucherActive:
+		return nil, fmt.Errorf("%w: %s is %s", ErrVoucherNotUsable, v.Code, v.Status)
+	case now.After(v.ExpiresAt):
+		return nil, fmt.Errorf("%w: %s expired on %s", ErrVoucherNotUsable, v.Code, v.ExpiresAt.In(Bangkok).Format("2006-01-02"))
+	}
+	return &v, nil
 }
 
 type CreateBookingInput struct {
@@ -166,6 +203,23 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		return nil, err
 	}
 
+	// A free-hour voucher pays for exactly one hour and the booking is the
+	// voucher owner's, whatever phone was typed at the counter.
+	useVoucher := input.WalkIn != nil && input.WalkIn.VoucherCode != ""
+	if input.WalkIn != nil && (input.WalkIn.PaymentMethod == model.PaymentVoucher) != useVoucher {
+		return nil, fmt.Errorf("%w: payment_method VOUCHER and voucher_code go together", ErrInvalidBooking)
+	}
+	if useVoucher {
+		if len(input.Slots) != 1 {
+			return nil, fmt.Errorf("%w: a free-hour voucher covers exactly one hour", ErrInvalidBooking)
+		}
+		v, err := loadFreeHourVoucher(s.db.WithContext(ctx), input.WalkIn.VoucherCode, s.now(), false)
+		if err != nil {
+			return nil, err
+		}
+		input.UserID = v.UserID
+	}
+
 	// Member type comes from the resolved user record, never from client
 	// input. A walk-in without an account prices at NORMAL.
 	memberType := model.MemberNormal
@@ -206,6 +260,13 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 	if err != nil {
 		return nil, err
 	}
+	if useVoucher {
+		// FR-4.2: the reward is one free hour *during off-peak hours*.
+		if planned[0].priceType != "OFFPEAK" {
+			return nil, fmt.Errorf("%w: the free-hour voucher is for off-peak hours only", ErrSlotUnavailable)
+		}
+		planned[0].amount = 0
+	}
 
 	var notesVal *string
 	if input.Notes != "" {
@@ -227,7 +288,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		// the transfer and confirm it (POST /staff/payments/:id/verify,
 		// which also awards the points) - it used to be confirmed and
 		// earn points before any money had arrived.
-		if payMethod == model.PaymentCash {
+		if payMethod == model.PaymentCash || payMethod == model.PaymentVoucher {
 			status, payStatus = model.BookingConfirmed, model.PaymentVerified
 		}
 	}
@@ -247,6 +308,14 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 				if err := s.checkUnpaidCap(tx, input.UserID); err != nil {
 					return err
 				}
+			}
+		}
+		// Lock the voucher now; it is used up below once the booking row
+		// exists, so it can't pay for two hours.
+		var voucher *model.Voucher
+		if useVoucher {
+			if voucher, err = loadFreeHourVoucher(tx, input.WalkIn.VoucherCode, s.now(), true); err != nil {
+				return err
 			}
 		}
 		// Closures were checked before the transaction; one created since
@@ -328,7 +397,15 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
-		if total <= 0 {
+		if voucher != nil {
+			if err := tx.Model(voucher).Updates(map[string]interface{}{
+				"status": model.VoucherRedeemed, "dispensed_at": now, "dispensed_by": input.WalkIn.StaffID,
+				"booking_id": result.Bookings[0].ID,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		if total <= 0 && !useVoucher {
 			return fmt.Errorf("%w: the total must be more than 0 THB", ErrInvalidBooking)
 		}
 		if payMethod == model.PaymentPromptPay {
@@ -352,7 +429,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			// Paid in cash at the counter, so loyalty points (FR-4.1: 1 per
 			// hour) are earned now; a PromptPay walk-in earns them when
 			// staff confirm the transfer.
-			if bookingUser != nil && payStatus == model.PaymentVerified {
+			if bookingUser != nil && payStatus == model.PaymentVerified && !useVoucher {
 				refType, note := "Booking", fmt.Sprintf("%dh walk-in booking %s", len(result.Bookings), code)
 				if _, err := s.usrRepo.AddPointsEntry(ctx, tx, bookingUser.ID, model.LedgerEarnBooking, len(result.Bookings), "system", &refType, &result.Bookings[0].ID, &note); err != nil {
 					return fmt.Errorf("failed to award booking points: %w", err)
@@ -368,7 +445,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 				TargetID:   result.Bookings[0].ID,
 				AfterState: model.AuditJSON(map[string]any{
 					"booking_code": code, "slots": len(result.Bookings), "total": total,
-					"payment_method": payMethod, "closure_override": input.WalkIn.OverrideClosure,
+					"payment_method": payMethod, "closure_override": input.WalkIn.OverrideClosure, "voucher_code": input.WalkIn.VoucherCode,
 				}),
 				CreatedAt: now,
 			}).Error

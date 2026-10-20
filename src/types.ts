@@ -43,7 +43,9 @@ export enum BookingStatus {
 
 export enum PaymentMethod {
   PROMPTPAY = 'PROMPTPAY',
-  CASH = 'CASH'
+  CASH = 'CASH',
+  // A free off-peak hour paid with a loyalty reward voucher (0 THB).
+  VOUCHER = 'VOUCHER'
 }
 
 export enum PaymentStatus {

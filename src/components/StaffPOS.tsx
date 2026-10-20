@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, isPaidBooking } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, isPaidBooking } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import DemoLogins, { DEMO_STAFF } from './DemoLogins';
@@ -15,6 +15,9 @@ interface StaffPOSProps {
   triggerRefresh: number;
   onRefreshAll: () => void;
 }
+
+// Browser-only mode keeps reward vouchers in localStorage ("redemptions").
+interface LocalVoucher { id: string; claimCode: string; rewardId: string; rewardName: string; userId: string; userName: string; status?: string; bookingId?: string; dispensedAt?: string }
 
 export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefresh, onRefreshAll }: StaffPOSProps) {
   // Master states
@@ -37,6 +40,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [walkinName, setWalkinName] = useState<string>('');
   const [walkinPhone, setWalkinPhone] = useState<string>('');
   const [walkinPayMethod, setWalkinPayMethod] = useState<PaymentMethod>(PaymentMethod.PROMPTPAY);
+  // RW-XXXXXX code of a free off-peak hour reward, when paying with one
+  const [walkinVoucherCode, setWalkinVoucherCode] = useState<string>('');
   const [walkinSuccessAlert, setWalkinSuccessAlert] = useState<string | null>(null);
   // A PromptPay walk-in is created awaiting payment: staff show this QR
   // (with the price the server actually charges, member discount included)
@@ -83,7 +88,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [daySummary, setDaySummary] = useState<api.DaySummary | null>(null);
   // Reward voucher check at the counter (FR-4.3).
   const [voucherCode, setVoucherCode] = useState<string>('');
-  const [voucherFound, setVoucherFound] = useState<{ code: string; reward: string; customer: string; status: string; expires?: string } | null>(null);
+  const [voucherFound, setVoucherFound] = useState<{ code: string; reward: string; customer: string; name: string; phone: string; freeHour: boolean; status: string; expires?: string } | null>(null);
   const [voucherError, setVoucherError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -275,6 +280,19 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       }
     }
 
+    const useVoucher = walkinPayMethod === PaymentMethod.VOUCHER;
+    const voucherCodeIn = walkinVoucherCode.trim().toUpperCase();
+    if (useVoucher) {
+      if (!voucherCodeIn) {
+        alert('กรุณากรอกรหัสคูปองชั่วโมงฟรี (RW-XXXXXX)');
+        return;
+      }
+      if (slotCourt && !isHourOffPeak(slotCourt.type, walkinDate, hourNum)) {
+        alert('คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วง Off-Peak เท่านั้น กรุณาเลือกเวลา Off-Peak');
+        return;
+      }
+    }
+
     if (api.USE_BACKEND) {
       // The server re-checks availability against every booking (online
       // and walk-in), prices the slot, and credits a registered customer
@@ -285,6 +303,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         customerName: walkinName,
         customerPhone: walkinPhone,
         paymentMethod: walkinPayMethod,
+        voucherCode: useVoucher ? voucherCodeIn : undefined,
         overrideClosure: !!blockedReason
       })
         .then(group => {
@@ -292,10 +311,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           const courtName = courts.find(c => c.id === b.courtId)?.name || '';
           onAddAuditLog('WALKIN_BOOKING_CREATED_BY_STAFF', 'Booking', b.id, null, b);
           if (group.payment.status === PaymentStatus.VERIFIED) {
-            // Cash: paid on the spot, already confirmed.
+            // Cash or free-hour voucher: settled on the spot, already confirmed.
             const ptsNote = group.pointsAwarded > 0 ? `\n🎁 ได้รับแต้มสะสมเพิ่ม: +${group.pointsAwarded} แต้ม` : '';
             pushLineMessage(walkinPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${group.bookingCode} | สนาม ${courtName}\n📅 ${b.date} ${b.startTime}-${b.endTime}\nพบกันที่สนาม! (Walk-in ชำระหน้าเคาน์เตอร์สำเร็จ)${ptsNote}`, "CONFIRMED");
-            setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${group.bookingCode} สำเร็จแล้ว! ยอด ${group.totalAmount} บาท ${group.pointsAwarded > 0 ? `(🎁 มอบแต้มสะสมสมาชิก +${group.pointsAwarded} แต้มสำเร็จ!)` : ''}`);
+            setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${group.bookingCode} สำเร็จแล้ว! ${useVoucher ? `ใช้คูปอง ${voucherCodeIn} (ฟรี 1 ชั่วโมง)` : `ยอด ${formatBaht(group.totalAmount)} บาท`} ${group.pointsAwarded > 0 ? `(🎁 มอบแต้มสะสมสมาชิก +${group.pointsAwarded} แต้มสำเร็จ!)` : ''}`);
           } else {
             setPendingWalkin({
               paymentId: group.payment.id,
@@ -308,6 +327,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           setWalkinSlot('');
           setWalkinName('');
           setWalkinPhone('');
+          setWalkinVoucherCode('');
           onRefreshAll();
         })
         .catch(err => {
@@ -320,7 +340,16 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const courtObj = courts.find(c => c.id === walkinCourtId);
     const normalizedPhone = normalizePhone(walkinPhone);
     const usersList = StorageService.get<User[]>('users', []);
-    const registeredUser = usersList.find(u => normalizePhone(u.phone) === normalizedPhone);
+    // A free-hour voucher books the hour for its owner, whatever phone was typed.
+    const localVouchers = StorageService.get<LocalVoucher[]>('redemptions', []);
+    const voucher = useVoucher ? localVouchers.find(r => r.claimCode === voucherCodeIn) : undefined;
+    if (useVoucher && (!voucher || !FREE_HOUR_REWARD_IDS.includes(voucher.rewardId) || (voucher.status || 'ACTIVE') !== 'ACTIVE')) {
+      alert(!voucher ? 'ไม่พบรหัสคูปองนี้'
+        : !FREE_HOUR_REWARD_IDS.includes(voucher.rewardId) ? 'รหัสนี้ไม่ใช่คูปองชั่วโมงฟรี (ให้มอบของรางวัลที่แท็บ "รับของรางวัล")'
+        : 'คูปองนี้ถูกใช้ไปแล้วหรือหมดอายุ');
+      return;
+    }
+    const registeredUser = voucher ? usersList.find(u => u.id === voucher.userId) : usersList.find(u => normalizePhone(u.phone) === normalizedPhone);
     const resolvedUserId = registeredUser ? registeredUser.id : 'u-walkin-' + Date.now();
 
     // Price through the same engine the grid preview uses (FR-2), instead of
@@ -336,6 +365,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     );
     const isActuallyHalf = courtObj ? courtObj.shareOfGroup < 1 : false;
     const paidInCash = walkinPayMethod === PaymentMethod.CASH;
+    const settledNow = paidInCash || useVoucher;
+    const amount = useVoucher ? 0 : priceDetail.total;
 
     const bookingId = 'bk-walkin-' + Date.now();
     const bkCode = `BK${walkinDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -352,23 +383,24 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       endTime: (parseInt(walkinSlot.split(':')[0], 10) + 1).toString().padStart(2, '0') + ':00',
       isHalfCourt: isActuallyHalf,
       priceType: priceDetail.priceType,
-      totalAmount: priceDetail.total,
-      // Cash is in the drawer, so it's confirmed now; a PromptPay walk-in
-      // waits until staff see the transfer (confirmPendingWalkin).
-      status: paidInCash ? BookingStatus.CONFIRMED : BookingStatus.PENDING_PAYMENT,
+      totalAmount: amount,
+      // Cash is in the drawer (or a voucher paid for it), so it's confirmed
+      // now; a PromptPay walk-in waits until staff see the transfer
+      // (confirmPendingWalkin).
+      status: settledNow ? BookingStatus.CONFIRMED : BookingStatus.PENDING_PAYMENT,
       isEventBlock: false,
       createdAt: new Date().toISOString(),
       createdBy: 'u-staff-1'
     };
 
-    const qrPayload = paidInCash ? undefined : generatePromptPayPayload(LOCAL_PROMPTPAY_ID, priceDetail.total);
+    const qrPayload = settledNow ? undefined : generatePromptPayPayload(LOCAL_PROMPTPAY_ID, priceDetail.total);
     const newPayment: Payment = {
       id: 'pay-walkin-' + Date.now(),
       bookingId: bookingId,
-      amount: priceDetail.total,
+      amount,
       method: walkinPayMethod,
-      status: paidInCash ? PaymentStatus.VERIFIED : PaymentStatus.PENDING,
-      ...(paidInCash ? { verifiedAt: new Date().toISOString(), verifiedBy: 'u-staff-1' } : { qrPayload }),
+      status: settledNow ? PaymentStatus.VERIFIED : PaymentStatus.PENDING,
+      ...(settledNow ? { verifiedAt: new Date().toISOString(), verifiedBy: 'u-staff-1' } : { qrPayload }),
       createdAt: new Date().toISOString()
     };
 
@@ -381,7 +413,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     // Save Log
     onAddAuditLog('WALKIN_BOOKING_CREATED_BY_STAFF', 'Booking', bookingId, null, newBooking);
 
-    if (paidInCash) {
+    if (voucher) {
+      // The voucher is used up by this booking; a free hour earns no points.
+      StorageService.set('redemptions', localVouchers.map(r => r.claimCode === voucher.claimCode
+        ? { ...r, status: 'REDEEMED', dispensedAt: new Date().toISOString(), bookingId } : r));
+      onAddAuditLog('VOUCHER_USED_FOR_BOOKING', 'Voucher', voucher.claimCode, { status: 'ACTIVE' }, { status: 'REDEEMED', bookingId });
+      pushLineMessage(walkinPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${bkCode} | สนาม ${courtObj?.name}\n📅 ${walkinDate} ${walkinSlot}-${newBooking.endTime}\n🎟️ ใช้คูปองชั่วโมงฟรี ${voucher.claimCode}`, "CONFIRMED");
+      setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${bkCode} สำเร็จแล้ว! ใช้คูปอง ${voucher.claimCode} (ฟรี 1 ชั่วโมง)`);
+    } else if (paidInCash) {
       // Points (FR-4.1: 1 per hour) only once paid.
       const pointsAdded = registeredUser ? StorageService.addPointsHour(resolvedUserId, 1) : 0;
       const ptsNote = pointsAdded > 0 ? `\n🎁 ได้รับแต้มสะสมเพิ่ม: +${pointsAdded} แต้ม` : '';
@@ -401,6 +440,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setWalkinSlot('');
     setWalkinName('');
     setWalkinPhone('');
+    setWalkinVoucherCode('');
     onRefreshAll();
   };
 
@@ -607,7 +647,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       `การจอง ${booking.bookingCode} มี ${group.length} ชั่วโมงที่ยังใช้งานอยู่\n\nกด OK = ยกเลิกทั้งหมด ${group.length} ชั่วโมง\nกด Cancel = ยกเลิกเฉพาะ ${booking.startTime}-${booking.endTime}`);
     const target = wholeGroup ? group : [booking];
     const paid = target.some(b => b.status === BookingStatus.CONFIRMED);
-    const refund = paid && window.confirm(`บันทึกการคืนเงินค่าสนามที่ชำระแล้ว ${formatBaht(target.filter(b => b.status === BookingStatus.CONFIRMED).reduce((s, b) => s + b.totalAmount, 0))} บาทด้วยหรือไม่?\n(โอนคืนลูกค้าเองแล้วกด OK / ไม่คืนเงินกด Cancel)`);
+    const paidAmount = target.filter(b => b.status === BookingStatus.CONFIRMED).reduce((s, b) => s + b.totalAmount, 0);
+    // Nothing to refund on a free (voucher) hour - the voucher is given back instead.
+    const refund = paid && paidAmount > 0 && window.confirm(`บันทึกการคืนเงินค่าสนามที่ชำระแล้ว ${formatBaht(paidAmount)} บาทด้วยหรือไม่?\n(โอนคืนลูกค้าเองแล้วกด OK / ไม่คืนเงินกด Cancel)`);
 
     if (api.USE_BACKEND) {
       api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id])
@@ -641,7 +683,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       }
       return p;
     }));
-    const reversed = paidRows.length ? StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -paidRows.length, 'manager', { note: `${paidRows.length}h of ${booking.bookingCode} cancelled: ${reason}` }) : 0;
+    // A cancelled voucher hour hands the voucher back to the customer.
+    StorageService.set('redemptions', StorageService.get<LocalVoucher[]>('redemptions', []).map(r => r.bookingId && ids.has(r.bookingId)
+      ? { ...r, status: 'ACTIVE', dispensedAt: undefined, bookingId: undefined } : r));
+    const paidPointRows = paidRows.filter(b => b.totalAmount > 0);
+    const reversed = paidPointRows.length ? StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -paidPointRows.length, 'manager', { note: `${paidPointRows.length}h of ${booking.bookingCode} cancelled: ${reason}` }) : 0;
     onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { cancelled: target.length, refund, refundAmount: refund ? refundAmount : 0, reason });
     closeBookingDetail();
     onRefreshAll();
@@ -690,7 +736,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return;
     }
     StorageService.set('bookings', StorageService.get<Booking[]>('bookings', []).map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
-    StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -1, 'staff', { note: `No-show ${booking.date} ${booking.startTime}` });
+    if (booking.totalAmount > 0) { // a free (voucher) hour earned no point to take back
+      StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -1, 'staff', { note: `No-show ${booking.date} ${booking.startTime}` });
+    }
     done();
   };
 
@@ -722,7 +770,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Reward voucher check: look the code up, then mark it handed over.
   // Browser-only mode keeps vouchers in localStorage ("redemptions").
-  interface LocalVoucher { id: string; claimCode: string; rewardName: string; userName: string; status?: string }
   const handleLookupVoucher = () => {
     setVoucherError(null);
     setVoucherFound(null);
@@ -730,14 +777,28 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (!code) return;
     if (api.USE_BACKEND) {
       api.lookupVoucher(code)
-        .then(v => setVoucherFound({ code: v.code, reward: `${v.rewardEmoji} ${v.rewardName}`, customer: `${v.userName || ''} ${v.userPhone || ''}`, status: v.status,
+        .then(v => setVoucherFound({ code: v.code, reward: `${v.rewardEmoji} ${v.rewardName}`, customer: `${v.userName || ''} ${v.userPhone || ''}`,
+          name: v.userName || '', phone: v.userPhone || '', freeHour: v.rewardKind === 'FREE_OFFPEAK_HOUR', status: v.status,
           expires: new Date(v.expiresAt).toLocaleDateString('th-TH') }))
         .catch(err => setVoucherError(err instanceof api.ApiError && err.status === 404 ? 'ไม่พบรหัสนี้' : err.message));
       return;
     }
     const v = StorageService.get<LocalVoucher[]>('redemptions', []).find(r => r.claimCode === code);
     if (!v) { setVoucherError('ไม่พบรหัสนี้'); return; }
-    setVoucherFound({ code: v.claimCode, reward: v.rewardName, customer: v.userName, status: v.status || 'ACTIVE' });
+    const owner = StorageService.get<User[]>('users', []).find(u => u.id === v.userId);
+    setVoucherFound({ code: v.claimCode, reward: v.rewardName, customer: `${v.userName} ${owner?.phone || ''}`, name: owner?.name || v.userName,
+      phone: owner?.phone || '', freeHour: FREE_HOUR_REWARD_IDS.includes(v.rewardId), status: v.status || 'ACTIVE' });
+  };
+
+  // A free off-peak hour is used by booking it: open the walk-in form with
+  // the voucher and the customer filled in; staff pick the court and hour.
+  const handleUseFreeHourVoucher = () => {
+    if (!voucherFound) return;
+    setWalkinPayMethod(PaymentMethod.VOUCHER);
+    setWalkinVoucherCode(voucherFound.code);
+    setWalkinName(voucherFound.name);
+    setWalkinPhone(voucherFound.phone);
+    setActivePosTab('walkin');
   };
 
   const handleDispenseVoucher = () => {
@@ -1109,7 +1170,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           <div className="h-10 w-10 bg-emerald-950 text-emerald-400 rounded-xl flex items-center justify-center font-bold font-mono">POS</div>
           <div>
             <p className="text-xs font-bold">แผงทำงานพนักงานสปอร์ตคอมเพล็กซ์ (Staff Panel)</p>
-            <p className="text-[10px] text-slate-400">สต๊าฟเวรเช้า: คุณ กิตติ | สิทธิ์ของคุณ: <span className="text-emerald-400 font-extrabold">{currentUserRole}</span></p>
+            <p className="text-[10px] text-slate-400">ผู้ใช้งาน: {staffUser ? staffUser.name : 'คุณ กิตติ (เดโม)'} | สิทธิ์ของคุณ: <span className="text-emerald-400 font-extrabold">{effectiveRole}</span></p>
           </div>
         </div>
 
@@ -1250,7 +1311,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
                 <div>
                   <label className="block text-slate-700 font-semibold mb-1.5">6. เลือกช่องทางรับชำระ</label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       id="walkin-pay-cash"
                       type="button"
@@ -1267,11 +1328,30 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     >
                       📲 โอนผ่านธนาคาร / QR PromptPay
                     </button>
+                    <button
+                      id="walkin-pay-voucher"
+                      type="button"
+                      onClick={() => setWalkinPayMethod(PaymentMethod.VOUCHER)}
+                      className={`p-2.5 rounded-lg border text-xs font-bold text-center transition ${walkinPayMethod === PaymentMethod.VOUCHER ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                    >
+                      🎟️ คูปองชั่วโมงฟรี
+                    </button>
                   </div>
+                  {walkinPayMethod === PaymentMethod.VOUCHER && (
+                    <input
+                      id="walkin-voucher-code"
+                      value={walkinVoucherCode}
+                      onChange={e => setWalkinVoucherCode(e.target.value)}
+                      placeholder="รหัสคูปอง RW-123456"
+                      className="w-full mt-2 bg-slate-50 border border-slate-200 py-2 px-3 rounded-lg text-xs font-mono uppercase"
+                    />
+                  )}
                   <p className="text-[10px] text-slate-500 mt-1.5">
                     {walkinPayMethod === PaymentMethod.CASH
                       ? 'เงินสด: รับเงินก่อนกดยืนยัน ระบบยืนยันการจองทันทีและนับเข้าลิ้นชักเงินสด'
-                      : 'โอน: ระบบแสดง QR และยอดเงิน แล้วกดยืนยันเมื่อเห็นเงินเข้า'}
+                      : walkinPayMethod === PaymentMethod.VOUCHER
+                        ? 'คูปอง: ฟรี 1 ชั่วโมงช่วง Off-Peak ใช้ได้ครั้งเดียว จองในชื่อเจ้าของคูปอง ไม่ได้แต้มสะสม'
+                        : 'โอน: ระบบแสดง QR และยอดเงิน แล้วกดยืนยันเมื่อเห็นเงินเข้า'}
                   </p>
                 </div>
 
@@ -1279,7 +1359,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   type="submit" 
                   className="w-full bg-[#1e293b] hover:bg-[#334155] text-white py-3 rounded-lg font-bold text-xs shadow-sm transition"
                 >
-                  {walkinPayMethod === PaymentMethod.CASH ? 'รับเงินสดแล้ว ออกตั๋วคอร์ท' : 'สร้างรายการจองและแสดง QR รับชำระ'} &rarr;
+                  {walkinPayMethod === PaymentMethod.CASH ? 'รับเงินสดแล้ว ออกตั๋วคอร์ท' : walkinPayMethod === PaymentMethod.VOUCHER ? 'ใช้คูปองและออกตั๋วคอร์ท' : 'สร้างรายการจองและแสดง QR รับชำระ'} &rarr;
                 </button>
               </form>
 
@@ -2298,9 +2378,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <p className="font-mono font-black text-sm">{voucherFound.code}</p>
                 <p><span className="text-slate-500">ของรางวัล:</span> <span className="font-bold">{voucherFound.reward}</span></p>
                 <p><span className="text-slate-500">ลูกค้า:</span> {voucherFound.customer}</p>
-                <p><span className="text-slate-500">สถานะ:</span> <span className="font-bold">{voucherFound.status === 'ACTIVE' ? '✅ ใช้ได้' : voucherFound.status === 'REDEEMED' ? '⛔ รับไปแล้ว' : '⌛ หมดอายุ'}</span>
+                <p><span className="text-slate-500">สถานะ:</span> <span className="font-bold">{voucherFound.status === 'ACTIVE' ? '✅ ใช้ได้' : voucherFound.status === 'REDEEMED' ? (voucherFound.freeHour ? '⛔ ใช้จองไปแล้ว' : '⛔ รับไปแล้ว') : '⌛ หมดอายุ'}</span>
                   {voucherFound.expires && voucherFound.status === 'ACTIVE' ? ` (ถึง ${voucherFound.expires})` : ''}</p>
-                {voucherFound.status === 'ACTIVE' && (
+                {voucherFound.status === 'ACTIVE' && voucherFound.freeHour && (
+                  <>
+                    <button id="voucher-use-free-hour" type="button" onClick={handleUseFreeHourVoucher} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">🏸 ใช้จองชั่วโมงฟรี</button>
+                    <p className="text-[10px] text-slate-500">เปิดฟอร์ม Walk-in พร้อมรหัสนี้ เลือกสนามและเวลา Off-Peak 1 ชั่วโมง แล้วกดยืนยัน (คูปองถูกใช้เมื่อจองสำเร็จ)</p>
+                  </>
+                )}
+                {voucherFound.status === 'ACTIVE' && !voucherFound.freeHour && (
                   <button type="button" onClick={handleDispenseVoucher} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">มอบของรางวัลแล้ว</button>
                 )}
               </div>
