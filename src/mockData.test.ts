@@ -155,7 +155,7 @@ describe('calculatePrice (FR-2)', () => {
   it('half-court rate and membership discount compose (rate applied before discount)', () => {
     // b_half_b at 500 base * 0.5 half-court rate = 250, then * 0.85 student discount
     const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.STUDENT, court('b_half_b'));
-    expect(result.total).toBe(213); // round(250 * 0.85) = round(212.5) = 213
+    expect(result.total).toBe(212.5); // 250 * 0.85, kept to the satang (NFR-4)
   });
 });
 
@@ -244,5 +244,16 @@ describe('memberTierLabel', () => {
     expect(memberTierLabel(MemberType.STUDENT)).toContain('15%');
     expect(memberTierLabel(MemberType.CORPORATE)).toContain('20%');
     expect(memberTierLabel(MemberType.MEMBER)).toContain('10%');
+  });
+});
+
+describe('roundBaht / formatBaht (2 decimals)', () => {
+  it('keeps satang and formats whole baht without decimals', async () => {
+    const { roundBaht, formatBaht } = await import('./mockData');
+    expect(roundBaht(212.5)).toBe(212.5);
+    expect(roundBaht(153.004)).toBe(153);
+    expect(roundBaht(10 / 3)).toBe(3.33);
+    expect(formatBaht(212.5)).toBe('212.50');
+    expect(formatBaht(1530)).toBe('1,530');
   });
 });

@@ -123,6 +123,7 @@ interface ApiPayment {
   id: string; booking_id: string; amount: number; method: string; status: string;
   slip_url?: string; slip_uploaded_at?: string; verified_at?: string; verified_by?: string;
   refunded_at?: string; refunded_by?: string; refund_reason?: string; qr_payload?: string; created_at: string;
+  refund_amount?: number; expired_at?: string;
 }
 
 const toUser = (u: ApiUser): User => ({
@@ -186,6 +187,8 @@ const toPayment = (p: ApiPayment): Payment => ({
   refundedAt: p.refunded_at,
   refundedBy: p.refunded_by,
   refundReason: p.refund_reason,
+  refundAmount: p.refund_amount,
+  expiredAt: p.expired_at,
   qrPayload: p.qr_payload,
   createdAt: p.created_at
 });
@@ -366,10 +369,10 @@ export interface PricingSnapshot {
 }
 
 export async function getPricing(): Promise<PricingSnapshot> {
-  const d = await request<{ rules: ApiPricingRule[]; config: { half_court_rate_percent: number }; member_discounts: ApiMemberDiscount[] }>('/pricing');
+  const d = await request<{ rules: ApiPricingRule[]; config: { half_court_rate_percent: number; max_advance_days: number }; member_discounts: ApiMemberDiscount[] }>('/pricing');
   return {
     rules: d.rules.map(toRule),
-    config: { id: 'global', halfCourtRatePercent: d.config.half_court_rate_percent },
+    config: { id: 'global', halfCourtRatePercent: d.config.half_court_rate_percent, maxAdvanceDays: d.config.max_advance_days },
     memberDiscounts: d.member_discounts.map(toDiscount)
   };
 }
@@ -473,6 +476,8 @@ export interface ReviewResult {
   bookingCode: string;
   bookingsCount: number;
   pointsAwarded: number;
+  // The payment arrived after the hold expired and the slots were re-booked.
+  late?: boolean;
 }
 
 // slipUploadedAt is the payment's slip_uploaded_at as the staff member saw
@@ -483,7 +488,7 @@ export async function verifyPayment(paymentId: string, slipUploadedAt?: string):
     `/staff/payments/${encodeURIComponent(paymentId)}/verify`,
     { method: 'POST', session: 'staff', body: { expected_slip_uploaded_at: slipUploadedAt ?? null } }
   );
-  return { bookingCode: r.booking_code, bookingsCount: r.bookings_count, pointsAwarded: r.points_awarded };
+  return { bookingCode: r.booking_code, bookingsCount: r.bookings_count, pointsAwarded: r.points_awarded, late: (r as { late?: boolean }).late };
 }
 
 export async function rejectPayment(paymentId: string, reason: string, slipUploadedAt?: string): Promise<ReviewResult> {
@@ -532,4 +537,128 @@ export async function adjustPoints(userId: string, delta: number, reason: string
     body: { points_delta: delta, reason }
   });
   return r.new_balance;
+}
+
+// ---- booking lifecycle: cancel / refund / cash / no-show (FR-6.3) ----
+
+export interface CancelResult {
+  bookingCode: string;
+  cancelled: number;
+  refundAmount: number;
+  pointsReversed: number;
+  paymentStatus: PaymentStatus;
+  remainingActive: number;
+}
+
+// Manager/admin. bookingId is any hour of the group; bookingIds limits the
+// cancellation to those hours. refund records the paid hours as refunded.
+export async function cancelBooking(bookingId: string, reason: string, refund: boolean, bookingIds?: string[], session: SessionKind = 'staff'): Promise<CancelResult> {
+  const r = await request<{ booking_code: string; cancelled: number; refund_amount: number; points_reversed: number; payment_status: string; remaining_active: number }>(
+    `/admin/bookings/${encodeURIComponent(bookingId)}/cancel`,
+    { method: 'POST', session, body: { reason, refund, booking_ids: bookingIds } }
+  );
+  return {
+    bookingCode: r.booking_code, cancelled: r.cancelled, refundAmount: r.refund_amount,
+    pointsReversed: r.points_reversed, paymentStatus: r.payment_status as PaymentStatus, remainingActive: r.remaining_active
+  };
+}
+
+// Manager/admin: record a refund (e.g. a late payment whose slot was taken).
+export async function refundPayment(paymentId: string, reason: string, amount?: number): Promise<Payment> {
+  return toPayment(await request<ApiPayment>(`/admin/payments/${encodeURIComponent(paymentId)}/refund`, {
+    method: 'POST', session: 'staff', body: { reason, amount }
+  }));
+}
+
+// Manager/admin: the customer paid this booking in cash at the counter.
+export async function markPaidInCash(paymentId: string): Promise<ReviewResult> {
+  const r = await request<{ booking_code: string; bookings_count: number; points_awarded: number; late?: boolean }>(
+    `/admin/payments/${encodeURIComponent(paymentId)}/mark-cash`, { method: 'POST', session: 'staff' }
+  );
+  return { bookingCode: r.booking_code, bookingsCount: r.bookings_count, pointsAwarded: r.points_awarded, late: r.late };
+}
+
+// The same, by any hour of the booking (what the booking grid has).
+export async function markBookingPaidInCash(bookingId: string): Promise<ReviewResult> {
+  const r = await request<{ booking_code: string; bookings_count: number; points_awarded: number; late?: boolean }>(
+    `/admin/bookings/${encodeURIComponent(bookingId)}/mark-cash`, { method: 'POST', session: 'staff' }
+  );
+  return { bookingCode: r.booking_code, bookingsCount: r.bookings_count, pointsAwarded: r.points_awarded, late: r.late };
+}
+
+// Staff: the customer didn't come for this (started) hour.
+export async function markNoShow(bookingId: string): Promise<void> {
+  await request(`/staff/bookings/${encodeURIComponent(bookingId)}/no-show`, { method: 'POST', session: 'staff' });
+}
+
+export interface DaySummary {
+  date: string;
+  cashReceived: number;
+  promptpayVerified: number;
+  refunded: number;
+  paidBookings: number;
+}
+
+// Staff: booking money received on a day by method (cash drawer), refunds.
+export async function daySummary(date: string): Promise<DaySummary> {
+  const r = await request<{ date: string; cash_received: number; promptpay_verified: number; refunded: number; paid_bookings: number }>(
+    `/staff/summary?date=${encodeURIComponent(date)}`, { session: 'staff' }
+  );
+  return { date: r.date, cashReceived: r.cash_received, promptpayVerified: r.promptpay_verified, refunded: r.refunded, paidBookings: r.paid_bookings };
+}
+
+// Admin: how many days ahead customers may book online.
+export async function setMaxAdvanceDays(days: number): Promise<void> {
+  await request('/admin/pricing-config', { method: 'PUT', session: 'admin', body: { max_advance_days: days } });
+}
+
+// ---- loyalty rewards (FR-4.2/4.3) ----
+
+export interface RewardItem { id: string; name: string; emoji: string; pointsCost: number }
+
+export interface VoucherInfo {
+  id: string;
+  code: string;
+  rewardId: string;
+  rewardName: string;
+  rewardEmoji: string;
+  pointsSpent: number;
+  status: 'ACTIVE' | 'REDEEMED' | 'EXPIRED';
+  createdAt: string;
+  expiresAt: string;
+  dispensedAt?: string;
+  userName?: string;
+  userPhone?: string;
+}
+
+interface ApiVoucher {
+  id: string; code: string; reward_id: string; reward_name: string; reward_emoji: string; points_spent: number;
+  status: string; created_at: string; expires_at: string; dispensed_at?: string; user_name?: string; user_phone?: string;
+}
+
+const toVoucher = (v: ApiVoucher): VoucherInfo => ({
+  id: v.id, code: v.code, rewardId: v.reward_id, rewardName: v.reward_name, rewardEmoji: v.reward_emoji,
+  pointsSpent: v.points_spent, status: v.status as VoucherInfo['status'], createdAt: v.created_at,
+  expiresAt: v.expires_at, dispensedAt: v.dispensed_at, userName: v.user_name, userPhone: v.user_phone
+});
+
+export async function listRewards(): Promise<RewardItem[]> {
+  return (await request<{ id: string; name: string; emoji: string; points_cost: number }[]>('/rewards'))
+    .map(r => ({ id: r.id, name: r.name, emoji: r.emoji, pointsCost: r.points_cost }));
+}
+
+export async function redeemReward(rewardId: string): Promise<VoucherInfo> {
+  return toVoucher(await request<ApiVoucher>(`/me/rewards/${encodeURIComponent(rewardId)}/redeem`, { method: 'POST', session: 'customer' }));
+}
+
+export async function myVouchers(): Promise<VoucherInfo[]> {
+  return (await request<ApiVoucher[]>('/me/vouchers', { session: 'customer' })).map(toVoucher);
+}
+
+export async function lookupVoucher(code: string): Promise<VoucherInfo> {
+  return toVoucher(await request<ApiVoucher>(`/staff/vouchers/${encodeURIComponent(code.trim())}`, { session: 'staff' }));
+}
+
+export async function dispenseVoucher(code: string): Promise<VoucherInfo> {
+  return toVoucher(await request<ApiVoucher>(`/staff/vouchers/${encodeURIComponent(code.trim())}/dispense`, { method: 'POST', session: 'staff' }));
 }

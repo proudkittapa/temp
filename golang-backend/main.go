@@ -157,6 +157,8 @@ func main() {
 	posService := service.NewPOSService(db, usrRepo)
 	dayOffHandler := handler.NewDayOffHandler(service.NewDayOffService(db))
 	pricingHandler := handler.NewPricingHandler(service.NewPricingAdminService(db))
+	rewardService := service.NewRewardService(db, usrRepo)
+	rewardHandler := handler.NewRewardHandler(rewardService)
 
 	arenaHandler := handler.NewArenaHandler(
 		authService,
@@ -243,6 +245,13 @@ func main() {
 		api.POST("/bookings", loggedIn, arenaHandler.CreateBooking)
 		api.POST("/bookings/:id/upload-slip", loggedIn, arenaHandler.UploadSlip)
 		api.GET("/me/bookings", loggedIn, arenaHandler.MyBookings)
+
+		// Loyalty rewards (FR-4.2/4.3)
+		api.GET("/rewards", rewardHandler.Catalog)
+		api.POST("/me/rewards/:id/redeem", loggedIn, rewardHandler.Redeem)
+		api.GET("/me/vouchers", loggedIn, rewardHandler.MyVouchers)
+		api.GET("/staff/vouchers/:code", staffOnly, rewardHandler.Lookup)
+		api.POST("/staff/vouchers/:code/dispense", staffOnly, rewardHandler.Dispense)
 		api.GET("/slips/:name", slipSigner.Serve) // signed link; see handler.SlipSigner
 
 		// Counter walk-ins, paid on the spot
@@ -252,6 +261,14 @@ func main() {
 		api.GET("/staff/payments", staffOnly, arenaHandler.ListPaymentsForReview)
 		api.POST("/staff/payments/:id/verify", staffOnly, arenaHandler.VerifyPayment)
 		api.POST("/staff/payments/:id/reject", staffOnly, arenaHandler.RejectPayment)
+		api.POST("/staff/bookings/:id/no-show", staffOnly, arenaHandler.MarkNoShow)
+		api.GET("/staff/summary", staffOnly, arenaHandler.DaySummary)
+
+		// Cancellations, refunds and cash recorded by a manager (FR-6.3)
+		api.POST("/admin/bookings/:id/cancel", managerOnly, arenaHandler.CancelBooking)
+		api.POST("/admin/payments/:id/refund", managerOnly, arenaHandler.RefundPayment)
+		api.POST("/admin/payments/:id/mark-cash", managerOnly, arenaHandler.MarkPaidInCash)
+		api.POST("/admin/bookings/:id/mark-cash", managerOnly, arenaHandler.MarkBookingPaidInCash)
 
 		// POS systems
 		api.POST("/pos/order", staffOnly, arenaHandler.ProcessPOSCheckout)
@@ -278,7 +295,7 @@ func main() {
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned
 	// checkouts don't block courts forever.
-	go expireUnpaidBookingsLoop(bookingService, authService)
+	go expireUnpaidBookingsLoop(bookingService, authService, rewardService)
 
 	// 5. Fire Up listener
 	port := os.Getenv("PORT")
@@ -314,6 +331,7 @@ func seedDefaults(db *gorm.DB) {
 	check("pricing_config", db.Where(model.PricingConfig{ID: "global"}).FirstOrCreate(&model.PricingConfig{
 		ID:                   "global",
 		HalfCourtRatePercent: 50,
+		MaxAdvanceDays:       30,
 	}).Error)
 
 	discounts := []model.MemberDiscount{
@@ -432,6 +450,22 @@ func seedDefaults(db *gorm.DB) {
 		}
 	}
 
+	// FR-4.2 rewards catalog (same items as mockData.ts DEFAULT_REWARDS_CATALOG).
+	rewards := []model.RewardCatalogItem{
+		{ID: "rw-water", Name: "น้ำดื่มเย็น", Emoji: "🥤", PointsCost: 5, IsActive: true},
+		{ID: "rw-energy", Name: "เครื่องดื่มเกลือแร่สปอนเซอร์", Emoji: "⚡", PointsCost: 8, IsActive: true},
+		{ID: "rw-towel", Name: "เช่าผ้าเย็นสะอาด", Emoji: "🧼", PointsCost: 10, IsActive: true},
+		{ID: "rw-hour", Name: "สนาม Off-Peak ฟรี 1 ชั่วโมง", Emoji: "🏸", PointsCost: 25, IsActive: true},
+	}
+	for _, r := range rewards {
+		check("reward "+r.ID, db.Where(model.RewardCatalogItem{ID: r.ID}).FirstOrCreate(&r).Error)
+	}
+	// Payments expired by an earlier version were stored as REJECTED with an
+	// "Expired: ..." reason; give them the EXPIRED status, so a late slip
+	// can still be accepted for them.
+	check("expired payment status", db.Exec("UPDATE payments SET status = ?, expired_at = COALESCE(expired_at, updated_at) "+
+		"WHERE status = ? AND refund_reason LIKE 'Expired:%'", model.PaymentExpired, model.PaymentRejected).Error)
+
 	// Without the pricing config no booking can be priced at all.
 	var cfgCount int64
 	if err := db.Model(&model.PricingConfig{}).Where("id = ?", "global").Count(&cfgCount).Error; err != nil || cfgCount == 0 {
@@ -474,7 +508,7 @@ func resolveJWTSecret() []byte {
 	return b
 }
 
-func expireUnpaidBookingsLoop(bookings *service.BookingService, auth *service.AuthService) {
+func expireUnpaidBookingsLoop(bookings *service.BookingService, auth *service.AuthService, rewards *service.RewardService) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for ; ; <-ticker.C {
@@ -483,6 +517,14 @@ func expireUnpaidBookingsLoop(bookings *service.BookingService, auth *service.Au
 			log.Printf("Warning: expiring unpaid bookings failed: %v\n", err)
 		} else if n > 0 {
 			log.Printf("Expired %d unpaid booking group(s) past the %v payment hold.\n", n, service.PaymentHoldDuration)
+		}
+		if n, err := bookings.CompleteFinishedBookings(context.Background()); err != nil {
+			log.Printf("Warning: completing finished bookings failed: %v\n", err)
+		} else if n > 0 {
+			log.Printf("Marked %d finished booking hour(s) COMPLETED.\n", n)
+		}
+		if _, err := rewards.ExpireVouchers(context.Background()); err != nil {
+			log.Printf("Warning: expiring vouchers failed: %v\n", err)
 		}
 		if err := auth.PruneLoginFailures(context.Background()); err != nil {
 			log.Printf("Warning: pruning old failed logins failed: %v\n", err)

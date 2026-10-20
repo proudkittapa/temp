@@ -51,7 +51,10 @@ export enum PaymentStatus {
   SLIP_UPLOADED = 'SLIP_UPLOADED',
   VERIFIED = 'VERIFIED',
   REJECTED = 'REJECTED',
-  REFUNDED = 'REFUNDED'
+  REFUNDED = 'REFUNDED',
+  // No slip within the payment hold: the booking was cancelled, but a slip
+  // can still be sent if the customer did pay (late payment).
+  EXPIRED = 'EXPIRED'
 }
 
 export enum OrderType {
@@ -117,6 +120,8 @@ export interface PricingConfig {
   // membership discounts (FR-2.4). Independent of Court.shareOfGroup, which
   // only describes physical proportion for mutex/display purposes.
   halfCourtRatePercent: number;
+  // How many days ahead customers may book online (staff aren't limited).
+  maxAdvanceDays?: number;
 }
 
 export interface OperatingHours {
@@ -184,6 +189,10 @@ export interface Payment {
   refundedAt?: string;
   refundedBy?: string;
   refundReason?: string;
+  // Money returned so far; REFUNDED once it covers `amount`.
+  refundAmount?: number;
+  // Set when the payment hold ran out; still set after a late slip arrives.
+  expiredAt?: string;
   qrPayload?: string;
   createdAt: string;
 }
@@ -291,7 +300,8 @@ export enum LedgerEntryType {
   EARN_BOOKING = 'EARN_BOOKING',
   EARN_PURCHASE = 'EARN_PURCHASE',
   REDEEM = 'REDEEM',
-  ADJUST_MANUAL = 'ADJUST_MANUAL'
+  ADJUST_MANUAL = 'ADJUST_MANUAL',
+  REVERSE_BOOKING = 'REVERSE_BOOKING'
 }
 
 // Append-only loyalty history (FR-4.1/FR-4.3, AC-6/AC-7). User.points is a

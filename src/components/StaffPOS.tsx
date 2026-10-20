@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
-  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType
+  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, isPaidBooking } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import DemoLogins, { DEMO_STAFF } from './DemoLogins';
@@ -27,7 +27,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [users, setUsers] = useState<User[]>([]);
 
   // Sub Module tab state
-  const [activePosTab, setActivePosTab] = useState<'walkin' | 'slips' | 'fb' | 'rentals' | 'todays_total'>('walkin');
+  const [activePosTab, setActivePosTab] = useState<'walkin' | 'slips' | 'fb' | 'rentals' | 'todays_total' | 'vouchers'>('walkin');
 
   // Walk-in booking state
   const [posGridSportType, setPosGridSportType] = useState<CourtType>(CourtType.BADMINTON);
@@ -79,14 +79,21 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [staffPassword, setStaffPassword] = useState<string>('');
   const [staffApiError, setStaffApiError] = useState<string | null>(null);
   const [reviewQueue, setReviewQueue] = useState<api.PaymentForReview[]>([]);
+  // API mode: today's booking money by method, for the cash-drawer report.
+  const [daySummary, setDaySummary] = useState<api.DaySummary | null>(null);
+  // Reward voucher check at the counter (FR-4.3).
+  const [voucherCode, setVoucherCode] = useState<string>('');
+  const [voucherFound, setVoucherFound] = useState<{ code: string; reward: string; customer: string; status: string; expires?: string } | null>(null);
+  const [voucherError, setVoucherError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api.USE_BACKEND || !staffUser) return;
     let cancelled = false;
-    api.listPaymentsForReview()
-      .then(queue => {
+    Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr())])
+      .then(([queue, summary]) => {
         if (cancelled) return;
         setReviewQueue(queue);
+        setDaySummary(summary);
         setStaffApiError(null);
       })
       .catch(err => {
@@ -578,6 +585,179 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     return Promise.resolve(true);
   };
 
+  // Managers/admins may cancel, refund and record cash (FR-6.3); every
+  // staff member may mark a no-show. API mode: the signed-in staff account's
+  // role; browser-only mode: the role switcher.
+  const effectiveRole = api.USE_BACKEND ? staffUser?.role : currentUserRole;
+  const canManageBookings = effectiveRole === UserRole.MANAGER || effectiveRole === UserRole.ADMIN;
+
+  const closeBookingDetail = () => {
+    setSelectedReceiptBooking(null);
+    setSelectedReceiptOrder(null);
+  };
+
+  // Manager/admin cancellation of a booking (this hour or the whole group),
+  // optionally recording a refund of what was paid. Reason required.
+  const handleCancelBooking = (booking: Booking) => {
+    const reason = window.prompt(`เหตุผลการยกเลิกการจอง ${booking.bookingCode} (จำเป็น - บันทึกใน Audit Log):`)?.trim();
+    if (!reason) return;
+    const allBookings = api.USE_BACKEND ? bookings : StorageService.get<Booking[]>('bookings', []);
+    const group = bookingGroupOf(booking, allBookings).filter(b => b.status === BookingStatus.PENDING_PAYMENT || b.status === BookingStatus.CONFIRMED);
+    const wholeGroup = group.length <= 1 || window.confirm(
+      `การจอง ${booking.bookingCode} มี ${group.length} ชั่วโมงที่ยังใช้งานอยู่\n\nกด OK = ยกเลิกทั้งหมด ${group.length} ชั่วโมง\nกด Cancel = ยกเลิกเฉพาะ ${booking.startTime}-${booking.endTime}`);
+    const target = wholeGroup ? group : [booking];
+    const paid = target.some(b => b.status === BookingStatus.CONFIRMED);
+    const refund = paid && window.confirm(`บันทึกการคืนเงินค่าสนามที่ชำระแล้ว ${formatBaht(target.filter(b => b.status === BookingStatus.CONFIRMED).reduce((s, b) => s + b.totalAmount, 0))} บาทด้วยหรือไม่?\n(โอนคืนลูกค้าเองแล้วกด OK / ไม่คืนเงินกด Cancel)`);
+
+    if (api.USE_BACKEND) {
+      api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id])
+        .then(res => {
+          onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { ...res, reason });
+          closeBookingDetail();
+          onRefreshAll();
+          alert(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}`);
+        })
+        .catch(err => alert(`ยกเลิกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
+    // Browser-only mode: same rules on localStorage.
+    const ids = new Set(target.map(b => b.id));
+    const paidRows = target.filter(b => b.status === BookingStatus.CONFIRMED);
+    const refundAmount = roundBaht(target.reduce((s, b) => s + b.totalAmount, 0));
+    StorageService.set('bookings', allBookings.map(b => ids.has(b.id)
+      ? { ...b, status: BookingStatus.CANCELLED, cancellationReason: `ยกเลิกโดยผู้จัดการ: ${reason}` } : b));
+    const groupIds = new Set(bookingGroupOf(booking, allBookings).map(b => b.id));
+    const remaining = group.length - target.length;
+    StorageService.set('payments', StorageService.get<Payment[]>('payments', []).map(p => {
+      if (!groupIds.has(p.bookingId)) return p;
+      if (refund) {
+        const total = roundBaht((p.refundAmount || 0) + refundAmount);
+        return { ...p, refundAmount: total, refundReason: reason, refundedAt: new Date().toISOString(), refundedBy: 'manager',
+          status: total >= p.amount ? PaymentStatus.REFUNDED : p.status };
+      }
+      if (remaining === 0 && (p.status === PaymentStatus.PENDING || p.status === PaymentStatus.SLIP_UPLOADED)) {
+        return { ...p, status: PaymentStatus.REJECTED, refundReason: reason };
+      }
+      return p;
+    }));
+    const reversed = paidRows.length ? StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -paidRows.length, 'manager', { note: `${paidRows.length}h of ${booking.bookingCode} cancelled: ${reason}` }) : 0;
+    onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { cancelled: target.length, refund, refundAmount: refund ? refundAmount : 0, reason });
+    closeBookingDetail();
+    onRefreshAll();
+    alert(`ยกเลิก ${target.length} ชั่วโมงแล้ว${refund ? ` · บันทึกคืนเงิน ${formatBaht(refundAmount)} บาท` : ''}${reversed ? ` · หักแต้มคืน ${-reversed}` : ''}`);
+  };
+
+  // Manager/admin: the customer paid this unpaid booking in cash at the
+  // counter - confirms it like an approved slip (counted in the cash drawer).
+  const handleMarkPaidInCash = (booking: Booking) => {
+    if (!window.confirm(`ยืนยันว่าได้รับเงินสดสำหรับการจอง ${booking.bookingCode} แล้ว?`)) return;
+    const done = (count: number, pts: number) => {
+      onAddAuditLog('PAID_IN_CASH_RECORDED', 'Booking', booking.id, null, { bookingCode: booking.bookingCode });
+      closeBookingDetail();
+      onRefreshAll();
+      alert(`บันทึกรับเงินสดแล้ว ยืนยัน ${count} ชั่วโมง${pts ? ` (+${pts} แต้ม)` : ''}`);
+    };
+    if (api.USE_BACKEND) {
+      api.markBookingPaidInCash(booking.id)
+        .then(res => done(res.bookingsCount, res.pointsAwarded))
+        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    const allBookings = StorageService.get<Booking[]>('bookings', []);
+    const group = bookingGroupOf(booking, allBookings);
+    const groupIds = new Set(group.map(b => b.id));
+    const pending = group.filter(b => b.status === BookingStatus.PENDING_PAYMENT);
+    const pendingIds = new Set(pending.map(b => b.id));
+    StorageService.set('bookings', allBookings.map(b => pendingIds.has(b.id) ? { ...b, status: BookingStatus.CONFIRMED } : b));
+    StorageService.set('payments', StorageService.get<Payment[]>('payments', []).map(p => groupIds.has(p.bookingId)
+      ? { ...p, method: PaymentMethod.CASH, status: PaymentStatus.VERIFIED, verifiedAt: new Date().toISOString(), verifiedBy: 'manager' } : p));
+    const pts = pending.length ? StorageService.addPointsHour(booking.userId, pending.length) : 0;
+    done(pending.length, pts);
+  };
+
+  // Any staff: the customer didn't come for this (already started) hour.
+  // The hour's loyalty point is taken back; the payment is kept.
+  const handleMarkNoShow = (booking: Booking) => {
+    if (!window.confirm(`บันทึกว่าลูกค้าไม่มาใช้สนาม ${booking.startTime}-${booking.endTime} (${booking.bookingCode})?`)) return;
+    const done = () => {
+      onAddAuditLog('BOOKING_NO_SHOW', 'Booking', booking.id, { status: booking.status }, { status: BookingStatus.NO_SHOW });
+      closeBookingDetail();
+      onRefreshAll();
+    };
+    if (api.USE_BACKEND) {
+      api.markNoShow(booking.id).then(done).catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    StorageService.set('bookings', StorageService.get<Booking[]>('bookings', []).map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
+    StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -1, 'staff', { note: `No-show ${booking.date} ${booking.startTime}` });
+    done();
+  };
+
+  // Manager/admin refund of a payment with no booking standing for it -
+  // e.g. a late payment whose slot was taken meanwhile.
+  const handleRefundPayment = (pay: Payment) => {
+    const reason = window.prompt(`เหตุผลการคืนเงิน ${formatBaht(pay.amount - (pay.refundAmount || 0))} บาท (จำเป็น):`)?.trim();
+    if (!reason) return;
+    if (api.USE_BACKEND) {
+      api.refundPayment(pay.id, reason)
+        .then(p => {
+          onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: p.refundAmount, reason });
+          onRefreshAll();
+          alert(`บันทึกคืนเงิน ${formatBaht(p.refundAmount || 0)} บาทแล้ว`);
+        })
+        .catch(err => alert(`คืนเงินไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    const allBookings = StorageService.get<Booking[]>('bookings', []);
+    const root = allBookings.find(b => b.id === pay.bookingId);
+    const groupIds = new Set(root ? bookingGroupOf(root, allBookings).map(b => b.id) : []);
+    StorageService.set('bookings', allBookings.map(b => groupIds.has(b.id) && b.status === BookingStatus.PENDING_PAYMENT
+      ? { ...b, status: BookingStatus.CANCELLED, cancellationReason: `คืนเงิน: ${reason}` } : b));
+    StorageService.set('payments', StorageService.get<Payment[]>('payments', []).map(p => p.id === pay.id
+      ? { ...p, status: PaymentStatus.REFUNDED, refundAmount: p.amount, refundReason: reason, refundedAt: new Date().toISOString() } : p));
+    onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: pay.amount, reason });
+    onRefreshAll();
+  };
+
+  // Reward voucher check: look the code up, then mark it handed over.
+  // Browser-only mode keeps vouchers in localStorage ("redemptions").
+  interface LocalVoucher { id: string; claimCode: string; rewardName: string; userName: string; status?: string }
+  const handleLookupVoucher = () => {
+    setVoucherError(null);
+    setVoucherFound(null);
+    const code = voucherCode.trim().toUpperCase();
+    if (!code) return;
+    if (api.USE_BACKEND) {
+      api.lookupVoucher(code)
+        .then(v => setVoucherFound({ code: v.code, reward: `${v.rewardEmoji} ${v.rewardName}`, customer: `${v.userName || ''} ${v.userPhone || ''}`, status: v.status,
+          expires: new Date(v.expiresAt).toLocaleDateString('th-TH') }))
+        .catch(err => setVoucherError(err instanceof api.ApiError && err.status === 404 ? 'ไม่พบรหัสนี้' : err.message));
+      return;
+    }
+    const v = StorageService.get<LocalVoucher[]>('redemptions', []).find(r => r.claimCode === code);
+    if (!v) { setVoucherError('ไม่พบรหัสนี้'); return; }
+    setVoucherFound({ code: v.claimCode, reward: v.rewardName, customer: v.userName, status: v.status || 'ACTIVE' });
+  };
+
+  const handleDispenseVoucher = () => {
+    if (!voucherFound) return;
+    const code = voucherFound.code;
+    const done = () => {
+      onAddAuditLog('VOUCHER_DISPENSED', 'Voucher', code, { status: 'ACTIVE' }, { status: 'REDEEMED' });
+      setVoucherFound({ ...voucherFound, status: 'REDEEMED' });
+      alert(`มอบของรางวัล ${voucherFound.reward} แล้ว`);
+    };
+    if (api.USE_BACKEND) {
+      api.dispenseVoucher(code).then(done).catch(err => setVoucherError(err.message));
+      return;
+    }
+    const list = StorageService.get<LocalVoucher[]>('redemptions', []);
+    if (list.find(r => r.claimCode === code)?.status === 'REDEEMED') { setVoucherError('รหัสนี้รับของไปแล้ว'); return; }
+    StorageService.set('redemptions', list.map(r => r.claimCode === code ? { ...r, status: 'REDEEMED', dispensedAt: new Date().toISOString() } : r));
+    done();
+  };
+
   // A PromptPay walk-in waiting for staff to see the transfer arrive.
   const confirmPendingWalkin = () => {
     if (!pendingWalkin) return;
@@ -845,47 +1025,52 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     alert('บันทึกการส่งคืนอุปกรณ์กีฬาเข้าคลังเรียบร้อย! คืนสต๊อกให้สนามเรียบร้อย');
   };
 
-  // Calculate Ledger parameters (Module 3 Specification)
+  // Calculate Ledger parameters (Module 3 Specification). Booking money is
+  // counted when it was received: in API mode from the server's day summary
+  // (payments approved today by method, refunds recorded today); in
+  // browser-only mode from localStorage. Completed and no-show hours count
+  // as paid like confirmed ones.
   const calculateLedger = () => {
     const todayStr = getTodayDateStr();
-    
-    // Day's confirmed bookings
-    const confirmedBookings = bookings.filter(b => b.date === todayStr && b.status === BookingStatus.CONFIRMED);
-    // Day's confirmed bookings revenue
-    const bookingIncome = confirmedBookings.reduce((sum, b) => sum + Number(b.totalAmount), 0);
+    const paidBookings = bookings.filter(b => b.date === todayStr && isPaidBooking(b));
 
-    // Day's orders (F&B / rentals)
+    // Day's orders (F&B / rentals) - browser-only in both modes
     const dayOrders = orders.filter(o => o.createdAt.startsWith(todayStr) && o.status !== OrderStatus.CANCELLED);
-    
-    const fbIncome = dayOrders.filter(o => o.type === OrderType.FB).reduce((sum, o) => sum + Number(o.totalAmount), 0);
-    const rentalIncome = dayOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT).reduce((sum, o) => sum + Number(o.totalAmount), 0);
-
-    const totalExpectedRevenue = bookingIncome + fbIncome + rentalIncome;
-
-    // Reconciliation expected CASH vs QR promptpay
-    const cashSumFromBookings = confirmedBookings.filter(b => {
-      const pm = payments.find(p => p.bookingId === b.id);
-      return pm?.method === PaymentMethod.CASH;
-    }).reduce((sum, b) => sum + Number(b.totalAmount), 0);
-
+    const fbIncome = roundBaht(dayOrders.filter(o => o.type === OrderType.FB).reduce((sum, o) => sum + Number(o.totalAmount), 0));
+    const rentalIncome = roundBaht(dayOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT).reduce((sum, o) => sum + Number(o.totalAmount), 0));
     const cashSumFromOrders = dayOrders.filter(o => o.paymentMethod === PaymentMethod.CASH).reduce((sum, o) => sum + Number(o.totalAmount), 0);
-
-    const qrSumFromBookings = confirmedBookings.filter(b => {
-      const pm = payments.find(p => p.bookingId === b.id);
-      return pm?.method === PaymentMethod.PROMPTPAY;
-    }).reduce((sum, b) => sum + Number(b.totalAmount), 0);
-
     const qrSumFromOrders = dayOrders.filter(o => o.paymentMethod === PaymentMethod.PROMPTPAY).reduce((sum, o) => sum + Number(o.totalAmount), 0);
 
+    let cashFromBookings = 0, qrFromBookings = 0, refunded = 0;
+    if (api.USE_BACKEND) {
+      cashFromBookings = daySummary?.cashReceived ?? 0;
+      qrFromBookings = daySummary?.promptpayVerified ?? 0;
+      refunded = daySummary?.refunded ?? 0;
+    } else {
+      // The group's payment hangs off its first row: look it up per group.
+      const paymentFor = (b: Booking) => {
+        const ids = new Set(bookingGroupOf(b, bookings).map(x => x.id));
+        return payments.find(p => ids.has(p.bookingId));
+      };
+      for (const b of paidBookings) {
+        const method = paymentFor(b)?.method;
+        if (method === PaymentMethod.CASH) cashFromBookings += b.totalAmount;
+        else if (method === PaymentMethod.PROMPTPAY) qrFromBookings += b.totalAmount;
+      }
+      refunded = payments.filter(p => p.refundedAt?.startsWith(todayStr)).reduce((sum, p) => sum + (p.refundAmount || 0), 0);
+    }
+    const bookingIncome = roundBaht(cashFromBookings + qrFromBookings);
+
     return {
-      bookingCount: confirmedBookings.length,
-      walkinCount: confirmedBookings.filter(b => b.createdBy === 'u-staff-1').length,
+      bookingCount: paidBookings.length,
+      walkinCount: paidBookings.filter(b => b.createdBy !== 'customer' && b.createdBy !== b.userId).length,
       bookingIncome,
       fbIncome,
       rentalIncome,
-      cashExpected: cashSumFromBookings + cashSumFromOrders,
-      qrExpected: qrSumFromBookings + qrSumFromOrders,
-      totalExpected: totalExpectedRevenue
+      cashExpected: roundBaht(cashFromBookings + cashSumFromOrders),
+      qrExpected: roundBaht(qrFromBookings + qrSumFromOrders),
+      refunded: roundBaht(refunded),
+      totalExpected: roundBaht(bookingIncome + fbIncome + rentalIncome)
     };
   };
 
@@ -965,6 +1150,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'rentals' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
           🏸 ยืม/เช่าแร็กเกต & รองเท้า
+        </button>
+        <button
+          onClick={() => setActivePosTab('vouchers')}
+          className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'vouchers' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
+        >
+          🎁 รับของรางวัล
         </button>
         <button
           onClick={() => setActivePosTab('todays_total')}
@@ -1061,22 +1252,26 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   <label className="block text-slate-700 font-semibold mb-1.5">6. เลือกช่องทางรับชำระ</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
+                      id="walkin-pay-cash"
                       type="button"
-                      disabled
-                      className="p-2.5 rounded-lg border text-xs font-bold text-center transition bg-slate-100 cursor-not-allowed opacity-50 text-slate-400"
+                      onClick={() => setWalkinPayMethod(PaymentMethod.CASH)}
+                      className={`p-2.5 rounded-lg border text-xs font-bold text-center transition ${walkinPayMethod === PaymentMethod.CASH ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
                     >
-                      💵 รับเงินสด (งดรับเงินสด)
+                      💵 รับเงินสด
                     </button>
                     <button
+                      id="walkin-pay-promptpay"
                       type="button"
                       onClick={() => setWalkinPayMethod(PaymentMethod.PROMPTPAY)}
-                      className="p-2.5 rounded-lg border text-xs font-bold text-center transition bg-slate-900 text-white border-slate-900"
+                      className={`p-2.5 rounded-lg border text-xs font-bold text-center transition ${walkinPayMethod === PaymentMethod.PROMPTPAY ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
                     >
                       📲 โอนผ่านธนาคาร / QR PromptPay
                     </button>
                   </div>
-                  <p className="text-[10px] text-rose-600 font-bold mt-1.5 flex items-center gap-1">
-                    ⚠️ คำเตือนนโยบายคลับ: คอมเพล็กซ์งดรับชำระเงินสดทุกกรณี (รับเฉพาะโอนเงินผ่านบัญชีธนาคารเท่านั้น ตามคำสั่งระดับผู้บริหาร)
+                  <p className="text-[10px] text-slate-500 mt-1.5">
+                    {walkinPayMethod === PaymentMethod.CASH
+                      ? 'เงินสด: รับเงินก่อนกดยืนยัน ระบบยืนยันการจองทันทีและนับเข้าลิ้นชักเงินสด'
+                      : 'โอน: ระบบแสดง QR และยอดเงิน แล้วกดยืนยันเมื่อเห็นเงินเข้า'}
                   </p>
                 </div>
 
@@ -1084,7 +1279,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   type="submit" 
                   className="w-full bg-[#1e293b] hover:bg-[#334155] text-white py-3 rounded-lg font-bold text-xs shadow-sm transition"
                 >
-                  สร้างรายการจองและแสดง QR รับชำระ &rarr;
+                  {walkinPayMethod === PaymentMethod.CASH ? 'รับเงินสดแล้ว ออกตั๋วคอร์ท' : 'สร้างรายการจองและแสดง QR รับชำระ'} &rarr;
                 </button>
               </form>
 
@@ -1104,7 +1299,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     )}
                     <div>
                       <p className="text-slate-500">ยอดที่ต้องชำระ</p>
-                      <p id="walkin-pending-amount" className="text-2xl font-black text-slate-900">{pendingWalkin.amount} บาท</p>
+                      <p id="walkin-pending-amount" className="text-2xl font-black text-slate-900">{formatBaht(pendingWalkin.amount)} บาท</p>
                       <p className="text-[10px] text-slate-500 mt-1">ให้ลูกค้าสแกน QR แล้วตรวจยอดเงินเข้าก่อนกดยืนยัน</p>
                     </div>
                   </div>
@@ -1265,7 +1460,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                                 {bItem.userName}
                               </span>
                               <span className="text-[7.5px] text-slate-500 font-mono scale-[0.9]">
-                                {isPending ? '⏳ ค้างVerify' : '✓ โอนแล้ว'}
+                                {isPending ? '⏳ ค้างVerify'
+                                  : bItem.status === BookingStatus.COMPLETED ? '🏁 เล่นแล้ว'
+                                  : bItem.status === BookingStatus.NO_SHOW ? '🚫 ไม่มา'
+                                  : '✓ ชำระแล้ว'}
                               </span>
                             </td>
                           );
@@ -1438,7 +1636,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           </div>
                           
                           <div className="text-right">
-                            <p className="font-extrabold text-emerald-700 text-sm">{pay.amount} บาท</p>
+                            {pay.expiredAt && (
+                              <p className="text-[9.5px] font-black text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 mb-1">⚠️ ส่งสลิปหลังหมดเวลา</p>
+                            )}
+                            <p className="font-extrabold text-emerald-700 text-sm">{formatBaht(pay.amount)} บาท</p>
                             <p className="text-[9px] text-slate-400">อัพโหลดเมื่อ: {pay.slipUploadedAt ? pay.slipUploadedAt.split('T')[1].slice(0, 5) : 'ไม่ระบุ'}</p>
                           </div>
                         </div>
@@ -1456,6 +1657,17 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                             </a>
                           )}
                           
+                          {canManageBookings && (
+                            <button
+                              type="button"
+                              onClick={() => handleRefundPayment(pay)}
+                              title="ลูกค้าโอนแล้วแต่ยืนยันการจองไม่ได้ (เช่น ส่งสลิปช้าและมีผู้อื่นจองไปแล้ว) - บันทึกการคืนเงิน"
+                              className="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 py-1.5 px-3 rounded text-[11px] font-bold transition"
+                            >
+                              💸 คืนเงิน
+                            </button>
+                          )}
+
                           <button
                             onClick={() => {
                               setRejectId(pay.id);
@@ -2067,6 +2279,35 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           </div>
         )}
 
+        {/* Reward vouchers: staff check an RW-XXXXXX claim code and hand the
+            reward over (FR-4.3). */}
+        {activePosTab === 'vouchers' && (
+          <div className="max-w-lg space-y-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">🎁 ตรวจรหัสแลกของรางวัล</h3>
+              <p className="text-xs text-slate-500">ลูกค้าแสดงรหัส RW-XXXXXX จากหน้าแลกแต้ม ตรวจแล้วกดมอบของรางวัล (ใช้ได้ครั้งเดียว)</p>
+            </div>
+            <form onSubmit={e => { e.preventDefault(); handleLookupVoucher(); }} className="flex gap-2">
+              <input id="voucher-code-input" value={voucherCode} onChange={e => setVoucherCode(e.target.value)} placeholder="RW-123456"
+                className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono uppercase" />
+              <button type="submit" className="bg-slate-900 text-white font-bold px-4 rounded-lg text-xs">ตรวจรหัส</button>
+            </form>
+            {voucherError && <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠️ {voucherError}</p>}
+            {voucherFound && (
+              <div id="voucher-result" className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2 text-xs">
+                <p className="font-mono font-black text-sm">{voucherFound.code}</p>
+                <p><span className="text-slate-500">ของรางวัล:</span> <span className="font-bold">{voucherFound.reward}</span></p>
+                <p><span className="text-slate-500">ลูกค้า:</span> {voucherFound.customer}</p>
+                <p><span className="text-slate-500">สถานะ:</span> <span className="font-bold">{voucherFound.status === 'ACTIVE' ? '✅ ใช้ได้' : voucherFound.status === 'REDEEMED' ? '⛔ รับไปแล้ว' : '⌛ หมดอายุ'}</span>
+                  {voucherFound.expires && voucherFound.status === 'ACTIVE' ? ` (ถึง ${voucherFound.expires})` : ''}</p>
+                {voucherFound.status === 'ACTIVE' && (
+                  <button type="button" onClick={handleDispenseVoucher} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">มอบของรางวัลแล้ว</button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Tab 5: Today's consolidate accounting summary (Read only block for staff) */}
         {activePosTab === 'todays_total' && (
           <div className="space-y-6">
@@ -2084,20 +2325,23 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <span className="text-[10px] font-semibold text-slate-500 block uppercase">รวมประมาณการล่วงหน้าที่ต้องปิดกล่อง</span>
-                <span className="font-extrabold text-emerald-700 text-3xl mt-1 block">{calculateLedger().totalExpected} บาท</span>
-                <p className="text-[10px] text-slate-400 mt-2">ยอดสนาม: {calculateLedger().bookingIncome} | F&B: {calculateLedger().fbIncome} | ของเครื่อง: {calculateLedger().rentalIncome}</p>
+                <span className="font-extrabold text-emerald-700 text-3xl mt-1 block">{formatBaht(calculateLedger().totalExpected)} บาท</span>
+                <p className="text-[10px] text-slate-400 mt-2">ยอดสนาม: {formatBaht(calculateLedger().bookingIncome)} | F&B: {formatBaht(calculateLedger().fbIncome)} | ของเครื่อง: {formatBaht(calculateLedger().rentalIncome)}</p>
+                {calculateLedger().refunded > 0 && (
+                  <p className="text-[10px] text-sky-700 font-bold mt-1">💸 คืนเงินวันนี้: {formatBaht(calculateLedger().refunded)} บาท</p>
+                )}
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <span className="text-[10px] font-semibold text-slate-500 block uppercase">ความต่าง Ledger การเงิน (CASH vs พร้อมเพย์)</span>
                 <div className="mt-2 space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">💵 รวมคาดยอดเงินสด:</span>
-                    <span className="font-bold text-slate-400">0 บาท (งดรับเงินสด)</span>
+                    <span className="text-slate-500">💵 รวมคาดยอดเงินสด (ในลิ้นชัก):</span>
+                    <span id="ledger-cash" className="font-bold text-slate-800">{formatBaht(calculateLedger().cashExpected)} บาท</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">📲 รวมสลิปผ่าน QR:</span>
-                    <span className="font-bold text-slate-800 text-slate-800">{calculateLedger().qrExpected + calculateLedger().cashExpected} บาท</span>
+                    <span id="ledger-qr" className="font-bold text-slate-800 text-slate-800">{formatBaht(calculateLedger().qrExpected)} บาท</span>
                   </div>
                 </div>
               </div>
@@ -2117,7 +2361,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <div className="space-y-2.5">
                   <span className="text-[10.5px] font-bold text-slate-700 block">🥇 รายการจองสนามวันนี้ (Verified Court Bookings):</span>
                   <div className="space-y-2 max-h-[250px] overflow-y-auto border border-slate-100 rounded-lg p-2.5 bg-slate-50/30">
-                    {bookings.filter(b => b.date === getTodayDateStr() && b.status === BookingStatus.CONFIRMED).map(b => (
+                    {bookings.filter(b => b.date === getTodayDateStr() && isPaidBooking(b)).map(b => (
                       <div key={b.id} className="bg-white p-2.5 rounded-lg border border-slate-200 text-[10.5px] flex items-center justify-between hover:bg-slate-50 transition">
                         <div>
                           <p className="font-bold text-slate-800">{courts.find(c => c.id === b.courtId)?.name || 'สนามกีฬาทั่วไป'}</p>
@@ -2328,6 +2572,30 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <p className="italic">"ขอบพระคุณลูกค้าที่วางใจคอมเพล็กซ์ของเราค่ะ"</p>
               </div>
             </div>
+
+            {/* Booking actions: cancel/refund and cash for managers, no-show
+                for any staff. */}
+            {selectedReceiptBooking && (() => {
+              const b = selectedReceiptBooking;
+              const timing = slotTiming(b.date, b.startTime);
+              const canNoShow = (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED) && timing.started;
+              const canCancel = canManageBookings && (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING_PAYMENT);
+              const canCash = canManageBookings && b.status === BookingStatus.PENDING_PAYMENT;
+              if (!canNoShow && !canCancel && !canCash) return null;
+              return (
+                <div id="booking-actions" className="flex flex-wrap gap-2 text-[11px]">
+                  {canCash && (
+                    <button type="button" onClick={() => handleMarkPaidInCash(b)} className="flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold py-1.5 rounded-lg">💵 รับเงินสดแล้ว</button>
+                  )}
+                  {canNoShow && (
+                    <button type="button" onClick={() => handleMarkNoShow(b)} className="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold py-1.5 rounded-lg">🚫 ไม่มาใช้สนาม</button>
+                  )}
+                  {canCancel && (
+                    <button type="button" onClick={() => handleCancelBooking(b)} className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded-lg">✖ ยกเลิก / คืนเงิน</button>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Print action buttons */}
             <div className="grid grid-cols-2 gap-2 text-xs">

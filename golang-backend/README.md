@@ -258,7 +258,51 @@ curl -X PUT http://localhost:8080/api/v1/admin/pricing-config \
   -d '{"half_court_rate_percent": 50}'
 ```
 `POST /admin/pricing-rules` creates a rule; `DELETE /admin/pricing-rules/:id`
-removes one. An hour no active rule covers counts as closed.
+removes one. An hour no active rule covers counts as closed. Prices are kept
+to 2 decimal places (satang). `PUT /admin/pricing-config` also takes
+`"max_advance_days"` (default 30, 1-365): how many days ahead customers may
+book online; staff at the counter aren't limited.
+
+### 8b. Cancellations, refunds, cash, no-shows (FR-6.3)
+Managers/admins cancel bookings (a reason is required and audit-logged).
+`:id` is any hour of the booking; `booking_ids` limits it to some hours.
+`refund: true` records the cancelled paid hours as refunded (the transfer
+itself is done by staff). Points earned for cancelled hours are taken back
+(never below zero). Payment status becomes `REFUNDED` once refunds cover the
+whole amount.
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/bookings/<booking_id>/cancel \
+  -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \
+  -d '{"reason": "Court lights broken", "refund": true, "booking_ids": ["<booking_id>"]}'
+# Refund a payment no booking stands for (e.g. a late payment whose slot was taken)
+curl -X POST http://localhost:8080/api/v1/admin/payments/<payment_id>/refund \
+  -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" -d '{"reason": "..."}'
+# The customer paid an unpaid booking in cash at the counter
+curl -X POST http://localhost:8080/api/v1/admin/bookings/<booking_id>/mark-cash -H "Authorization: Bearer <Manager_Token>"
+# Any staff: the customer didn't come for this (started) hour - takes back its point
+curl -X POST http://localhost:8080/api/v1/staff/bookings/<booking_id>/no-show -H "Authorization: Bearer <Staff_Token>"
+# Booking money received today by method (cash drawer) and refunds
+curl "http://localhost:8080/api/v1/staff/summary?date=2026-06-20" -H "Authorization: Bearer <Staff_Token>"
+```
+**Late payments:** a booking with no slip after 30 minutes becomes payment
+`EXPIRED` (bookings cancelled). The customer can still upload a slip for it;
+it shows in the staff queue marked late. Approving it books the same slots
+again if they are all still free; otherwise the approval fails with
+"refund the customer instead" and a manager records the refund.
+**Statuses:** confirmed hours become `COMPLETED` automatically once their end
+time has passed; `NO_SHOW` is set by staff; payments use `EXPIRED` and
+`REFUNDED` as above.
+
+### 8c. Loyalty rewards (FR-4.2/4.3)
+```bash
+curl http://localhost:8080/api/v1/rewards                                  # catalog
+curl -X POST http://localhost:8080/api/v1/me/rewards/rw-water/redeem -H "Authorization: Bearer <Customer_Token>"
+curl http://localhost:8080/api/v1/me/vouchers -H "Authorization: Bearer <Customer_Token>"
+curl http://localhost:8080/api/v1/staff/vouchers/RW-123456 -H "Authorization: Bearer <Staff_Token>"
+curl -X POST http://localhost:8080/api/v1/staff/vouchers/RW-123456/dispense -H "Authorization: Bearer <Staff_Token>"
+```
+Redeeming deducts the points (ledger `REDEEM`) and issues an `RW-XXXXXX`
+voucher valid for 30 days; it can be handed out once.
 
 ### 9. Admin Points Modification & Audit Recording
 ```bash

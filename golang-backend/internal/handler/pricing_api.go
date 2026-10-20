@@ -103,17 +103,19 @@ func (h *PricingHandler) UpdateMemberDiscount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
 }
 
-// PUT /api/v1/admin/pricing-config {"half_court_rate_percent": 50}
+// PUT /api/v1/admin/pricing-config {"half_court_rate_percent": 50, "max_advance_days": 30}
+// - either field may be omitted.
 func (h *PricingHandler) UpdateConfig(c *gin.Context) {
 	var in struct {
-		HalfCourtRatePercent *float64 `json:"half_court_rate_percent" binding:"required"`
+		HalfCourtRatePercent *float64 `json:"half_court_rate_percent"`
+		MaxAdvanceDays       *int     `json:"max_advance_days"`
 	}
-	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+	if err := c.ShouldBindJSON(&in); err != nil || (in.HalfCourtRatePercent == nil && in.MaxAdvanceDays == nil) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "send half_court_rate_percent and/or max_advance_days"})
 		return
 	}
 	actorID, actorName := actor(c)
-	cfg, err := h.pricing.UpdateHalfCourtRate(c.Request.Context(), *in.HalfCourtRatePercent, actorID, actorName)
+	cfg, err := h.pricing.UpdateConfig(c.Request.Context(), in.HalfCourtRatePercent, in.MaxAdvanceDays, actorID, actorName)
 	if err != nil {
 		respondError(c, err)
 		return

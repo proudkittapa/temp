@@ -34,7 +34,8 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, service.ErrTooManyUnpaid):
 		status = http.StatusTooManyRequests
-	case errors.Is(err, service.ErrDuplicateSlip), errors.Is(err, service.ErrSlipChanged):
+	case errors.Is(err, service.ErrDuplicateSlip), errors.Is(err, service.ErrSlipChanged),
+		errors.Is(err, service.ErrLatePaymentSlotGone), errors.Is(err, service.ErrInsufficientPointsForReward):
 		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"success": false, "error": err.Error()})

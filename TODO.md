@@ -24,6 +24,12 @@
 - [ ] Staff POS usable on a tablet.
 - [ ] Check at 375px width (iPhone SE) and 390–430px; no sideways scrolling, buttons big enough to tap.
 
-## 4. Test the features
-- [ ] Add items 1–3 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).
+## 4. Forgot password — reset with the phone number
+- [ ] Customers who forget their password reset it using their registered phone number: request a reset → a one-time code is sent to that phone (SMS, or LINE once item 2 exists) → enter the code + a new password.
+- [ ] Backend: `POST /auth/password-reset/request {phone}` (always answers the same, so it doesn't reveal which numbers are registered) and `POST /auth/password-reset/confirm {phone, code, new_password}`; codes expire after ~10 minutes, single use, stored hashed; rate-limited like logins (`login_failures`).
+- [ ] Needs an SMS provider account (e.g. ThaiBulkSMS / Twilio) and its API key in `golang-backend/.env`. Until then the current "contact staff" message stays.
+- [ ] Optional: staff/admin can trigger a reset for a customer at the counter after checking ID.
+
+## 5. Test the features
+- [ ] Add items 1–4 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).
 - [ ] Scan the PromptPay QR with at least two Thai banking apps.

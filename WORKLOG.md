@@ -18,10 +18,105 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Cancellations & refunds, late payments, rewards, cash, 2-decimal prices, statuses, booking window
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `8f1f20f`)
+- **Background:** The owner asked to fix the "things that don't make sense"
+  list: 1 cancel/refund, 2 late payments, 3 reward redemption, 4 cash,
+  5 rounding to 2 decimals, 6 use the unused statuses, 7 a configurable
+  booking window (1 month); 8 password reset by phone → TODO only; 9 LINE →
+  later (already in TODO).
+- **Interpretation of #4:** any staff may take cash for a walk-in (FR-5.1);
+  additionally managers/admins can record that an existing unpaid booking
+  was paid in cash. Say if only managers/admins should take cash at all.
+
+### Changed
+1. **Cancel / refund (FR-6.3).** `POST /admin/bookings/:id/cancel` (manager/
+   admin; reason required; whole group or chosen hours; `refund` records the
+   paid hours as refunded), `POST /admin/payments/:id/refund` (refund a
+   payment no booking stands for). Points for cancelled confirmed hours are
+   taken back (never below zero; ledger type `REVERSE_BOOKING`). New
+   `payments.refund_amount`; status `REFUNDED` once it covers the amount.
+   UI: "✖ ยกเลิก / คืนเงิน" in the Staff POS booking detail (managers), and
+   after creating a closure the Admin panel offers to cancel the overlapped
+   bookings with refunds. Customer history shows "คืนเงินแล้ว X บาท".
+   `internal/service/booking_admin.go`, `internal/handler/lifecycle_api.go`.
+2. **Late payment.** Expired holds now get payment status `EXPIRED` (+
+   `expired_at`) instead of `REJECTED`; old rows are migrated at startup.
+   The customer can still send a slip for it (history button "โอนแล้วแต่
+   หมดเวลา? ส่งสลิป"; the payment page hides the QR and says not to pay
+   again). The slip shows in the staff queue as "⚠️ ส่งสลิปหลังหมดเวลา";
+   approving it re-books the same slots if all are still free (same checks
+   and locks as a new booking), otherwise it fails with "refund the customer
+   instead" and a manager uses "💸 คืนเงิน".
+3. **Rewards in API mode.** Seeded catalog; `GET /rewards`,
+   `POST /me/rewards/:id/redeem` (points deducted via the ledger, voucher
+   `RW-XXXXXX` valid 30 days), `GET /me/vouchers`, staff
+   `GET /staff/vouchers/:code` and `POST …/dispense` (once only; expired
+   vouchers refused). New Staff POS tab "🎁 รับของรางวัล" (both modes).
+   `internal/service/reward_service.go`.
+4. **Cash.** Walk-in form offers cash again (confirmed at once, counted in
+   the drawer) and PromptPay (QR + confirm). Managers/admins: "💵 รับเงินสดแล้ว"
+   on an unpaid booking (`POST /admin/bookings/:id/mark-cash`). The drawer
+   report no longer hard-codes "0 cash"; in API mode it uses the new
+   `GET /staff/summary` (money approved today by method, refunds today).
+5. **Prices to 2 decimals** (NFR-4): `RoundBaht` in Go and `roundBaht` in TS
+   (same results); totals rounded to the satang; displayed with
+   `formatBaht` ("212.50", "1,530").
+6. **Statuses in use:** `COMPLETED` set automatically every minute once a
+   confirmed hour has ended; `NO_SHOW` set by staff on a started hour
+   ("🚫 ไม่มาใช้สนาม", takes back that hour's point, payment kept);
+   payment `REFUNDED` and the new `EXPIRED`; voucher `REDEEMED`/`EXPIRED`.
+   Revenue/occupancy counts treat COMPLETED and NO_SHOW as paid.
+7. **Booking window:** online bookings up to `max_advance_days` ahead
+   (default 30, admin-editable 1–365 in Admin → Pricing; stored in
+   `pricing_config`); the date picker is limited to it; counter bookings
+   aren't limited.
+8. **TODO.md** item 4: password reset by phone number (not built).
+
+### Verified
+- `go vet`, `go test`, `tsc`, `vitest` 29/29, `vite build`.
+- Live backend + PostgreSQL: student half court 212.5 THB and QR amount
+  "212.50"; +31 days refused online, +30 OK, counter OK, admin sets 60
+  (manager 403); late payment with free slot → EXPIRED → late slip →
+  staff approve re-books both hours with points; late payment with taken
+  slot → approval 409 "refund instead", staff refund 403, manager refund →
+  REFUNDED; 3-hour cash group: cancel one hour with refund (162, 1 point
+  back, payment still VERIFIED) then the rest (REFUNDED); staff cancel 403,
+  no reason 400; manager records cash on an online booking (staff 403);
+  no-show on the current hour (point back), on tomorrow's hour refused;
+  confirmed booking moved to yesterday → COMPLETED by the minute job;
+  rewards: redeem 25-point reward, second attempt "not enough points",
+  vouchers list, customer can't look codes up, staff dispense once, expired
+  voucher refused; day summary splits cash/PromptPay/refunds. All earlier
+  scenarios from previous entries re-run unchanged.
+- Browser (Playwright), API mode: date picker max = today+30, then +45 after
+  the admin changed it; half court shows "212.50฿"; redeem → code shown →
+  staff voucher check → handed over → "รับไปแล้ว"; cash walk-in confirms
+  with no QR; expired booking shows "หมดเวลาชำระ", payment page without QR,
+  late slip upload, staff queue late badge + manager refund button, approval
+  OK; manager records cash, cancels one of two hours with refund, marks a
+  no-show; drawer shows cash/QR/refunds; plain staff sees no manager
+  actions; closure over a paid booking → cancel + refund offered and done.
+  Browser-only mode: cash walk-in, manager cancel with refund, points back.
+  Click-through of every tab in both modes: no errors, no failed API calls.
+
+### Not done / follow-ups
+- Refunds are records: the money is transferred back by staff outside the
+  system.
+- The "free off-peak hour" reward is handed out as a voucher; booking that
+  hour at 0 THB isn't automated (staff book it and the voucher is marked
+  used).
+- Password reset by phone (TODO.md 4) and LINE (TODO.md 1–2).
+- In browser-only mode there is no payment expiry, so no late-payment flow.
+
+---
+
 ## 2026-10-20 — Full re-verification from a clean clone; 4 more fixes
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `eb131fc`)
+- **Commit(s):** `8f1f20f` (on `main`, parent `eb131fc`)
 - **Background:** The owner asked whether everything really works. Everything
   was re-run from a fresh clone of `main`, started with the real
   `npm run dev:api` against an empty database. That found four problems.

@@ -60,6 +60,11 @@ const (
 	PaymentVerified     PaymentStatus = "VERIFIED"
 	PaymentRejected     PaymentStatus = "REJECTED"
 	PaymentRefunded     PaymentStatus = "REFUNDED"
+	// PaymentExpired: no slip arrived within the payment hold, so the
+	// booking was cancelled. The customer may still upload a slip if they
+	// did pay (late payment): staff then confirm it if the slots are still
+	// free, or a manager refunds it.
+	PaymentExpired PaymentStatus = "EXPIRED"
 )
 
 type ProductCat string
@@ -182,6 +187,9 @@ type PricingRule struct {
 type PricingConfig struct {
 	ID                   string  `json:"id" db:"id" gorm:"primaryKey;column:id"`
 	HalfCourtRatePercent float64 `json:"half_court_rate_percent" db:"half_court_rate_percent" gorm:"column:half_court_rate_percent"`
+	// How many days ahead customers may book online (staff at the counter
+	// are not limited).
+	MaxAdvanceDays int `json:"max_advance_days" db:"max_advance_days" gorm:"column:max_advance_days;default:30"`
 }
 
 // MemberDiscount mirrors the frontend's MemberDiscountRule - one row per
@@ -258,7 +266,13 @@ type Payment struct {
 	// SHA-256 of the uploaded slip file. A partial unique index (see
 	// ensurePaymentSlipIndex in main.go) stops the same file being used for
 	// two payments that are still live, i.e. not REJECTED.
-	SlipHash     *string    `json:"-" db:"slip_hash" gorm:"column:slip_hash"`
+	SlipHash *string `json:"-" db:"slip_hash" gorm:"column:slip_hash"`
+	// When the payment hold ran out (status EXPIRED). Kept after a late slip
+	// arrives, which is how staff can tell the slip came in late.
+	ExpiredAt *time.Time `json:"expired_at,omitempty" db:"expired_at" gorm:"column:expired_at"`
+	// Money returned so far (a refund can cover part of a group, e.g. one
+	// cancelled hour). Status becomes REFUNDED once it covers Amount.
+	RefundAmount float64    `json:"refund_amount" db:"refund_amount" gorm:"column:refund_amount;default:0"`
 	VerifiedAt   *time.Time `json:"verified_at,omitempty" db:"verified_at" gorm:"column:verified_at"`
 	VerifiedBy   *string    `json:"verified_by,omitempty" db:"verified_by" gorm:"column:verified_by"`
 	RefundedAt   *time.Time `json:"refunded_at,omitempty" db:"refunded_at" gorm:"column:refunded_at"`
@@ -383,6 +397,8 @@ const (
 	LedgerEarnPurchase LedgerEntryType = "EARN_PURCHASE"
 	LedgerRedeem       LedgerEntryType = "REDEEM"
 	LedgerAdjustManual LedgerEntryType = "ADJUST_MANUAL"
+	// Points taken back when a confirmed hour is cancelled or marked no-show.
+	LedgerReverseBooking LedgerEntryType = "REVERSE_BOOKING"
 )
 
 // 11. Append-only loyalty history (FR-4.1/FR-4.3, AC-6/AC-7). users.points is
@@ -428,8 +444,10 @@ type Voucher struct {
 	PointsSpent int           `json:"points_spent" db:"points_spent" gorm:"column:points_spent"`
 	Status      VoucherStatus `json:"status" db:"status" gorm:"column:status"`
 	CreatedAt   time.Time     `json:"created_at" db:"created_at" gorm:"column:created_at"`
-	DispensedAt *time.Time    `json:"dispensed_at,omitempty" db:"dispensed_at" gorm:"column:dispensed_at"`
-	DispensedBy *string       `json:"dispensed_by,omitempty" db:"dispensed_by" gorm:"column:dispensed_by"`
+	// Unclaimed vouchers expire (status EXPIRED) after VoucherValidDays.
+	ExpiresAt   time.Time  `json:"expires_at" db:"expires_at" gorm:"column:expires_at"`
+	DispensedAt *time.Time `json:"dispensed_at,omitempty" db:"dispensed_at" gorm:"column:dispensed_at"`
+	DispensedBy *string    `json:"dispensed_by,omitempty" db:"dispensed_by" gorm:"column:dispensed_by"`
 }
 
 // 14. Front-desk cash drawer session (FR-6). Cash totals are computed from

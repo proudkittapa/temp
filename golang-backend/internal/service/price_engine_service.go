@@ -90,9 +90,17 @@ func (q *SlotQuoter) Quote(courtType model.CourtType, hour int, isHalfCourt bool
 	if rule == nil {
 		return 0, "", false, nil
 	}
-	// Whole baht per hour, matching the frontend's calculatePrice rounding.
-	amount = math.Round(ApplyRateAdjustments(rule.PricePerHour, isHalfCourt, q.halfCourtRate, q.discountPercent))
+	// To the satang (2 decimals, REQUIREMENTS.md NFR-4), matching the
+	// frontend's calculatePrice.
+	amount = RoundBaht(ApplyRateAdjustments(rule.PricePerHour, isHalfCourt, q.halfCourtRate, q.discountPercent))
 	return amount, rule.PriceType, true, nil
+}
+
+// RoundBaht rounds an amount to 2 decimal places (satang), half away from
+// zero - the same result as the frontend's Math.round(x * 100) / 100 for the
+// positive amounts used here.
+func RoundBaht(x float64) float64 {
+	return math.Round(x*100) / 100
 }
 
 // RuleForHour returns the active rule covering [hour, hour+1), or nil.

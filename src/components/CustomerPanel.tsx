@@ -4,7 +4,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
   User, UserRole
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, OPENING_HOUR, CLOSING_HOUR, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
+import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
 import { QRCodeSVG } from 'qrcode.react';
@@ -30,6 +30,7 @@ interface Reward {
 
 interface Redemption {
   id: string;
+  status?: 'ACTIVE' | 'REDEEMED' | 'EXPIRED';
   userId: string;
   userName: string;
   rewardId: string;
@@ -53,6 +54,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const [payments, setPayments] = useState<Payment[]>([]);
   const [lineMessages, setLineMessages] = useState<LineMessage[]>([]);
   const [redemptions, setRedemptions] = useState<Redemption[]>([]);
+  // API mode: the rewards catalog comes from the backend (null until loaded).
+  const [apiRewards, setApiRewards] = useState<Reward[] | null>(null);
+  const rewardsCatalog = api.USE_BACKEND ? (apiRewards ?? []) : LOYALTY_REWARDS;
   
   // Interaction Form state
   const [selectedType, setSelectedType] = useState<CourtType>(CourtType.BADMINTON);
@@ -146,7 +150,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     }
     setLineMessages(rawLine);
     if (!api.USE_BACKEND) setDaysOff(rawDaysOff);
-    setRedemptions(rawRedemptions);
+    if (!api.USE_BACKEND) setRedemptions(rawRedemptions);
 
     // Initial Date selection to today
     const today = new Date();
@@ -179,14 +183,22 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
         // syncPricingCache refreshes the pricing the price preview reads, so
         // it shows what the server will actually charge.
-        const [apiCourts, dayBookings, mine, closures] = await Promise.all([
+        const [apiCourts, dayBookings, mine, closures, , rewards, vouchers] = await Promise.all([
           api.listCourts(),
           api.listBookingsByDate(selectedDate),
           me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
           api.listDaysOff(selectedDate, selectedDate),
-          api.syncPricingCache()
+          api.syncPricingCache(),
+          api.listRewards(),
+          me ? api.myVouchers() : Promise.resolve([] as api.VoucherInfo[])
         ]);
         if (cancelled) return;
+        setApiRewards(rewards.map(r => ({ id: r.id, name: r.name, cost: r.pointsCost, description: '', emoji: r.emoji })));
+        setRedemptions(vouchers.map(v => ({
+          id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId,
+          rewardName: `${v.rewardEmoji} ${v.rewardName}`, pointsSpent: v.pointsSpent, claimCode: v.code,
+          redeemedAt: new Date(v.createdAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
+        })));
         setDaysOff(closures);
         // The customer's own rows carry their details; prefer them over the
         // copies in the by-date list.
@@ -462,8 +474,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     const currentEffectiveMemberType = loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL;
     selectedSlots.forEach(s => {
       const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, courts.find(c => c.id === s.courtId));
-      total += detail.total;
-      original += detail.original;
+      total = roundBaht(total + detail.total);
+      original = roundBaht(original + detail.original);
     });
     return {
       total,
@@ -572,6 +584,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         return;
       }
 
+      // Online bookings open a configurable number of days ahead (server rule)
+      if (selectedDate > lastBookableDate()) {
+        alert(`ขออภัยค่ะ เปิดให้จองออนไลน์ล่วงหน้าได้ถึงวันที่ ${lastBookableDate()} เท่านั้น`);
+        return;
+      }
+
       // Already started: online bookings must start in the future (server rule)
       if (slotTiming(selectedDate, startTime).started) {
         alert('ขออภัยค่ะ ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ กรุณาติดต่อเคาน์เตอร์');
@@ -606,10 +624,17 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       alert('กรุณาเข้าสู่ระบบก่อนทำการแลกรางวัลค่ะ!');
       return;
     }
-    // Points live in the backend's ledger in API mode; redeeming here would
-    // only change a local copy. Needs a redemption endpoint first.
+    // API mode: points live in the backend's ledger; the server deducts
+    // them and issues the voucher in one transaction.
     if (api.USE_BACKEND) {
-      alert('การแลกรางวัลออนไลน์ยังไม่เปิดให้บริการ กรุณาแลกที่เคาน์เตอร์ค่ะ');
+      if (!window.confirm(`🎁 ยืนยันใช้ ${reward.cost} แต้ม แลก "${reward.emoji} ${reward.name}" ใช่หรือไม่?`)) return;
+      api.redeemReward(reward.id)
+        .then(v => {
+          onAddAuditLog('LOYALTY_POINT_REDEEMED', 'User', loggedInUser.id, null, { gift: v.rewardName, voucherCode: v.code });
+          alert(`🎉 แลกรางวัลสำเร็จ!\nรหัสรับของรางวัล: ${v.code}\nแสดงรหัสนี้ที่เคาน์เตอร์ภายในวันที่ ${new Date(v.expiresAt).toLocaleDateString('th-TH')}`);
+          onRefreshAll();
+        })
+        .catch(err => alert(`แลกรางวัลไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -758,10 +783,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           setActiveStep(3);
           const breakdown = group.bookings.map(b => {
             const cName = courts.find(c => c.id === b.courtId)?.name || 'สนาม';
-            return `- ${cName} เวลา ${b.startTime}-${b.endTime} (${b.totalAmount} บาท)`;
+            return `- ${cName} เวลา ${b.startTime}-${b.endTime} (${formatBaht(b.totalAmount)} บาท)`;
           }).join('\n');
           triggerLineNotification(
-            `✅ รับคำขอจองแล้ว (${group.bookings.length} รายการ)\n📋 รหัสจองกลุ่ม: ${group.bookingCode}\n📅 วันที่: ${selectedDate}\nรายละเอียด:\n${breakdown}\n💰 ยอดที่ต้องชำระทั้งหมด: ${group.totalAmount} บาท\n\nกรุณาชำระและอัปโหลด slip ภายใน 30 นาที หากไม่ชำระระบบจะยกเลิกออโต้`,
+            `✅ รับคำขอจองแล้ว (${group.bookings.length} รายการ)\n📋 รหัสจองกลุ่ม: ${group.bookingCode}\n📅 วันที่: ${selectedDate}\nรายละเอียด:\n${breakdown}\n💰 ยอดที่ต้องชำระทั้งหมด: ${formatBaht(group.totalAmount)} บาท\n\nกรุณาชำระและอัปโหลด slip ภายใน 30 นาที หากไม่ชำระระบบจะยกเลิกออโต้`,
             (loggedInUser.phone || '').replace(/[^0-9]/g, ''), memberName, "CREATED"
           );
           setBookingSuccessAlert(`สร้างรายการจองรวม ${group.bookings.length} รายการสำเร็จ รหัสกลุ่มคือ ${group.bookingCode} แล้ว! กรุณาชำระเงินและอัพโหลดสลิป`);
@@ -839,10 +864,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     // Trigger LINE Notification (Module 5 Specification)
     const breakdown = newBookings.map(b => {
       const cName = courts.find(c => c.id === b.courtId)?.name || 'สนาม';
-      return `- ${cName} เวลา ${b.startTime}-${b.endTime} (${b.totalAmount} บาท)`;
+      return `- ${cName} เวลา ${b.startTime}-${b.endTime} (${formatBaht(b.totalAmount)} บาท)`;
     }).join('\n');
 
-    const textMessage = `✅ รับคำขอจองแล้ว (${newBookings.length} รายการ)\n📋 รหัสจองกลุ่ม: ${bkCode}\n📅 วันที่: ${selectedDate}\nรายละเอียด:\n${breakdown}\n💰 ยอดที่ต้องชำระทั้งหมด: ${priceInfo.total} บาท\n\nกรุณาชำระและอัปโหลด slip ภายใน 30 นาที หากไม่ชำระระบบจะยกเลิกออโต้`;
+    const textMessage = `✅ รับคำขอจองแล้ว (${newBookings.length} รายการ)\n📋 รหัสจองกลุ่ม: ${bkCode}\n📅 วันที่: ${selectedDate}\nรายละเอียด:\n${breakdown}\n💰 ยอดที่ต้องชำระทั้งหมด: ${formatBaht(priceInfo.total)} บาท\n\nกรุณาชำระและอัปโหลด slip ภายใน 30 นาที หากไม่ชำระระบบจะยกเลิกออโต้`;
     triggerLineNotification(textMessage, cleanPhone, memberName, "CREATED");
 
     setBookingSuccessAlert(`สร้างรายการจองรวม ${newBookings.length} รายการสำเร็จ รหัสกลุ่มคือ ${bkCode} แล้ว! กรุณาชำระเงินและอัพโหลดสลิป`);
@@ -1043,7 +1068,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     </div>
 
                     <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                      {LOYALTY_REWARDS.map(reward => {
+                      {rewardsCatalog.map(reward => {
                         const canRedeem = (loggedInUser?.points || 0) >= reward.cost;
                         return (
                           <div key={reward.id} className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 flex justify-between items-center gap-3 hover:border-slate-750 transition">
@@ -1096,6 +1121,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                               </span>
                               <span className="text-[9px] text-slate-500 font-mono shrink-0">
                                 {voucher.redeemedAt}
+                                {voucher.status && voucher.status !== 'ACTIVE' && (
+                                  <span className="ml-1 font-bold text-slate-300">{voucher.status === 'REDEEMED' ? '· รับแล้ว' : '· หมดอายุ'}</span>
+                                )}
                               </span>
                             </div>
                             <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
@@ -1124,7 +1152,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         📊 แหล่งแต้มสะสมชั่วโมงเล่น (1 Point per Hour)
                       </span>
                       {(() => {
-                        const userConfirmedBookings = bookings.filter(b => b.userId === loggedInUser?.id && b.status === BookingStatus.CONFIRMED);
+                        const userConfirmedBookings = bookings.filter(b => b.userId === loggedInUser?.id && isPaidBooking(b));
                         return (
                           <div className="space-y-1.5 font-sans">
                             <div className="flex justify-between items-center text-[10px]">
@@ -1357,6 +1385,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   type="date"
                   value={selectedDate}
                   min={getTodayDateStr()}
+                  max={lastBookableDate()}
                   onChange={(e) => {
                     setSelectedDate(e.target.value);
                     setSelectedSlots([]);
@@ -1560,7 +1589,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                     className="p-1 border-l border-slate-200 bg-emerald-600 text-white text-center font-bold relative group cursor-pointer animate-pulse border-l-emerald-700"
                                   >
                                     <span className="block text-[9px] font-black uppercase">⭐ เลือกแล้ว</span>
-                                    <span className="text-[8.5px] font-mono block">{priceResult.total}฿</span>
+                                    <span className="text-[8.5px] font-mono block">{formatBaht(priceResult.total)}฿</span>
                                   </td>
                                 );
                               }
@@ -1577,7 +1606,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                   }`}
                                 >
                                   <span className="block text-[8.5px] font-semibold text-slate-500 leading-none">🟢 ว่าง</span>
-                                  <span className="text-[9.5px] font-mono font-black block mt-0.5 text-slate-800">{priceResult.total}฿</span>
+                                  <span className="text-[9.5px] font-mono font-black block mt-0.5 text-slate-800">{formatBaht(priceResult.total)}฿</span>
                                   <span className="text-[7.5px] text-slate-400 font-mono scale-[0.85] inline-block">
                                     {isPeak ? '⚡ Peak' : 'Off-Peak'}
                                   </span>
@@ -1642,7 +1671,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 <div className="flex justify-between items-center border-t border-emerald-100 pt-3">
                   <div>
                     <span className="text-[10px] text-slate-400 block font-medium">คำนวณราคาเฉลี่ยสมาชิกรวม:</span>
-                    <span className="text-sm font-extrabold text-emerald-800 font-mono">{currentPriceDetails().total} บาท</span>
+                    <span className="text-sm font-extrabold text-emerald-800 font-mono">{formatBaht(currentPriceDetails().total)} บาท</span>
                   </div>
                   <button
                     id="btn-customer-stage-1"
@@ -1744,7 +1773,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       return (
                         <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 font-medium font-sans">
                           <span>{idx + 1}. {cName} - เวลา {s.startTime} น.</span>
-                          <span className="font-bold text-slate-800">{detail.total} บาท <span className="text-[10px] text-slate-400 font-normal line-through">({detail.original}.-)</span></span>
+                          <span className="font-bold text-slate-800">{formatBaht(detail.total)} บาท <span className="text-[10px] text-slate-400 font-normal line-through">({detail.original}.-)</span></span>
                         </div>
                       );
                     })}
@@ -1752,14 +1781,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                   <div className="flex justify-between">
                     <span className="text-slate-500">รวมค่าบริการราคาดิบ:</span>
-                    <span className="font-bold text-slate-700">{currentPriceDetails().original} บาท</span>
+                    <span className="font-bold text-slate-700">{formatBaht(currentPriceDetails().original)} บาท</span>
                   </div>
 
                   <div className="h-px bg-slate-200 my-2" />
                   
                   <div className="flex justify-between text-sm">
                     <span className="font-bold text-slate-800">ยอดรวมทั้งสิ้นที่ต้องชำระ (100% Upfront):</span>
-                    <span className="font-extrabold text-emerald-700 text-base">{currentPriceDetails().total} บาท</span>
+                    <span className="font-extrabold text-emerald-700 text-base">{formatBaht(currentPriceDetails().total)} บาท</span>
                   </div>
                 </div>
               </div>
@@ -1815,7 +1844,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                 {/* The actual PromptPay (EMVCo) payload as a scannable QR code */}
                 <div className="bg-white border border-slate-200 p-3 rounded">
-                  {qrCodePayload ? (
+                  {currentPayment?.status === PaymentStatus.EXPIRED ? (
+                    // The hold ran out: don't invite a new payment - only a
+                    // slip for money already sent (late payment).
+                    <div id="expired-payment-notice" className="h-44 w-44 flex flex-col items-center justify-center text-center gap-1 text-[10.5px] text-rose-700 font-bold">
+                      <span className="text-2xl">⌛</span>
+                      หมดเวลาชำระแล้ว กรุณาอย่าโอนเงินเพิ่ม
+                    </div>
+                  ) : qrCodePayload ? (
                     <QRCodeSVG value={qrCodePayload} size={176} level="M" />
                   ) : (
                     <div className="h-44 w-44 flex items-center justify-center text-[10px] text-slate-400">ไม่พบ QR</div>
@@ -1826,7 +1862,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   <p className="text-xs font-semibold text-slate-500">สแกนชำระบัญชีสปอร์ตคอมเพล็กซ์</p>
                   <p className="text-sm font-black text-slate-800">รหัสจอง {currentBooking.bookingCode}</p>
                   <p className="text-xs text-sky-900 font-bold select-all bg-sky-50 px-2 py-0.5 rounded">บจก. กีฬาแฮปปี้ พาร์คคอมเพล็กซ์</p>
-                  <p className="text-xs font-extrabold text-slate-800 text-lg mt-1">ยอดโอน: {currentPayment?.amount ?? currentBooking.totalAmount} บาท</p>
+                  <p className="text-xs font-extrabold text-slate-800 text-lg mt-1">ยอดโอน: {formatBaht(currentPayment?.amount ?? currentBooking.totalAmount)} บาท</p>
                   {currentPayment?.status === PaymentStatus.PENDING && (() => {
                     // Capped: server and browser clocks can differ slightly.
                     const minutesLeft = Math.min(PAYMENT_HOLD_MINUTES, Math.ceil((new Date(currentPayment.createdAt).getTime() + PAYMENT_HOLD_MINUTES * 60000 - nowTick) / 60000));
@@ -1836,6 +1872,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   })()}
                   {currentPayment?.status === PaymentStatus.SLIP_UPLOADED && (
                     <p className="text-[11px] font-bold text-sky-700">📨 ส่งสลิปแล้ว รอพนักงานตรวจ — อัปโหลดใหม่ได้หากส่งผิดรูป</p>
+                  )}
+                  {currentPayment?.status === PaymentStatus.EXPIRED && (
+                    <p className="text-[11px] font-bold text-rose-700 max-w-xs">
+                      การจองนี้ถูกยกเลิกเพราะไม่ได้รับสลิปภายใน {PAYMENT_HOLD_MINUTES} นาที หากคุณโอนเงินไปแล้ว ส่งสลิปด้านล่าง —
+                      พนักงานจะยืนยันการจองให้หากสนามยังว่าง หรือคืนเงินให้หากมีผู้อื่นจองไปแล้ว
+                    </p>
                   )}
                 </div>
               </div>
@@ -1949,14 +1991,19 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 // The payment hangs off the group's first row; every row of
                 // the group shares it.
                 const matchedPayment = paymentForBooking(booking);
-                const awaitingSlip = booking.status === BookingStatus.PENDING_PAYMENT && !!matchedPayment &&
-                  (matchedPayment.status === PaymentStatus.PENDING || matchedPayment.status === PaymentStatus.SLIP_UPLOADED);
+                // A slip can be sent while the booking awaits payment, and also
+                // after the hold expired (late payment: the customer paid but
+                // the slip came too late).
+                const lateSlip = !!matchedPayment && (matchedPayment.status === PaymentStatus.EXPIRED ||
+                  (matchedPayment.status === PaymentStatus.SLIP_UPLOADED && !!matchedPayment.expiredAt));
+                const awaitingSlip = !!matchedPayment && (lateSlip || (booking.status === BookingStatus.PENDING_PAYMENT &&
+                  (matchedPayment.status === PaymentStatus.PENDING || matchedPayment.status === PaymentStatus.SLIP_UPLOADED)));
                 // One upload button per booking group, not one per hour.
                 const showUploadButton = awaitingSlip && !groupsWithButton.has(booking.bookingCode);
                 if (showUploadButton) groupsWithButton.add(booking.bookingCode);
 
                 let statusBadge = '';
-                if (booking.status === BookingStatus.CONFIRMED) statusBadge = 'bg-emerald-600 text-white';
+                if (booking.status === BookingStatus.CONFIRMED || booking.status === BookingStatus.COMPLETED) statusBadge = 'bg-emerald-600 text-white';
                 else if (booking.status === BookingStatus.PENDING_PAYMENT) statusBadge = 'bg-amber-500 text-white';
                 else if (booking.status === BookingStatus.CANCELLED) statusBadge = 'bg-slate-600 text-slate-300';
                 else statusBadge = 'bg-red-500 text-white';
@@ -1969,7 +2016,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${statusBadge}`}>
                           {booking.status === BookingStatus.CONFIRMED && 'อนุมัติเรียบร้อย'}
                           {booking.status === BookingStatus.PENDING_PAYMENT && (matchedPayment?.status === PaymentStatus.SLIP_UPLOADED ? 'รอสต๊าฟเช็คสลิป' : 'รอชำระเงิน / รอสลิป')}
-                          {booking.status === BookingStatus.CANCELLED && 'ยกเลิกรายการ'}
+                          {booking.status === BookingStatus.CANCELLED && (
+                            matchedPayment?.status === PaymentStatus.EXPIRED ? 'หมดเวลาชำระ'
+                              : lateSlip ? 'ส่งสลิปล่าช้า รอพนักงานตรวจ'
+                              : 'ยกเลิกรายการ')}
+                          {booking.status === BookingStatus.COMPLETED && 'เล่นแล้ว'}
+                          {booking.status === BookingStatus.NO_SHOW && 'ไม่มาใช้สนาม'}
                         </span>
                       </div>
                       <p className="font-bold text-slate-100">{courtName}</p>
@@ -1982,12 +2034,20 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     </div>
 
                     <div className="flex flex-col items-start sm:items-end justify-between gap-1">
-                      <p className="font-bold text-emerald-400 text-sm">{booking.totalAmount} บาท</p>
+                      <p className="font-bold text-emerald-400 text-sm">{formatBaht(booking.totalAmount)} บาท</p>
                       <span className="text-[9.5px] text-slate-400">
                         หลักฐานสลิป: {matchedPayment?.slipUrl ? (
                           <a href={matchedPayment.slipUrl} target="_blank" rel="noreferrer" className="text-sky-400 underline font-bold hover:text-sky-300">กดดูรูปสลิป</a>
                         ) : 'ไม่มีการอัพโหลด'}
                       </span>
+                      {!!matchedPayment?.refundAmount && (
+                        <span className="text-[9.5px] font-bold text-sky-300">
+                          💸 คืนเงินแล้ว {formatBaht(matchedPayment.refundAmount)} บาท{matchedPayment.refundReason ? ` (${matchedPayment.refundReason})` : ''}
+                        </span>
+                      )}
+                      {booking.status === BookingStatus.CANCELLED && booking.cancellationReason && !lateSlip && matchedPayment?.status !== PaymentStatus.EXPIRED && (
+                        <span className="text-[9.5px] text-slate-400">เหตุผล: {booking.cancellationReason}</span>
+                      )}
                       {showUploadButton && matchedPayment && (
                         <button
                           type="button"
@@ -1997,7 +2057,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                           }}
                           className="mt-1 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition"
                         >
-                          {matchedPayment.status === PaymentStatus.SLIP_UPLOADED ? '🔁 ส่งสลิปใหม่' : '📤 ชำระเงิน / อัปโหลดสลิป'}
+                          {matchedPayment.status === PaymentStatus.EXPIRED ? '📤 โอนแล้วแต่หมดเวลา? ส่งสลิป'
+                            : matchedPayment.status === PaymentStatus.SLIP_UPLOADED ? '🔁 ส่งสลิปใหม่' : '📤 ชำระเงิน / อัปโหลดสลิป'}
                         </button>
                       )}
                     </div>

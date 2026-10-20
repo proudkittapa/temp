@@ -5,7 +5,7 @@ import {
   OperatingHours, User, UserRole, MemberType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR, isPaidBooking, lastBookableDate } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
@@ -198,7 +198,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const targetDateStr = dashboardSelectedDate;
     
     // Daily target date metrics
-    const dailyBookings = bookings.filter(b => b.date === targetDateStr && b.status === BookingStatus.CONFIRMED);
+    const dailyBookings = bookings.filter(b => b.date === targetDateStr && isPaidBooking(b));
     const dailyBookingsRevenue = dailyBookings.reduce((sum, b) => sum + Number(b.totalAmount), 0);
 
     const dailyOrders = orders.filter(o => {
@@ -210,12 +210,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     // Occupancy Rate specifically on dashboardSelectedDate
     const slotsInDayCount = 16;
     const totalSlotsPossible = courts.length * slotsInDayCount;
-    const activeTargetSlotsBooked = bookings.filter(b => b.date === targetDateStr && b.status === BookingStatus.CONFIRMED).length;
+    const activeTargetSlotsBooked = bookings.filter(b => b.date === targetDateStr && isPaidBooking(b)).length;
     let occupancyRate = Math.round((activeTargetSlotsBooked / (totalSlotsPossible || 1)) * 100);
     if (occupancyRate === 0) occupancyRate = 28; // aesthetic baseline fallback
 
     // All-time Metrics
-    const confirmedBookings = bookings.filter(b => b.status === BookingStatus.CONFIRMED);
+    const confirmedBookings = bookings.filter(b => isPaidBooking(b));
     const totalBookingsRevenue = confirmedBookings.reduce((sum, b) => sum + Number(b.totalAmount), 0);
 
     // All time F&B products sale receipt amount
@@ -295,6 +295,29 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   };
 
   const PIE_COLORS = ['#34d399', '#f59e0b', '#38bdf8'];
+
+  // How many days ahead customers may book online (admin setting).
+  const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(() =>
+    StorageService.get<{ maxAdvanceDays?: number }>('pricing_config', {}).maxAdvanceDays ?? 30);
+  const handleSaveMaxAdvanceDays = () => {
+    const days = Math.round(Number(maxAdvanceDays));
+    if (!(days >= 1 && days <= 365)) {
+      alert('กรุณาระบุ 1–365 วัน');
+      return;
+    }
+    const before = StorageService.get<{ maxAdvanceDays?: number }>('pricing_config', {}).maxAdvanceDays;
+    const done = () => {
+      onAddAuditLog('PRICING_CONFIG_UPDATED', 'PricingConfig', 'global', { maxAdvanceDays: before }, { maxAdvanceDays: days });
+      onRefreshAll();
+      alert(`ตั้งค่าแล้ว: ลูกค้าจองออนไลน์ล่วงหน้าได้ ${days} วัน (ถึง ${lastBookableDate()})`);
+    };
+    if (api.USE_BACKEND) {
+      api.setMaxAdvanceDays(days).then(() => api.syncPricingCache()).then(done).catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), maxAdvanceDays: days });
+    done();
+  };
 
   // Pricing CRUD functions
   const handleSavePricingRule = (e: React.FormEvent) => {
@@ -478,6 +501,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         if (cancelled) return;
         setDaysOff(closures);
         setUsers(apiUsers);
+        setMaxAdvanceDays(pricing.config.maxAdvanceDays ?? 30);
         setPricingRules(pricing.rules);
         setMemberDiscounts(pricing.memberDiscounts);
       } catch (err) {
@@ -547,6 +571,25 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               affectedBookings.map(b => `- ${courts.find(c => c.id === b.courtId)?.name || b.courtId} ${b.startTime}–${b.endTime} (${b.bookingCode})`).join('\n')
             : '';
           alert('บันทึกปิดบริการ/ระงับการจองวันหยุดพิเศษเรียบร้อยแล้วค่ะ!' + affectedNote);
+          // Offer to cancel the overlapped bookings right away (FR-6.3),
+          // recording a refund for hours that were already paid.
+          const active = affectedBookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING_PAYMENT);
+          if (active.length > 0 && window.confirm(`ยกเลิกการจองที่ได้รับผลกระทบ ${active.length} รายการเลยหรือไม่?\n(รายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน — กรุณาโอนคืนลูกค้า)`)) {
+            (async () => {
+              let refunded = 0, failed = 0;
+              for (const b of active) {
+                try {
+                  const res = await api.cancelBooking(b.id, `ปิดสนาม: ${dayOff.reason}`, b.status === BookingStatus.CONFIRMED, [b.id], 'admin');
+                  refunded += res.refundAmount;
+                } catch {
+                  failed++;
+                }
+              }
+              onAddAuditLog('DAY_OFF_BOOKINGS_CANCELLED', 'DayOff', dayOff.id, null, { cancelled: active.length - failed, refunded });
+              onRefreshAll();
+              alert(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${refunded} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
+            })();
+          }
         })
         .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
@@ -1494,6 +1537,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           <div className="space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900">ตัวเครื่องมือตั้งและปรับราคาล่วงหน้า (Pricing Engine Configurator)</h3>
+              <div id="max-advance-days-setting" className="mt-2 flex flex-wrap items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
+                <span className="text-slate-600">ลูกค้าจองออนไลน์ล่วงหน้าได้</span>
+                <input type="number" min={1} max={365} value={maxAdvanceDays} onChange={e => setMaxAdvanceDays(Number(e.target.value))}
+                  className="w-20 border border-slate-300 rounded px-2 py-1" />
+                <span className="text-slate-600">วัน (พนักงานจองที่เคาน์เตอร์ได้ไม่จำกัด)</span>
+                <button type="button" onClick={handleSaveMaxAdvanceDays} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
+              </div>
               <p className="text-xs text-slate-500">คุณสามารถกำหนดค่า ราคาปกติ, ราคา Peak ยิ่งเร่งด่วนตามเงื่อนไขช่วงชั่วโมง, และชนิดวันธรรมดา/เสาร์อาทิตย์</p>
             </div>
 

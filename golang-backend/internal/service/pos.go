@@ -117,7 +117,7 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 				return fmt.Errorf("failed to decrement product stock: %w", err)
 			}
 
-			totalAmount += p.Price * float64(item.Qty)
+			totalAmount = RoundBaht(totalAmount + p.Price*float64(item.Qty))
 		}
 
 		// 2. Insert main Order record. The code used to be the Unix time

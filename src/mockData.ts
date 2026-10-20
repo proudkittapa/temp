@@ -314,7 +314,8 @@ export const DEFAULT_MEMBER_DISCOUNTS: MemberDiscountRule[] = [
 // membership discounts. The only place this coefficient should live.
 export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   id: 'global',
-  halfCourtRatePercent: 50
+  halfCourtRatePercent: 50,
+  maxAdvanceDays: 30
 };
 
 // FR-4.2 rewards catalog.
@@ -488,6 +489,32 @@ export function isCourtSlotAvailable(
   return !findConflictingBooking(courtId, date, hour, bookings, courts);
 }
 
+// Rounds to 2 decimal places (satang), like the backend's RoundBaht.
+export function roundBaht(x: number): number {
+  return Math.round(x * 100) / 100;
+}
+
+// "180" for whole baht, "212.50" otherwise.
+export function formatBaht(x: number): string {
+  const r = roundBaht(x);
+  return Number.isInteger(r) ? r.toLocaleString('en-US') : r.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Booking statuses whose money was received (or whose hour was played):
+// what revenue, occupancy and cancellation care about. COMPLETED (the hour
+// is over) and NO_SHOW (paid but didn't come) count like CONFIRMED.
+export const PAID_BOOKING_STATUSES: BookingStatus[] = [BookingStatus.CONFIRMED, BookingStatus.COMPLETED, BookingStatus.NO_SHOW];
+export const isPaidBooking = (b: { status: BookingStatus }) => PAID_BOOKING_STATUSES.includes(b.status);
+
+// The last date customers may book online: today + maxAdvanceDays
+// (configurable, default 30), Bangkok calendar.
+export function lastBookableDate(): string {
+  const cfg = StorageService.get<PricingConfig>('pricing_config', DEFAULT_PRICING_CONFIG);
+  const days = cfg.maxAdvanceDays ?? DEFAULT_PRICING_CONFIG.maxAdvanceDays ?? 30;
+  const [y, m, d] = bangkokNow().date.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
 // Phone numbers in one canonical form: digits only, with the Thai country
 // code (66 / 0066) rewritten as the domestic leading 0, so "081-234-5678"
 // and "+66 81 234 5678" are the same number. Mirrors the backend's
@@ -594,8 +621,10 @@ export function calculatePrice(
     discountMessage = `ส่วนลด${matchedRule.name} ${matchedRule.discountPercent}%`;
   }
 
+  // To the satang (2 decimals, REQUIREMENTS.md NFR-4) - the backend's
+  // RoundBaht gives the same result.
   return {
-    total: Math.round(finalPrice),
+    total: roundBaht(finalPrice),
     original,
     priceType,
     discountMessage,

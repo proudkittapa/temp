@@ -188,10 +188,18 @@ func (s *PricingAdminService) UpdateMemberDiscount(ctx context.Context, d model.
 	return &d, nil
 }
 
-// UpdateHalfCourtRate sets PricingConfig.HalfCourtRatePercent (FR-2.4).
-func (s *PricingAdminService) UpdateHalfCourtRate(ctx context.Context, percent float64, actorID, actorName string) (*model.PricingConfig, error) {
-	if percent <= 0 || percent > 100 {
+// MaxAdvanceDaysLimit bounds PricingConfig.MaxAdvanceDays.
+const MaxAdvanceDaysLimit = 365
+
+// UpdateConfig changes the global pricing settings: the half-court rate
+// (FR-2.4) and/or how many days ahead customers may book online. A nil
+// field is left as it is.
+func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent *float64, maxAdvanceDays *int, actorID, actorName string) (*model.PricingConfig, error) {
+	if halfCourtPercent != nil && (*halfCourtPercent <= 0 || *halfCourtPercent > 100) {
 		return nil, fmt.Errorf("%w: half_court_rate_percent must be between 1 and 100", ErrInvalidBooking)
+	}
+	if maxAdvanceDays != nil && (*maxAdvanceDays < 1 || *maxAdvanceDays > MaxAdvanceDaysLimit) {
+		return nil, fmt.Errorf("%w: max_advance_days must be between 1 and %d", ErrInvalidBooking, MaxAdvanceDaysLimit)
 	}
 	var cfg model.PricingConfig
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -199,7 +207,12 @@ func (s *PricingAdminService) UpdateHalfCourtRate(ctx context.Context, percent f
 			return err
 		}
 		before := cfg
-		cfg.HalfCourtRatePercent = percent
+		if halfCourtPercent != nil {
+			cfg.HalfCourtRatePercent = *halfCourtPercent
+		}
+		if maxAdvanceDays != nil {
+			cfg.MaxAdvanceDays = *maxAdvanceDays
+		}
 		if err := tx.Save(&cfg).Error; err != nil {
 			return err
 		}

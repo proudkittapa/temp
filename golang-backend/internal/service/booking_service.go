@@ -183,6 +183,14 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		return nil, fmt.Errorf("%w: unknown user", ErrInvalidBooking)
 	}
 
+	// Online bookings open MaxAdvanceDays ahead (configurable by admins);
+	// staff at the counter may book further out, e.g. for tournaments.
+	if input.WalkIn == nil {
+		if err := s.checkBookingWindow(ctx, input.Date); err != nil {
+			return nil, err
+		}
+	}
+
 	// Early, unlocked check for a friendly error; repeated under a lock
 	// inside the transaction below.
 	if input.WalkIn == nil {
@@ -308,7 +316,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 				return err
 			}
 			result.Bookings = append(result.Bookings, b)
-			total += p.amount
+			total = RoundBaht(total + p.amount)
 		}
 
 		pay := model.Payment{
@@ -527,6 +535,25 @@ func hourSlotEnd(start string) (string, int, error) {
 	return fmt.Sprintf("%02d:00", h+1), h, nil
 }
 
+// checkBookingWindow refuses an online booking further ahead than the
+// configured PricingConfig.MaxAdvanceDays (Bangkok calendar days).
+func (s *BookingService) checkBookingWindow(ctx context.Context, date string) error {
+	cfg, err := s.courtRepo.GetPricingConfig(ctx)
+	if err != nil {
+		return err
+	}
+	day, err := time.ParseInLocation("2006-01-02", date, Bangkok)
+	if err != nil {
+		return fmt.Errorf("%w: date must be YYYY-MM-DD", ErrInvalidBooking)
+	}
+	y, m, d := s.now().In(Bangkok).Date()
+	last := time.Date(y, m, d, 0, 0, 0, 0, Bangkok).AddDate(0, 0, cfg.MaxAdvanceDays)
+	if day.After(last) {
+		return fmt.Errorf("%w: online bookings open %d days ahead (up to %s)", ErrInvalidBooking, cfg.MaxAdvanceDays, last.Format("2006-01-02"))
+	}
+	return nil
+}
+
 // closureLockClass namespaces the per-date advisory lock that serializes
 // closure creation against in-flight bookings (see CreateBookings).
 const closureLockClass = 4201
@@ -592,7 +619,7 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 			}
 			now := s.now()
 			if err := tx.Model(locked).Updates(map[string]interface{}{
-				"status": model.PaymentRejected, "refund_reason": reason, "updated_at": now,
+				"status": model.PaymentExpired, "expired_at": now, "refund_reason": reason, "updated_at": now,
 			}).Error; err != nil {
 				return err
 			}
@@ -608,7 +635,7 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 				TargetType:  "Payment",
 				TargetID:    locked.ID,
 				BeforeState: model.AuditJSON(map[string]any{"status": model.PaymentPending}),
-				AfterState:  model.AuditJSON(map[string]any{"status": model.PaymentRejected, "bookings_cancelled": len(group)}),
+				AfterState:  model.AuditJSON(map[string]any{"status": model.PaymentExpired, "bookings_cancelled": len(group)}),
 				Reason:      &reason,
 				CreatedAt:   now,
 			}).Error
@@ -845,9 +872,11 @@ func slipAcceptable(p *model.Payment) error {
 		return fmt.Errorf("%w: this booking was paid at the counter", ErrInvalidState)
 	}
 	// Re-uploading is fine while the slip awaits review, but not once staff
-	// verified or rejected it (or it expired) - that would put a settled
-	// payment back in the queue.
-	if p.Status != model.PaymentPending && p.Status != model.PaymentSlipUploaded {
+	// verified or rejected it - that would put a settled payment back in the
+	// queue. An EXPIRED payment accepts a slip: the customer paid but sent
+	// the slip after the hold ran out (late payment). Staff then confirm it
+	// if the slots are still free, or a manager refunds it.
+	if p.Status != model.PaymentPending && p.Status != model.PaymentSlipUploaded && p.Status != model.PaymentExpired {
 		return fmt.Errorf("%w: payment is already %s", ErrInvalidState, p.Status)
 	}
 	return nil
@@ -923,6 +952,9 @@ type ReviewResult struct {
 	Status        string `json:"status"`
 	BookingsCount int    `json:"bookings_count"`
 	PointsAwarded int    `json:"points_awarded"`
+	// Late: the payment came after the hold had expired, and the slots were
+	// reserved again.
+	Late bool `json:"late,omitempty"`
 }
 
 // VerifyPayment is the staff "slip OK" action (FR-3.3): marks the payment
@@ -949,6 +981,13 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 			return err
 		}
 		now := s.now()
+		// A late slip (the hold had expired) re-reserves the slots first;
+		// if one has been taken meanwhile this fails with
+		// ErrLatePaymentSlotGone and a manager refunds instead.
+		confirmed, points, err := s.confirmGroup(ctx, tx, p, group, root, now)
+		if err != nil {
+			return err
+		}
 		if err := tx.Model(p).Updates(map[string]interface{}{
 			"status":      model.PaymentVerified,
 			"verified_at": now,
@@ -958,28 +997,7 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 			return err
 		}
 
-		confirmed := 0
-		for _, b := range group {
-			if b.Status != model.BookingPendingPayment {
-				continue
-			}
-			if err := tx.Model(&model.Booking{}).Where("id = ?", b.ID).
-				Updates(map[string]interface{}{"status": model.BookingConfirmed, "updated_at": now}).Error; err != nil {
-				return err
-			}
-			confirmed++
-		}
-
-		points := 0
-		if confirmed > 0 && root.UserID != model.WalkInUserID {
-			refType, note := "Booking", fmt.Sprintf("%dh confirmed booking %s", confirmed, root.BookingCode)
-			if _, err := s.usrRepo.AddPointsEntry(ctx, tx, root.UserID, model.LedgerEarnBooking, confirmed, "system", &refType, &root.ID, &note); err != nil {
-				return fmt.Errorf("failed to award booking points: %w", err)
-			}
-			points = confirmed
-		}
-
-		res = &ReviewResult{PaymentID: p.ID, BookingCode: root.BookingCode, Status: string(model.PaymentVerified), BookingsCount: confirmed, PointsAwarded: points}
+		res = &ReviewResult{PaymentID: p.ID, BookingCode: root.BookingCode, Status: string(model.PaymentVerified), BookingsCount: confirmed, PointsAwarded: points, Late: p.ExpiredAt != nil}
 		return tx.Create(&model.AuditLog{
 			ID:          ids.New("log"),
 			UserID:      staffID,
