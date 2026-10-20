@@ -102,7 +102,7 @@ func (r *BookingRepository) CheckAndBlockOverlap(
 // FetchSlotsForGantt queries timeline lists for specific days to populate interactive client views
 func (r *BookingRepository) FetchSlotsForGantt(ctx context.Context, date string, courtType model.CourtType) ([]model.Booking, error) {
 	var results []model.Booking
-	query := r.db.WithContext(ctx).Table("bookings").Select("bookings.id, bookings.booking_code, bookings.court_id, bookings.user_id, bookings.date, to_char(bookings.start_time, 'HH24:MI') as start_time, to_char(bookings.end_time, 'HH24:MI') as end_time, bookings.is_half_court, bookings.price_type, bookings.total_amount, bookings.status").
+	query := r.db.WithContext(ctx).Table("bookings").Select("bookings.id, bookings.booking_code, bookings.court_id, bookings.user_id, bookings.date, bookings.start_time, bookings.end_time, bookings.is_half_court, bookings.price_type, bookings.total_amount, bookings.status").
 		Joins("join courts on bookings.court_id = courts.id").
 		Where("bookings.date = ? AND bookings.status != 'CANCELLED'", date)
 

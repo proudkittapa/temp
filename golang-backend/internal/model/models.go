@@ -208,8 +208,8 @@ type Booking struct {
 	CourtID     string `json:"court_id" db:"court_id" gorm:"column:court_id"`
 	UserID      string `json:"user_id" db:"user_id" gorm:"column:user_id"`
 	Date        string `json:"date" db:"date" gorm:"column:date;type:date"`                   // "YYYY-MM-DD"
-	StartTime   string `json:"start_time" db:"start_time" gorm:"column:start_time;type:time"` // "HH:MM"
-	EndTime     string `json:"end_time" db:"end_time" gorm:"column:end_time;type:time"`       // "HH:MM", always StartTime+1h - one row per booked hour (see BookingRepository doc)
+	StartTime   string `json:"start_time" db:"start_time" gorm:"column:start_time;type:varchar(5)"` // "HH:MM"
+	EndTime     string `json:"end_time" db:"end_time" gorm:"column:end_time;type:varchar(5)"`       // "HH:MM", always StartTime+1h - one row per booked hour (see BookingRepository doc)
 	// Snapshot of (court.ShareOfGroup < 1) at booking time, kept for
 	// historical/receipt display even if the court's configuration later
 	// changes. Availability and pricing must read the live Court via CourtID,
