@@ -147,6 +147,17 @@ export const localDateOf = (iso: string) => {
 
 export const getTodayDateStr = () => localDateOf(new Date().toISOString());
 
+// Dates are shown in the Gregorian calendar (2026, not พ.ศ. 2569) with
+// Thai month names, in Bangkok time: "20 ต.ค. 2026" / "20 ต.ค. 2026 13:56".
+const TH_GREGORIAN = 'th-TH-u-ca-gregory';
+export const formatDate = (d: string | number | Date) =>
+  new Date(d).toLocaleDateString(TH_GREGORIAN, { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
+export const formatDateTime = (d: string | number | Date, withSeconds = false) =>
+  new Date(d).toLocaleString(TH_GREGORIAN, {
+    timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    ...(withSeconds ? { second: '2-digit' } : {})
+  });
+
 const DEFAULT_BOOKINGS = (): Booking[] => {
   const today = getTodayDateStr();
   return [

@@ -30,6 +30,12 @@
 - [ ] Needs an SMS provider account (e.g. ThaiBulkSMS / Twilio) and its API key in `golang-backend/.env`. Until then the current "contact staff" message stays.
 - [ ] Optional: staff/admin can trigger a reset for a customer at the counter after checking ID.
 
-## 5. Test the features
-- [ ] Add items 1–4 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).
+## 5. VAT on receipts
+- [ ] Receipts print a "VAT 7%" breakdown (price ÷ 1.07) under a hard-coded placeholder header — "SMART SPORT COMPLEX CLUB", "188 Ramkhamhaeng Rd…", TAX ID `0-1055-59092-49-0` (`StaffPOS.tsx` receipt modal) — so they are not valid tax invoices. Replace the placeholders with the real business details either way.
+- [ ] If the business is VAT-registered: add the seller's name, address and 13-digit tax ID (admin setting, server-side), a running tax-invoice number, and the customer's name/tax ID when asked for a full tax invoice (ใบกำกับภาษีเต็มรูป).
+- [ ] If not registered: remove the VAT lines and call it a receipt (ใบเสร็จรับเงิน).
+- Owner to decide which applies.
+
+## 6. Test the features
+- [ ] Add items 1–5 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).
 - [ ] Scan the PromptPay QR with at least two Thai banking apps.

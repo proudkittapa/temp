@@ -3,9 +3,10 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf, formatDate, formatDateTime } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
+import { notify, ask, askText, dialog } from './Dialog';
 import DemoLogins, { DEMO_STAFF } from './DemoLogins';
 import { Check, X, ShoppingCart, Activity, RefreshCw, AlertTriangle, Coffee, ShieldCheck, Dumbbell, Receipt, Plus, Minus, CheckCircle2, UserCheck, AlertOctagon } from 'lucide-react';
 
@@ -255,18 +256,18 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   };
 
   // Walk-in booking submission
-  const handleWalkinBookingSubmit = (e: React.FormEvent) => {
+  const handleWalkinBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!walkinCourtId || !walkinSlot || !walkinName || !walkinPhone) {
-      alert('กรุณากรอกข้อมูลและเลือกเวลาให้ครบถ้วน!');
+      notify('กรุณากรอกข้อมูลและเลือกเวลาให้ครบถ้วน!');
       return;
     }
     if (pendingWalkin) {
-      alert(`กรุณายืนยันหรือยกเลิกรายการ ${pendingWalkin.bookingCode} ที่รอชำระเงินก่อนค่ะ`);
+      notify(`กรุณายืนยันหรือยกเลิกรายการ ${pendingWalkin.bookingCode} ที่รอชำระเงินก่อนค่ะ`);
       return;
     }
     if (slotTiming(walkinDate, walkinSlot).ended) {
-      alert('ช่วงเวลานี้ผ่านไปแล้ว กรุณาเลือกช่วงเวลาอื่น');
+      notify('ช่วงเวลานี้ผ่านไปแล้ว กรุณาเลือกช่วงเวลาอื่น');
       return;
     }
 
@@ -276,14 +277,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const isOccupied = !isCourtSlotAvailable(walkinCourtId, walkinDate, walkinSlot, bookings, courts);
 
     if (isOccupied) {
-      alert('ขออภัยค่ะ! สนามและเวลาที่เลือกถูกจองไว้แล้ว กรุณาเลือกช่วงเวลาอื่น');
+      notify('ขออภัยค่ะ! สนามและเวลาที่เลือกถูกจองไว้แล้ว กรุณาเลือกช่วงเวลาอื่น');
       return;
     }
 
     // Outside opening hours (no pricing rule covers it) - the server refuses these
     const slotCourt = courts.find(c => c.id === walkinCourtId);
     if (slotCourt && !calculatePrice(slotCourt.type, walkinDate, walkinSlot, MemberType.NORMAL, slotCourt).isOpen) {
-      alert('ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ กรุณาเลือกช่วงเวลาอื่น');
+      notify('ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ กรุณาเลือกช่วงเวลาอื่น');
       return;
     }
 
@@ -296,7 +297,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     )?.reason;
 
     if (blockedReason) {
-      if (!window.confirm(`⚠️ คำเตือนสต๊าฟ: วันที่ทำรายการนี้ถูกบล็อกปิดหยุดพิเศษ ("${blockedReason}")\nคุณต้องการบันทึกจองกรณีพิเศษ (Override Code) ใช่หรือไม่?`)) {
+      if (!(await ask(`วันที่/ช่วงเวลานี้ถูกปิดบริการ ("${blockedReason}")\nต้องการจองเป็นกรณีพิเศษหรือไม่?`, { title: '⚠️ ช่วงเวลาปิดบริการ', okLabel: 'จองกรณีพิเศษ' }))) {
         return;
       }
     }
@@ -305,11 +306,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const voucherCodeIn = walkinVoucherCode.trim().toUpperCase();
     if (useVoucher) {
       if (!voucherCodeIn) {
-        alert('กรุณากรอกรหัสคูปองชั่วโมงฟรี (RW-XXXXXX)');
+        notify('กรุณากรอกรหัสคูปองชั่วโมงฟรี (RW-XXXXXX)');
         return;
       }
       if (slotCourt && !isHourOffPeak(slotCourt.type, walkinDate, hourNum)) {
-        alert('คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วง Off-Peak เท่านั้น กรุณาเลือกเวลา Off-Peak');
+        notify('คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วง Off-Peak เท่านั้น กรุณาเลือกเวลา Off-Peak');
         return;
       }
     }
@@ -352,7 +353,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           onRefreshAll();
         })
         .catch(err => {
-          alert(`จองไม่สำเร็จ: ${err.message}`);
+          notify(`จองไม่สำเร็จ: ${err.message}`);
           onRefreshAll();
         });
       return;
@@ -365,7 +366,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const localVouchers = StorageService.get<LocalVoucher[]>('redemptions', []);
     const voucher = useVoucher ? localVouchers.find(r => r.claimCode === voucherCodeIn) : undefined;
     if (useVoucher && (!voucher || !FREE_HOUR_REWARD_IDS.includes(voucher.rewardId) || (voucher.status || 'ACTIVE') !== 'ACTIVE')) {
-      alert(!voucher ? 'ไม่พบรหัสคูปองนี้'
+      notify(!voucher ? 'ไม่พบรหัสคูปองนี้'
         : !FREE_HOUR_REWARD_IDS.includes(voucher.rewardId) ? 'รหัสนี้ไม่ใช่คูปองชั่วโมงฟรี (ให้มอบของรางวัลที่แท็บ "รับของรางวัล")'
         : 'คูปองนี้ถูกใช้ไปแล้วหรือหมดอายุ');
       return;
@@ -491,11 +492,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           }
           onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: entry?.payment.status ?? PaymentStatus.PENDING }, { status: PaymentStatus.VERIFIED });
           onRefreshAll();
-          alert(`ยืนยันเรียบร้อยแล้ว! อนุมัติ ${res.bookingsCount} สล็อต ${res.pointsAwarded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${res.pointsAwarded} แต้ม)` : ''}`);
+          notify(`ยืนยันเรียบร้อยแล้ว! อนุมัติ ${res.bookingsCount} สล็อต ${res.pointsAwarded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${res.pointsAwarded} แต้ม)` : ''}`);
           return true;
         })
         .catch(err => {
-          alert(`อนุมัติไม่สำเร็จ: ${err.message}`);
+          notify(`อนุมัติไม่สำเร็จ: ${err.message}`);
           onRefreshAll();
           return false;
         });
@@ -507,7 +508,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const paymentObj = allPayments.find(p => p.id === paymentId);
     if (!paymentObj) return Promise.resolve(false);
     if (paymentObj.status !== PaymentStatus.SLIP_UPLOADED && paymentObj.status !== PaymentStatus.PENDING) {
-      alert(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
+      notify(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
       onRefreshAll();
       return Promise.resolve(false);
     }
@@ -558,7 +559,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: paymentObj.status }, { status: PaymentStatus.VERIFIED });
     
     onRefreshAll();
-    alert(`ยืนยันความถูกต้องเรียบร้อยแล้ว! อนุมัติ ${toConfirm.length} สล็อตและส่งไลน์ไปแจ้งเรียบร้อย ${ptsAdded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${ptsAdded} แต้ม)` : ''}`);
+    notify(`ยืนยันความถูกต้องเรียบร้อยแล้ว! อนุมัติ ${toConfirm.length} สล็อตและส่งไลน์ไปแจ้งเรียบร้อย ${ptsAdded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${ptsAdded} แต้ม)` : ''}`);
     return Promise.resolve(true);
   };
 
@@ -566,7 +567,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Resolves to whether it succeeded.
   const handleRejectSlip = (paymentId: string, reason: string = rejectReason): Promise<boolean> => {
     if (!reason) {
-      alert('กรุณากรอกสาเหตุการปฎิเสธสลิปด้วยค่ะ');
+      notify('กรุณากรอกสาเหตุการปฎิเสธสลิปด้วยค่ะ');
       return Promise.resolve(false);
     }
 
@@ -581,11 +582,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           setRejectId(null);
           setRejectReason('');
           onRefreshAll();
-          alert('ปฏิเสธรายการแล้ว ระบบยกเลิกเวลาที่จองไว้แล้ว');
+          notify('ปฏิเสธรายการแล้ว ระบบยกเลิกเวลาที่จองไว้แล้ว');
           return true;
         })
         .catch(err => {
-          alert(`ปฏิเสธไม่สำเร็จ: ${err.message}`);
+          notify(`ปฏิเสธไม่สำเร็จ: ${err.message}`);
           onRefreshAll();
           return false;
         });
@@ -597,7 +598,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const paymentObj = allPayments.find(p => p.id === paymentId);
     if (!paymentObj) return Promise.resolve(false);
     if (paymentObj.status !== PaymentStatus.SLIP_UPLOADED && paymentObj.status !== PaymentStatus.PENDING) {
-      alert(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
+      notify(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
       onRefreshAll();
       return Promise.resolve(false);
     }
@@ -636,7 +637,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setRejectId(null);
     setRejectReason('');
     onRefreshAll();
-    alert('ปฏิเสธรายการแล้ว ระบบยกเลิกเวลาที่จองไว้แล้ว');
+    notify('ปฏิเสธรายการแล้ว ระบบยกเลิกเวลาที่จองไว้แล้ว');
     return Promise.resolve(true);
   };
 
@@ -653,18 +654,34 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Manager/admin cancellation of a booking (this hour or the whole group),
   // optionally recording a refund of what was paid. Reason required.
-  const handleCancelBooking = (booking: Booking) => {
-    const reason = window.prompt(`เหตุผลการยกเลิกการจอง ${booking.bookingCode} (จำเป็น - บันทึกใน Audit Log):`)?.trim();
-    if (!reason) return;
+  const handleCancelBooking = async (booking: Booking) => {
     const allBookings = api.USE_BACKEND ? bookings : StorageService.get<Booking[]>('bookings', []);
     const group = bookingGroupOf(booking, allBookings).filter(b => b.status === BookingStatus.PENDING_PAYMENT || b.status === BookingStatus.CONFIRMED);
-    const wholeGroup = group.length <= 1 || window.confirm(
-      `การจอง ${booking.bookingCode} มี ${group.length} ชั่วโมงที่ยังใช้งานอยู่\n\nกด OK = ยกเลิกทั้งหมด ${group.length} ชั่วโมง\nกด Cancel = ยกเลิกเฉพาะ ${booking.startTime}-${booking.endTime}`);
-    const target = wholeGroup ? group : [booking];
-    const paid = target.some(b => b.status === BookingStatus.CONFIRMED);
-    const paidAmount = target.filter(b => b.status === BookingStatus.CONFIRMED).reduce((s, b) => s + b.totalAmount, 0);
+    const paidOf = (list: Booking[]) => list.filter(b => b.status === BookingStatus.CONFIRMED).reduce((s, b) => s + b.totalAmount, 0);
+    const groupPaid = paidOf(group), hourPaid = paidOf([booking]);
+    // One dialog: reason, which hours, and whether a refund is recorded.
     // Nothing to refund on a free (voucher) hour - the voucher is given back instead.
-    const refund = paid && paidAmount > 0 && window.confirm(`บันทึกการคืนเงินค่าสนามที่ชำระแล้ว ${formatBaht(paidAmount)} บาทด้วยหรือไม่?\n(โอนคืนลูกค้าเองแล้วกด OK / ไม่คืนเงินกด Cancel)`);
+    const answer = await dialog({
+      title: `ยกเลิกการจอง ${booking.bookingCode}`,
+      message: `${booking.date} ${booking.startTime}-${booking.endTime} · ${booking.userName}`,
+      input: { label: 'เหตุผล (จำเป็น - บันทึกใน Audit Log)', required: true },
+      choices: group.length > 1 ? [
+        { value: 'all', label: `ยกเลิกทั้งหมด ${group.length} ชั่วโมง` },
+        { value: 'one', label: `ยกเลิกเฉพาะ ${booking.startTime}-${booking.endTime}` }
+      ] : undefined,
+      checkbox: groupPaid > 0 ? {
+        label: `บันทึกว่าคืนเงินค่าสนามที่ชำระแล้ว (โอนคืนลูกค้าเอง) — ${group.length > 1 ? `ทั้งหมด ${formatBaht(groupPaid)} / ชั่วโมงนี้ ${formatBaht(hourPaid)}` : formatBaht(groupPaid)} บาท`,
+        defaultChecked: true
+      } : undefined,
+      okLabel: 'ยืนยันยกเลิก',
+      cancelLabel: 'ไม่ยกเลิก',
+      danger: true
+    });
+    if (!answer) return;
+    const reason = answer.text.trim();
+    const wholeGroup = group.length <= 1 || answer.choice === 'all';
+    const target = wholeGroup ? group : [booking];
+    const refund = answer.checked && paidOf(target) > 0;
 
     if (api.USE_BACKEND) {
       api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id])
@@ -672,9 +689,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { ...res, reason });
           closeBookingDetail();
           onRefreshAll();
-          alert(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}`);
+          notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}`);
         })
-        .catch(err => alert(`ยกเลิกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`ยกเลิกไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -706,23 +723,23 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { cancelled: target.length, refund, refundAmount: refund ? refundAmount : 0, reason });
     closeBookingDetail();
     onRefreshAll();
-    alert(`ยกเลิก ${target.length} ชั่วโมงแล้ว${refund ? ` · บันทึกคืนเงิน ${formatBaht(refundAmount)} บาท` : ''}${reversed ? ` · หักแต้มคืน ${-reversed}` : ''}`);
+    notify(`ยกเลิก ${target.length} ชั่วโมงแล้ว${refund ? ` · บันทึกคืนเงิน ${formatBaht(refundAmount)} บาท` : ''}${reversed ? ` · หักแต้มคืน ${-reversed}` : ''}`);
   };
 
   // Manager/admin: the customer paid this unpaid booking in cash at the
   // counter - confirms it like an approved slip (counted in the cash drawer).
-  const handleMarkPaidInCash = (booking: Booking) => {
-    if (!window.confirm(`ยืนยันว่าได้รับเงินสดสำหรับการจอง ${booking.bookingCode} แล้ว?`)) return;
+  const handleMarkPaidInCash = async (booking: Booking) => {
+    if (!(await ask(`ยืนยันว่าได้รับเงินสดสำหรับการจอง ${booking.bookingCode} แล้ว?`, { okLabel: 'ได้รับเงินสดแล้ว' }))) return;
     const done = (count: number, pts: number) => {
       onAddAuditLog('PAID_IN_CASH_RECORDED', 'Booking', booking.id, null, { bookingCode: booking.bookingCode });
       closeBookingDetail();
       onRefreshAll();
-      alert(`บันทึกรับเงินสดแล้ว ยืนยัน ${count} ชั่วโมง${pts ? ` (+${pts} แต้ม)` : ''}`);
+      notify(`บันทึกรับเงินสดแล้ว ยืนยัน ${count} ชั่วโมง${pts ? ` (+${pts} แต้ม)` : ''}`);
     };
     if (api.USE_BACKEND) {
       api.markBookingPaidInCash(booking.id)
         .then(res => done(res.bookingsCount, res.pointsAwarded))
-        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
     const allBookings = StorageService.get<Booking[]>('bookings', []);
@@ -739,15 +756,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Any staff: the customer didn't come for this (already started) hour.
   // The hour's loyalty point is taken back; the payment is kept.
-  const handleMarkNoShow = (booking: Booking) => {
-    if (!window.confirm(`บันทึกว่าลูกค้าไม่มาใช้สนาม ${booking.startTime}-${booking.endTime} (${booking.bookingCode})?`)) return;
+  const handleMarkNoShow = async (booking: Booking) => {
+    if (!(await ask(`บันทึกว่าลูกค้าไม่มาใช้สนาม ${booking.startTime}-${booking.endTime} (${booking.bookingCode})?`, { okLabel: 'บันทึกไม่มา' }))) return;
     const done = () => {
       onAddAuditLog('BOOKING_NO_SHOW', 'Booking', booking.id, { status: booking.status }, { status: BookingStatus.NO_SHOW });
       closeBookingDetail();
       onRefreshAll();
     };
     if (api.USE_BACKEND) {
-      api.markNoShow(booking.id).then(done).catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      api.markNoShow(booking.id).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
     StorageService.set('bookings', StorageService.get<Booking[]>('bookings', []).map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
@@ -759,17 +776,17 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Manager/admin refund of a payment with no booking standing for it -
   // e.g. a late payment whose slot was taken meanwhile.
-  const handleRefundPayment = (pay: Payment) => {
-    const reason = window.prompt(`เหตุผลการคืนเงิน ${formatBaht(pay.amount - (pay.refundAmount || 0))} บาท (จำเป็น):`)?.trim();
+  const handleRefundPayment = async (pay: Payment) => {
+    const reason = await askText(`เหตุผลการคืนเงิน ${formatBaht(pay.amount - (pay.refundAmount || 0))} บาท (จำเป็น):`, { title: '💸 คืนเงิน', okLabel: 'บันทึกคืนเงิน' });
     if (!reason) return;
     if (api.USE_BACKEND) {
       api.refundPayment(pay.id, reason)
         .then(p => {
           onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: p.refundAmount, reason });
           onRefreshAll();
-          alert(`บันทึกคืนเงิน ${formatBaht(p.refundAmount || 0)} บาทแล้ว`);
+          notify(`บันทึกคืนเงิน ${formatBaht(p.refundAmount || 0)} บาทแล้ว`);
         })
-        .catch(err => alert(`คืนเงินไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`คืนเงินไม่สำเร็จ: ${err.message}`));
       return;
     }
     const allBookings = StorageService.get<Booking[]>('bookings', []);
@@ -794,7 +811,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       api.lookupVoucher(code)
         .then(v => setVoucherFound({ code: v.code, reward: `${v.rewardEmoji} ${v.rewardName}`, customer: `${v.userName || ''} ${v.userPhone || ''}`,
           name: v.userName || '', phone: v.userPhone || '', freeHour: v.rewardKind === 'FREE_OFFPEAK_HOUR', status: v.status,
-          expires: new Date(v.expiresAt).toLocaleDateString('th-TH') }))
+          expires: formatDate(v.expiresAt) }))
         .catch(err => setVoucherError(err instanceof api.ApiError && err.status === 404 ? 'ไม่พบรหัสนี้' : err.message));
       return;
     }
@@ -822,7 +839,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const done = () => {
       onAddAuditLog('VOUCHER_DISPENSED', 'Voucher', code, { status: 'ACTIVE' }, { status: 'REDEEMED' });
       setVoucherFound({ ...voucherFound, status: 'REDEEMED' });
-      alert(`มอบของรางวัล ${voucherFound.reward} แล้ว`);
+      notify(`มอบของรางวัล ${voucherFound.reward} แล้ว`);
     };
     if (api.USE_BACKEND) {
       api.dispenseVoucher(code).then(done).catch(err => setVoucherError(err.message));
@@ -845,9 +862,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     });
   };
 
-  const cancelPendingWalkin = () => {
+  const cancelPendingWalkin = async () => {
     if (!pendingWalkin) return;
-    if (!window.confirm(`ยกเลิกการจอง ${pendingWalkin.bookingCode} ที่ยังไม่ได้ชำระเงินใช่หรือไม่?`)) return;
+    if (!(await ask(`ยกเลิกการจอง ${pendingWalkin.bookingCode} ที่ยังไม่ได้ชำระเงินใช่หรือไม่?`, { okLabel: 'ยกเลิกการจอง', cancelLabel: 'ไม่ยกเลิก', danger: true }))) return;
     handleRejectSlip(pendingWalkin.paymentId, 'ยกเลิกที่เคาน์เตอร์ ยังไม่ได้ชำระเงิน').then(ok => {
       if (ok) setPendingWalkin(null);
     });
@@ -856,14 +873,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // F&B Add to Receipt Cart
   const handleAddToCart = (product: Product) => {
     if (product.stock <= 0) {
-      alert('ขออภัยค่ะ! สินค้าชิ้นนี้หมดคลังชั่วคราว ขัดข้องการเช็กเอาท์');
+      notify('ขออภัยค่ะ! สินค้าชิ้นนี้หมดคลังชั่วคราว ขัดข้องการเช็กเอาท์');
       return;
     }
 
     const exists = cartItems.find(item => item.product.id === product.id);
     if (exists) {
       if (exists.qty >= product.stock) {
-        alert('ไม่สามารถเพิ่มได้เกินจำนวนสินค้าที่มีอยู่ในระบบคลัง');
+        notify('ไม่สามารถเพิ่มได้เกินจำนวนสินค้าที่มีอยู่ในระบบคลัง');
         return;
       }
       setCartItems(cartItems.map(item => 
@@ -883,7 +900,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       setCartItems(cartItems.filter(item => item.product.id !== productId));
     } else {
       if (newQty > matched.product.stock) {
-        alert('จำนวนเกินสินค้าที่มีในตู้แช่/คลัง');
+        notify('จำนวนเกินสินค้าที่มีในตู้แช่/คลัง');
         return;
       }
       setCartItems(cartItems.map(item => 
@@ -896,7 +913,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // cart is recorded as an equipment sale, anything else as F&B.
   const handleCartCheckout = () => {
     if (cartItems.length === 0) {
-      alert('รถเข็นใบเสร็จว่างเปล่า! กรุณากดสินค้าเติมตระกร้า');
+      notify('รถเข็นใบเสร็จว่างเปล่า! กรุณากดสินค้าเติมตระกร้า');
       return;
     }
     const type = cartItems.every(i => i.product.category === ProductCat.EQUIPMENT) ? OrderType.EQUIPMENT_SALE : OrderType.FB;
@@ -920,7 +937,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           onAddAuditLog('ORDER_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode, total: r.order.totalAmount });
           done(r.order.orderCode, r.order.totalAmount, r.pointsEarned);
         })
-        .catch(err => { alert(`ขายไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
+        .catch(err => { notify(`ขายไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
       return;
     }
 
@@ -929,7 +946,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     for (const item of cartItems) {
       const live = rawProducts.find(p => p.id === item.product.id);
       if (!live || live.stock < item.qty) {
-        alert(`${item.product.name}: เหลือในคลัง ${live?.stock ?? 0} ชิ้น`);
+        notify(`${item.product.name}: เหลือในคลัง ${live?.stock ?? 0} ชิ้น`);
         return;
       }
     }
@@ -975,21 +992,21 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const handleRentalRentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rentalRenterName || !selectedProductId) {
-      alert('กรุณากรอกชื่อผู้ขอเช่าเล่น และ เลือกชนิดอุปกรณ์กีฬา!');
+      notify('กรุณากรอกชื่อผู้ขอเช่าเล่น และ เลือกชนิดอุปกรณ์กีฬา!');
       return;
     }
     const prodObj = products.find(p => p.id === selectedProductId);
     if (!prodObj || prodObj.stock <= 0) {
-      alert('ของเช่าชิ้นนี้หมดชั่วคราว กรุณาติดต่อฝั่งสนาม');
+      notify('ของเช่าชิ้นนี้หมดชั่วคราว กรุณาติดต่อฝั่งสนาม');
       return;
     }
     const variant = prodObj.variants?.find(v => v.id === rentalVariantId);
     if (prodObj.variants?.length && !variant) {
-      alert('กรุณาเลือกเบอร์รองเท้า');
+      notify('กรุณาเลือกเบอร์รองเท้า');
       return;
     }
     if (variant && variant.stock <= 0) {
-      alert(`ขออภัยค่ะ! รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label} ถูกยืมหมดแล้ว`);
+      notify(`ขออภัยค่ะ! รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label} ถูกยืมหมดแล้ว`);
       return;
     }
     const sizeNote = variant ? ` (รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label})` : '';
@@ -999,7 +1016,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       setRentalCustomerPhone('');
       setRentalVariantId('');
       onRefreshAll();
-      alert(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
+      notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
     };
 
     if (api.USE_BACKEND) {
@@ -1012,7 +1029,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           onAddAuditLog('RENTAL_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode });
           done(r.order.orderCode, r.pointsEarned);
         })
-        .catch(err => { alert(`ปล่อยเช่าไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
+        .catch(err => { notify(`ปล่อยเช่าไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
       return;
     }
 
@@ -1064,9 +1081,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         .then(o => {
           onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', o.id, null, { item: itemId, status: o.status });
           onRefreshAll();
-          alert('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
+          notify('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
         })
-        .catch(err => { alert(`บันทึกคืนไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
+        .catch(err => { notify(`บันทึกคืนไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
       return;
     }
     const rawOrders = StorageService.get<Order[]>('orders', []);
@@ -1086,7 +1103,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }));
     onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', orderId, { item: itemId, returned: false }, { item: itemId, returned: true });
     onRefreshAll();
-    alert('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
+    notify('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
   };
 
   // Calculate Ledger parameters (Module 3 Specification). Booking money is
@@ -1098,16 +1115,16 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const handleOpenShift = () => {
     const float = Number(shiftFloatInput);
     if (shiftFloatInput.trim() === '' || !(float >= 0)) {
-      alert('กรุณากรอกเงินทอนตั้งต้นในลิ้นชัก (บาท)');
+      notify('กรุณากรอกเงินทอนตั้งต้นในลิ้นชัก (บาท)');
       return;
     }
     setClosedShift(null);
     if (api.USE_BACKEND) {
-      api.openShift(float).then(() => { setShiftFloatInput(''); onRefreshAll(); }).catch(err => alert(`เปิดกะไม่สำเร็จ: ${err.message}`));
+      api.openShift(float).then(() => { setShiftFloatInput(''); onRefreshAll(); }).catch(err => notify(`เปิดกะไม่สำเร็จ: ${err.message}`));
       return;
     }
     const list = StorageService.get<Shift[]>('shifts', []);
-    if (list.some(sh => !sh.closedAt)) { alert('มีกะที่เปิดอยู่แล้ว ปิดกะก่อน'); return; }
+    if (list.some(sh => !sh.closedAt)) { notify('มีกะที่เปิดอยู่แล้ว ปิดกะก่อน'); return; }
     const sh: Shift = { id: 'shf-' + Date.now(), staffId: 'u-staff-1', staffName: 'คุณ กิตติ (เดโม)', openedAt: new Date().toISOString(), openingFloat: roundBaht(float) };
     StorageService.set('shifts', [...list, sh]);
     onAddAuditLog('SHIFT_OPENED', 'Shift', sh.id, null, { openingFloat: sh.openingFloat });
@@ -1116,19 +1133,19 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   };
 
   // Close it with the counted cash: expected vs counted = over/short (FR-6.2).
-  const handleCloseShift = () => {
+  const handleCloseShift = async () => {
     if (!shift) return;
     const counted = Number(shiftCountInput);
     if (shiftCountInput.trim() === '' || !(counted >= 0)) {
-      alert('กรุณากรอกยอดเงินสดที่นับได้จริง');
+      notify('กรุณากรอกยอดเงินสดที่นับได้จริง');
       return;
     }
     const variance = roundBaht(counted - shift.expected);
     if (variance !== 0 && !shiftNote.trim()) {
-      alert(`ยอดนับ${variance > 0 ? 'เกิน' : 'ขาด'} ${formatBaht(Math.abs(variance))} บาท กรุณาใส่หมายเหตุอธิบาย`);
+      notify(`ยอดนับ${variance > 0 ? 'เกิน' : 'ขาด'} ${formatBaht(Math.abs(variance))} บาท กรุณาใส่หมายเหตุอธิบาย`);
       return;
     }
-    if (!window.confirm(`ปิดกะ: คาดว่ามีเงินสด ${formatBaht(shift.expected)} บาท นับได้ ${formatBaht(counted)} บาท (${variance === 0 ? 'ตรง' : variance > 0 ? `เกิน ${formatBaht(variance)}` : `ขาด ${formatBaht(-variance)}`})`)) return;
+    if (!(await ask(`ปิดกะ: คาดว่ามีเงินสด ${formatBaht(shift.expected)} บาท นับได้ ${formatBaht(counted)} บาท (${variance === 0 ? 'ตรง' : variance > 0 ? `เกิน ${formatBaht(variance)}` : `ขาด ${formatBaht(-variance)}`})`, { okLabel: 'ปิดกะ' }))) return;
     const done = (closed: api.ShiftView) => {
       setClosedShift(closed);
       setShiftCountInput('');
@@ -1136,7 +1153,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       onRefreshAll();
     };
     if (api.USE_BACKEND) {
-      api.closeShift(counted, shiftNote).then(done).catch(err => alert(`ปิดกะไม่สำเร็จ: ${err.message}`));
+      api.closeShift(counted, shiftNote).then(done).catch(err => notify(`ปิดกะไม่สำเร็จ: ${err.message}`));
       return;
     }
     const closedAt = new Date().toISOString();
@@ -1148,16 +1165,16 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Manager: void today's counter sale - stock and points back, out of the
   // drawer. Reason required.
-  const handleVoidOrder = (order: Order) => {
-    const reason = window.prompt(`เหตุผลการยกเลิกบิล ${order.orderCode} (${formatBaht(order.totalAmount)} บาท) - คืนเงินลูกค้าแล้วค่อยยืนยัน:`)?.trim();
+  const handleVoidOrder = async (order: Order) => {
+    const reason = await askText(`เหตุผลการยกเลิกบิล ${order.orderCode} (${formatBaht(order.totalAmount)} บาท)\nคืนเงินลูกค้าแล้วค่อยยืนยัน`, { title: '✖ ยกเลิกบิล', okLabel: 'ยกเลิกบิล' });
     if (!reason) return;
     if (api.USE_BACKEND) {
       api.voidOrder(order.id, reason)
-        .then(() => { onRefreshAll(); alert(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)`); })
-        .catch(err => alert(`ยกเลิกบิลไม่สำเร็จ: ${err.message}`));
+        .then(() => { onRefreshAll(); notify(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)`); })
+        .catch(err => notify(`ยกเลิกบิลไม่สำเร็จ: ${err.message}`));
       return;
     }
-    if (localDateOf(order.createdAt) !== getTodayDateStr()) { alert('ยกเลิกได้เฉพาะบิลของวันนี้'); return; }
+    if (localDateOf(order.createdAt) !== getTodayDateStr()) { notify('ยกเลิกได้เฉพาะบิลของวันนี้'); return; }
     StorageService.set('products', StorageService.get<Product[]>('products', []).map(p => {
       const lines = order.items.filter(it => it.productId === p.id && !it.returnedAt);
       if (!lines.length) return p;
@@ -1173,7 +1190,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (order.userId && pts > 0) StorageService.addLedgerEntry(order.userId, LedgerEntryType.REVERSE_PURCHASE, -pts, 'manager', { note: `Sale ${order.orderCode} voided: ${reason}` });
     onAddAuditLog('ORDER_VOIDED', 'Order', order.id, { status: order.status }, { status: OrderStatus.CANCELLED, reason });
     onRefreshAll();
-    alert(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)`);
+    notify(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)`);
   };
 
   // Today's (Bangkok) non-cancelled counter orders. API mode loads only
@@ -2240,7 +2257,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         <p className="text-[10px] text-slate-400">
                           อุปกรณ์: {item.productName || products.find(p => p.id === item.productId)?.name || 'อุปกรณ์เช่า'}
                           {item.shoeSize && ` (เบอร์ ${item.shoeSize} ${item.shoeGender === 'F' ? 'หญิง' : 'ชาย'})`}
-                          {` · ตั้งแต่ ${new Date(order.createdAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}`}
+                          {` · ตั้งแต่ ${formatDateTime(order.createdAt)}`}
                         </p>
                       </div>
 
@@ -2315,7 +2332,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <p className="text-slate-600">เปิดกะโดย <b>{shift.staffName}</b> เมื่อ {new Date(shift.openedAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</p>
+                  <p className="text-slate-600">เปิดกะโดย <b>{shift.staffName}</b> เมื่อ {formatDateTime(shift.openedAt)}</p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                     <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">เงินทอนตั้งต้น</span><b>{formatBaht(shift.openingFloat)}</b></div>
                     <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ เงินสดค่าสนาม</span><b>{formatBaht(shift.cashBookings)}</b></div>
@@ -2350,7 +2367,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     <tbody>
                       {shiftHistory.filter(sh => sh.closedAt).slice(0, 15).map(sh => (
                         <tr key={sh.id} className="border-t border-slate-100">
-                          <td>{new Date(sh.openedAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                          <td>{formatDateTime(sh.openedAt)}</td>
                           <td>{sh.staffName}{sh.closedByName && sh.closedByName !== sh.staffName ? ` → ${sh.closedByName}` : ''}</td>
                           <td className="text-right">{formatBaht(sh.expectedCash ?? sh.expected)}</td>
                           <td className="text-right">{formatBaht(sh.countedCash ?? 0)}</td>
@@ -2535,7 +2552,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <div className="flex justify-between">
                   <span className="font-semibold text-slate-500">วันที่ออก (Date):</span>
                   <span className="font-mono">
-                    {new Date().toLocaleDateString('th-TH')} {new Date().toTimeString().split(' ')[0].substring(0, 5)} น.
+                    {formatDateTime(Date.now())} น.
                   </span>
                 </div>
                 <div className="flex justify-between">

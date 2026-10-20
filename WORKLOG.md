@@ -18,10 +18,57 @@ Entry format:
 
 ---
 
+## 2026-10-20 — In-page dialogs, Gregorian dates, availability before login, VAT to TODO
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `83728ff`)
+- **Owner's decisions:** VAT → TODO; replace pop-ups; Gregorian dates
+  (2026); let guests see availability. Mobile redesign: recommendation
+  given, waiting for the go-ahead.
+
+### Changed
+1. **Dialogs** (`src/components/Dialog.tsx`, `<DialogHost/>` in App): every
+   `alert` (134) → `notify()`, every `confirm` (18) / `prompt` (5) →
+   awaited `ask()` / `askText()` / `dialog()` in the three panels (handlers
+   made async). Native pop-ups are blocked or ugly in in-app browsers like
+   LINE. Required text boxes keep OK disabled until filled. The Staff POS
+   cancel-booking chain (reason prompt → OK/Cancel meaning "all hours /
+   this hour" → refund confirm) is now one dialog: reason, a radio choice
+   with the hours spelled out, and a refund checkbox showing the amounts.
+   Wording of several questions made plain (e.g. delete-account, rule
+   delete).
+2. **Gregorian dates:** `formatDate` / `formatDateTime` in mockData (Thai
+   month names, Gregorian year, Bangkok time: "20 ต.ค. 2026 13:56") used
+   for the header clock, shift times, rental times, voucher expiry and
+   redeem dates, receipts; dashboard month labels and the report year list
+   no longer add 543.
+3. **Availability before login:** the blurred "log in first" overlay over
+   the customer booking grid is gone; a one-line hint links to the login
+   box; picking a slot still asks to log in (unchanged).
+4. **TODO item 5 (VAT on receipts):** the receipt's header is a hard-coded
+   placeholder (business name, address, TAX ID 0-1055-59092-49-0) with a
+   VAT 7% breakdown - real details needed, VAT lines only if registered.
+
+### Verified
+- `tsc`, vitest 29/29 (no backend changes).
+- Playwright `ui12.cjs` both modes: header clock "20 ต.ค. 2026 …"; guest
+  sees the grid unblurred with prices, clicking a slot opens the in-page
+  login message; manager walk-in then cancel → one dialog (OK disabled
+  until a reason, refund checkbox) → "ยกเลิก 1 ชั่วโมงแล้ว · บันทึกคืนเงิน
+  180 บาท", slot free again; **0 native pop-ups**. Smoke test both modes:
+  no errors. Screenshots of the dialog at 1400px and 390px checked.
+
+### Not done / follow-ups
+- Mobile redesign (see the recommendation to the owner).
+- My older Playwright scripts (`ui5`–`ui10`) answered native dialogs and
+  need updating to click `#app-dialog-ok` if re-run.
+
+---
+
 ## 2026-10-20 — Cash drawer shifts, voiding sales, closed-court bookings, separate panel URLs
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `b373e73`)
+- **Commit(s):** `83728ff` (on `main`, parent `b373e73`)
 - **Background:** The owner said "fix all that you are certain to fix" from
   the remaining list. Done here: shifts (FR-6.1/6.2), voiding counter
   sales, cancelling a closed court's bookings, separate staff/admin URLs

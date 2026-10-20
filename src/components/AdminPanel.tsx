@@ -5,8 +5,9 @@ import {
   User, UserRole, MemberType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf,  } from '../mockData';
 import * as api from '../api';
+import { notify, ask, askText } from './Dialog';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
@@ -136,9 +137,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             { name: original.name, discountPercent: original.discountPercent, isActive: original.isActive },
             { name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive });
           onRefreshAll(); // reloads pricing from the server
-          alert(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
+          notify(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
         })
-        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -170,7 +171,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       { name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive }
     );
     onRefreshAll();
-    alert(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
+    notify(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
   };
 
   // API mode: the dashboard and its court grid come from the server.
@@ -278,7 +279,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     if (api.USE_BACKEND) {
       return (dash?.monthlyRevenue || []).map(r => {
         const [y, m] = r.month.split('-').map(Number);
-        return { name: `${monthNames[m - 1]} ${String(y + 543).slice(2)}`, 'รายได้ค่าคอร์ท': r.bookings, 'รายได้เครื่องดื่ม/เช่าแร็ก': r.orders };
+        return { name: `${monthNames[m - 1]} ${y}`, 'รายได้ค่าคอร์ท': r.bookings, 'รายได้เครื่องดื่ม/เช่าแร็ก': r.orders };
       });
     }
     const [y, m] = dashboardSelectedDate.split('-').map(Number);
@@ -286,7 +287,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       const d = new Date(y, m - 1 - (5 - i), 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       return {
-        name: `${monthNames[d.getMonth()]} ${String(d.getFullYear() + 543).slice(2)}`,
+        name: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
         'รายได้ค่าคอร์ท': roundBaht(bookings.filter(b => b.date.startsWith(key) && isPaidBooking(b)).reduce((s, b) => s + Number(b.totalAmount), 0)),
         'รายได้เครื่องดื่ม/เช่าแร็ก': roundBaht(orders.filter(o => o.createdAt.startsWith(key) && o.status !== OrderStatus.CANCELLED).reduce((s, o) => s + Number(o.totalAmount), 0))
       };
@@ -350,21 +351,21 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     return gaps;
   };
 
-  const handleSaveOpeningHours = () => {
+  const handleSaveOpeningHours = async () => {
     const open = Number(openHourSetting), close = Number(closeHourSetting);
     if (!(open >= 0 && close <= 24 && open < close)) {
-      alert('เวลาเปิดต้องน้อยกว่าเวลาปิด (0:00 - 24:00)');
+      notify('เวลาเปิดต้องน้อยกว่าเวลาปิด (0:00 - 24:00)');
       return;
     }
     const gaps = unpricedHours(open, close);
-    if (gaps.length && !window.confirm(`ชั่วโมงต่อไปนี้ยังไม่มีเรทราคา จะยังจองไม่ได้จนกว่าจะเพิ่มกฎราคา:\n${gaps.join('\n')}\n\nบันทึกเวลาเปิด-ปิดต่อไหม?`)) return;
+    if (gaps.length && !(await ask(`ชั่วโมงต่อไปนี้ยังไม่มีเรทราคา จะยังจองไม่ได้จนกว่าจะเพิ่มกฎราคา:\n${gaps.join('\n')}\n\nบันทึกเวลาเปิด-ปิดต่อไหม?`, { title: 'เวลาเปิด-ปิด', okLabel: 'บันทึก' }))) return;
     const done = () => {
       onAddAuditLog('OPENING_HOURS_UPDATED', 'PricingConfig', 'global', null, { openHour: open, closeHour: close });
       onRefreshAll();
-      alert(`บันทึกเวลาเปิด-ปิด ${String(open).padStart(2, '0')}:00 - ${String(close).padStart(2, '0')}:00 แล้ว`);
+      notify(`บันทึกเวลาเปิด-ปิด ${String(open).padStart(2, '0')}:00 - ${String(close).padStart(2, '0')}:00 แล้ว`);
     };
     if (api.USE_BACKEND) {
-      api.setOpeningHours(open, close).then(() => api.syncPricingCache()).then(done).catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      api.setOpeningHours(open, close).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
     StorageService.set('pricing_config', { ...StorageService.get<PricingConfig>('pricing_config', { id: 'global', halfCourtRatePercent: 50 }), openHour: open, closeHour: close });
@@ -377,17 +378,17 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const handleSaveMaxAdvanceDays = () => {
     const days = Math.round(Number(maxAdvanceDays));
     if (!(days >= 1 && days <= 365)) {
-      alert('กรุณาระบุ 1–365 วัน');
+      notify('กรุณาระบุ 1–365 วัน');
       return;
     }
     const before = StorageService.get<{ maxAdvanceDays?: number }>('pricing_config', {}).maxAdvanceDays;
     const done = () => {
       onAddAuditLog('PRICING_CONFIG_UPDATED', 'PricingConfig', 'global', { maxAdvanceDays: before }, { maxAdvanceDays: days });
       onRefreshAll();
-      alert(`ตั้งค่าแล้ว: ลูกค้าจองออนไลน์ล่วงหน้าได้ ${days} วัน (ถึง ${lastBookableDate()})`);
+      notify(`ตั้งค่าแล้ว: ลูกค้าจองออนไลน์ล่วงหน้าได้ ${days} วัน (ถึง ${lastBookableDate()})`);
     };
     if (api.USE_BACKEND) {
-      api.setMaxAdvanceDays(days).then(() => api.syncPricingCache()).then(done).catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      api.setMaxAdvanceDays(days).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
     StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), maxAdvanceDays: days });
@@ -402,11 +403,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     // the part inside the opening hours can be booked), and a free hour
     // can't be paid by PromptPay.
     if (ruleStartHour < 0 || ruleEndHour > 24 || ruleStartHour >= ruleEndHour) {
-      alert('ช่วงเวลาต้องอยู่ระหว่าง 0:00 - 24:00 และเวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด');
+      notify('ช่วงเวลาต้องอยู่ระหว่าง 0:00 - 24:00 และเวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด');
       return;
     }
     if (!(Number(rulePrice) > 0)) {
-      alert('ราคาต่อชั่วโมงต้องมากกว่า 0 บาท');
+      notify('ราคาต่อชั่วโมงต้องมากกว่า 0 บาท');
       return;
     }
 
@@ -433,9 +434,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setRuleLabel('');
           setRulePrice(200);
           onRefreshAll(); // reloads pricing from the server
-          alert('บันทึกกติกาตั้งราคาเรียบร้อย! มีผลทันทีในกลไกเซิร์ฟเวอร์');
+          notify('บันทึกกติกาตั้งราคาเรียบร้อย! มีผลทันทีในกลไกเซิร์ฟเวอร์');
         })
-        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -458,11 +459,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     setRuleLabel('');
     setRulePrice(200);
     onRefreshAll();
-    alert('บันทึกกติกาตั้งราคาเรียบร้อย! มีผลทันทีในกลไกเซิร์ฟเวอร์');
+    notify('บันทึกกติกาตั้งราคาเรียบร้อย! มีผลทันทีในกลไกเซิร์ฟเวอร์');
   };
 
-  const handleDeletePricingRule = (id: string) => {
-    if (!window.confirm('คุณแน่ใจว่าต้องการลบสูตรกำหนดราคานี้ใช่ไหม?')) return;
+  const handleDeletePricingRule = async (id: string) => {
+    if (!(await ask('ลบกฎราคานี้? ชั่วโมงที่กฎนี้ครอบคลุมจะจองไม่ได้จนกว่าจะมีกฎใหม่', { okLabel: 'ลบกฎราคา', danger: true }))) return;
     if (api.USE_BACKEND) {
       const ruleToDelete = pricingRules.find(r => r.id === id);
       api.deletePricingRule(id)
@@ -470,7 +471,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           onAddAuditLog('PRICING_DELETED', 'PricingRule', id, ruleToDelete, null);
           onRefreshAll();
         })
-        .catch(err => alert(`ลบไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`ลบไม่สำเร็จ: ${err.message}`));
       return;
     }
     const currentRules = StorageService.get<PricingRule[]>('pricing_rules', []);
@@ -495,9 +496,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setNewCourtName('');
           setNewCourtAllowHalf(false);
           onRefreshAll();
-          alert(`เพิ่มสนาม "${c.name}" แล้ว ลูกค้าและพนักงานจองได้ทันที`);
+          notify(`เพิ่มสนาม "${c.name}" แล้ว ลูกค้าและพนักงานจองได้ทันที`);
         })
-        .catch(err => alert(`เพิ่มสนามไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`เพิ่มสนามไม่สำเร็จ: ${err.message}`));
       return;
     }
     const current = StorageService.get<Court[]>('courts', []);
@@ -521,25 +522,25 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     setNewCourtName('');
     setNewCourtAllowHalf(false);
     onRefreshAll();
-    alert(`เพิ่มสนามกีฬา "${newC.name}" เข้าสู่คอมเพล็กซ์สำเร็จเรียบร้อยค่ะ!`);
+    notify(`เพิ่มสนามกีฬา "${newC.name}" เข้าสู่คอมเพล็กซ์สำเร็จเรียบร้อยค่ะ!`);
   };
 
   // Open/close a court for new bookings. Courts are never deleted: old
   // bookings and reports point at them.
-  const handleToggleCourtActive = (id: string) => {
+  const handleToggleCourtActive = async (id: string) => {
     if (api.USE_BACKEND) {
       const court = courts.find(c => c.id === id);
       if (!court) return;
-      if (court.isActive && !window.confirm(`ปิด "${court.name}" ไม่ให้จองใหม่? (การจองที่มีอยู่แล้วจะไม่ถูกยกเลิกอัตโนมัติ)`)) return;
+      if (court.isActive && !(await ask(`ปิด "${court.name}" ไม่ให้จองใหม่?\n(การจองที่มีอยู่แล้วจะถามต่อว่าจะยกเลิกหรือไม่)`, { okLabel: 'ปิดสนาม', danger: true }))) return;
       api.updateCourt(id, { isActive: !court.isActive })
-        .then(r => {
+        .then(async r => {
           onAddAuditLog('COURT_TOGGLED_ACTIVE', 'Court', id, { active: court.isActive }, { active: r.court.isActive });
           onRefreshAll();
           if (r.upcoming.length > 0) {
             // The court takes no new bookings; offer to cancel the ones it
             // still has (FR-6.3), recording a refund for paid hours.
             const list = r.upcoming.map(b => `- ${b.date} ${b.startTime}–${b.endTime} ${b.userName} (${b.bookingCode})${b.status === BookingStatus.PENDING_PAYMENT ? ' ยังไม่ชำระ' : ''}`).join('\n');
-            if (!window.confirm(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจอง ${r.upcoming.length} รายการ:\n${list}\n\nยกเลิกทั้งหมดเลยหรือไม่? (รายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน — กรุณาโอนคืนลูกค้า)\nกด Cancel = เก็บไว้ ติดต่อลูกค้าเพื่อย้ายสนามเอง`)) return;
+            if (!(await ask(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจอง ${r.upcoming.length} รายการ:\n${list}\n\nยกเลิกทั้งหมดเลยไหม? รายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { title: 'การจองบนสนามที่ปิด', okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้ ติดต่อลูกค้าเอง', danger: true }))) return;
             (async () => {
               let refunded = 0, failed = 0;
               for (const b of r.upcoming) {
@@ -552,11 +553,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               }
               onAddAuditLog('COURT_CLOSED_BOOKINGS_CANCELLED', 'Court', id, null, { cancelled: r.upcoming.length - failed, refunded });
               onRefreshAll();
-              alert(`ยกเลิก ${r.upcoming.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
+              notify(`ยกเลิก ${r.upcoming.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
             })();
           }
         })
-        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
     const current = StorageService.get<Court[]>('courts', []);
@@ -681,7 +682,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     if (!newDayOffDate || !newDayOffReason) return;
     
     if (!newDayOffIsFullDay && newDayOffStartHour >= newDayOffEndHour) {
-      alert('⚠️ เวลาเริ่มต้นจะต้องน้อยกว่าเวลาสิ้นสุดการปิดบริการค่ะ กรุณากรอกใหม่');
+      notify('⚠️ เวลาเริ่มต้นจะต้องน้อยกว่าเวลาสิ้นสุดการปิดบริการค่ะ กรุณากรอกใหม่');
       return;
     }
 
@@ -694,7 +695,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         startHour: newDayOffIsFullDay ? undefined : newDayOffStartHour,
         endHour: newDayOffIsFullDay ? undefined : newDayOffEndHour
       })
-        .then(({ dayOff, affectedBookings }) => {
+        .then(async ({ dayOff, affectedBookings }) => {
           onAddAuditLog('DAY_OFF_CREATED', 'DayOff', dayOff.id, null, dayOff);
           setNewDayOffDate('');
           setNewDayOffReason('');
@@ -707,11 +708,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             ? `\n\n⚠️ มีการจองเดิม ${affectedBookings.length} รายการในช่วงเวลาที่ปิด (ยังไม่ถูกยกเลิก) กรุณาติดต่อลูกค้า:\n` +
               affectedBookings.map(b => `- ${courts.find(c => c.id === b.courtId)?.name || b.courtId} ${b.startTime}–${b.endTime} (${b.bookingCode})`).join('\n')
             : '';
-          alert('บันทึกปิดบริการ/ระงับการจองวันหยุดพิเศษเรียบร้อยแล้วค่ะ!' + affectedNote);
+          notify('บันทึกปิดบริการ/ระงับการจองวันหยุดพิเศษเรียบร้อยแล้วค่ะ!' + affectedNote);
           // Offer to cancel the overlapped bookings right away (FR-6.3),
           // recording a refund for hours that were already paid.
           const active = affectedBookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING_PAYMENT);
-          if (active.length > 0 && window.confirm(`ยกเลิกการจองที่ได้รับผลกระทบ ${active.length} รายการเลยหรือไม่?\n(รายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน — กรุณาโอนคืนลูกค้า)`)) {
+          if (active.length > 0 && await ask(`ยกเลิกการจองที่ได้รับผลกระทบ ${active.length} รายการเลยไหม?\nรายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้', danger: true })) {
             (async () => {
               let refunded = 0, failed = 0;
               for (const b of active) {
@@ -724,11 +725,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               }
               onAddAuditLog('DAY_OFF_BOOKINGS_CANCELLED', 'DayOff', dayOff.id, null, { cancelled: active.length - failed, refunded });
               onRefreshAll();
-              alert(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${refunded} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
+              notify(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${refunded} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
             })();
           }
         })
-        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -753,19 +754,19 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     setNewDayOffStartHour(7);
     setNewDayOffEndHour(22);
     onRefreshAll();
-    alert('บันทึกปิดบริการ/ระงับการจองวันหยุดพิเศษเรียบร้อยแล้วค่ะ!');
+    notify('บันทึกปิดบริการ/ระงับการจองวันหยุดพิเศษเรียบร้อยแล้วค่ะ!');
   };
 
-  const handleDeleteDayOff = (id: string) => {
-    if (!window.confirm('คุณแน่ใจว่าต้องการเปิดบริการสนามตามชั่วโมงปกติในวันดังกล่าวใช่ไหม?')) return;
+  const handleDeleteDayOff = async (id: string) => {
+    if (!(await ask('ลบวันปิดนี้ และเปิดให้จองตามปกติ?', { okLabel: 'ลบวันปิด' }))) return;
     if (api.USE_BACKEND) {
       api.deleteDayOff(id)
         .then(() => {
           onAddAuditLog('DAY_OFF_DELETED', 'DayOff', id, null, null);
           onRefreshAll();
-          alert('ปลดบล็อกช่วงวันหยุดพิเศษและเปิดให้บริการปกติแล้วค่ะ');
+          notify('ปลดบล็อกช่วงวันหยุดพิเศษและเปิดให้บริการปกติแล้วค่ะ');
         })
-        .catch(err => alert(`ลบไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`ลบไม่สำเร็จ: ${err.message}`));
       return;
     }
     const current = StorageService.get<DayOff[]>('days_off', []);
@@ -774,7 +775,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     setDaysOff(updated);
     onAddAuditLog('DAY_OFF_DELETED', 'DayOff', id, null, null);
     onRefreshAll();
-    alert('ปลดบล็อกช่วงวันหยุดพิเศษและเปิดให้บริการปกติแล้วค่ะ');
+    notify('ปลดบล็อกช่วงวันหยุดพิเศษและเปิดให้บริการปกติแล้วค่ะ');
   };
 
 
@@ -782,7 +783,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const handlePromoteUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!userIdToPromote) {
-      alert('🔒 กรุณาเลือกผู้ใช้ที่มีในระบบเพื่อใช้ลากเลื่อนระดับสิทธิ์ปฏิบัติงานเวร!');
+      notify('🔒 กรุณาเลือกผู้ใช้ที่มีในระบบเพื่อใช้ลากเลื่อนระดับสิทธิ์ปฏิบัติงานเวร!');
       return;
     }
 
@@ -794,9 +795,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           onAddAuditLog('USER_PROMOTED_TO_OPERATOR_BY_ADMIN', 'User', updated.id, before ?? null, updated);
           setUserIdToPromote('');
           onRefreshAll();
-          alert(`🎉 เลื่อนสิทธิ์ให้คุณ "${updated.name}" เป็น "${updated.role}" เรียบร้อยแล้วค่ะ!`);
+          notify(`🎉 เลื่อนสิทธิ์ให้คุณ "${updated.name}" เป็น "${updated.role}" เรียบร้อยแล้วค่ะ!`);
         })
-        .catch(err => alert(`เลื่อนสิทธิ์ไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`เลื่อนสิทธิ์ไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -804,7 +805,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const foundIdx = currentUsers.findIndex(u => u.id === userIdToPromote);
     
     if (foundIdx === -1) {
-      alert('ไม่พบผู้ใช้ที่ท่านระบุในสารบบ!');
+      notify('ไม่พบผู้ใช้ที่ท่านระบุในสารบบ!');
       return;
     }
 
@@ -822,11 +823,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     
     setUserIdToPromote('');
     onRefreshAll();
-    alert(`🎉 เลื่อนสิทธิ์ให้คุณ "${userToPromote.name}" ขึ้นสู่ตำแหน่ง "${newUserRole}" ในสังกัดของคลับเรียบร้อยแล้วค่ะ!`);
+    notify(`🎉 เลื่อนสิทธิ์ให้คุณ "${userToPromote.name}" ขึ้นสู่ตำแหน่ง "${newUserRole}" ในสังกัดของคลับเรียบร้อยแล้วค่ะ!`);
   };
 
-  const handleDeleteUserByAdmin = (id: string, name: string) => {
-    const confirmDelete = window.confirm(`⚠️ คำเตือนความมั่นคง: \nคุณแน่ใจหรือไม่ว่าต้องการ "ลบและทำลายบัญชี" ของคุณ "${name}" อย่างประณีตและถาวรออกจากเครือสยามสปอร์ต?\n\n* ข้อมูลทั้งหมดรวมถึงสิทธิ์การจองและส่วนลดจะสูญสิ้นทันที!`);
+  const handleDeleteUserByAdmin = async (id: string, name: string) => {
+    const confirmDelete = await ask(`ลบบัญชี "${name}" ถาวร?\nสิทธิ์และส่วนลดของบัญชีนี้จะหายไป (โหมดสาธิต)`, { title: '⚠️ ลบบัญชี', okLabel: 'ลบบัญชี', danger: true });
     if (!confirmDelete) return;
 
     const currentUsers = StorageService.get<User[]>('users', []);
@@ -837,7 +838,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
     onAddAuditLog('USER_DELETED_BY_ADMIN', 'User', id, { name }, null);
     onRefreshAll();
-    alert('ลบบัญชีและทำลายสิทธิ์ของผู้ใช้งานเรียบร้อยแล้วค่ะ');
+    notify('ลบบัญชีและทำลายสิทธิ์ของผู้ใช้งานเรียบร้อยแล้วค่ะ');
   };
 
   // Stage memberType (discount tier) modifications locally
@@ -895,16 +896,16 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             return copy;
           });
           onRefreshAll();
-          alert(`💾 บันทึกสิทธิ์ของ "${updated.name}" แล้ว: ${updated.role} · ${memberTierLabel(updated.memberType)}`);
+          notify(`💾 บันทึกสิทธิ์ของ "${updated.name}" แล้ว: ${updated.role} · ${memberTierLabel(updated.memberType)}`);
         })
-        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
 
     const currentUsers = StorageService.get<User[]>('users', []);
     const foundIdx = currentUsers.findIndex(u => u.id === id);
     if (foundIdx === -1) {
-      alert('ไม่พบบัญชีผู้ใช้เป้าหมาย!');
+      notify('ไม่พบบัญชีผู้ใช้เป้าหมาย!');
       return;
     }
 
@@ -945,7 +946,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     });
 
     onRefreshAll();
-    alert(`บันทึกสิทธิ์ของ "${afterUser.name}" เรียบร้อยแล้ว\n\n• ระดับสมาชิก: ${beforeUser.memberType || 'NORMAL'} ➔ ${afterUser.memberType}\n• บทบาท: ${beforeUser.role} ➔ ${afterUser.role}`);
+    notify(`บันทึกสิทธิ์ของ "${afterUser.name}" เรียบร้อยแล้ว\n\n• ระดับสมาชิก: ${beforeUser.memberType || 'NORMAL'} ➔ ${afterUser.memberType}\n• บทบาท: ${beforeUser.role} ➔ ${afterUser.role}`);
   };
 
   // Discard pending changes
@@ -965,7 +966,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           onAddAuditLog('USER_STATUS_TOGGLED', 'User', id, { isActive: currentlyActive }, { isActive: updated.isActive });
           onRefreshAll();
         })
-        .catch(err => alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`เปลี่ยนสถานะไม่สำเร็จ: ${err.message}`));
       return;
     }
     const currentUsers = StorageService.get<User[]>('users', []);
@@ -978,11 +979,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     onRefreshAll();
   };
 
-  const handleAdjustPoints = (userId: string, diff: number) => {
+  const handleAdjustPoints = async (userId: string, diff: number) => {
     if (api.USE_BACKEND) {
       // Points live in the backend's ledger; a manual change needs a reason
       // (it is audit-logged with it).
-      const reason = window.prompt(`เหตุผลในการ${diff > 0 ? 'เพิ่ม' : 'ลด'}แต้ม ${Math.abs(diff)} แต้ม (จำเป็น):`)?.trim();
+      const reason = await askText(`เหตุผลในการ${diff > 0 ? 'เพิ่ม' : 'ลด'}แต้ม ${Math.abs(diff)} แต้ม (จำเป็น):`, { title: 'ปรับแต้ม' });
       if (!reason) return;
       api.adjustPoints(userId, diff, reason)
         .then(balance => {
@@ -990,7 +991,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           onAddAuditLog('USER_POINTS_ADJUSTED_BY_ADMIN', 'User', userId, null, { diff, reason });
           onRefreshAll();
         })
-        .catch(err => alert(`ปรับแต้มไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`ปรับแต้มไม่สำเร็จ: ${err.message}`));
       return;
     }
     const currentUsers = StorageService.get<User[]>('users', []);
@@ -1028,9 +1029,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setNewProductPrice(20);
           setNewProductStock(50);
           onRefreshAll();
-          alert('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
+          notify('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
         })
-        .catch(err => alert(`เพิ่มสินค้าไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`เพิ่มสินค้าไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -1058,27 +1059,27 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     setNewProductPrice(20);
     setNewProductStock(50);
     onRefreshAll();
-    alert('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
+    notify('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
   };
 
   // Restock (+) or count correction (-), with a reason for the audit log.
   // Shoes are stocked per size: the size picked next to the buttons.
-  const handleUpdateStockValue = (prodId: string, val: number) => {
+  const handleUpdateStockValue = async (prodId: string, val: number) => {
     const prod = products.find(p => p.id === prodId);
     if (!prod) return;
     const variant = prod.variants?.find(v => v.id === stockVariantSel[prodId]);
     if (prod.variants?.length && !variant) {
-      alert('เลือกเบอร์ที่จะปรับสต๊อกก่อน');
+      notify('เลือกเบอร์ที่จะปรับสต๊อกก่อน');
       return;
     }
     const what = variant ? `${prod.name} เบอร์ ${variant.label}${variant.gender ? ` (${variant.gender})` : ''}` : prod.name;
-    const reason = window.prompt(`เหตุผลการ${val > 0 ? 'เพิ่ม' : 'ลด'}สต๊อก ${what} ${val > 0 ? '+' : ''}${val} ชิ้น:`, val > 0 ? 'รับสินค้าเข้า' : 'ปรับยอดตามนับจริง')?.trim();
+    const reason = await askText(`เหตุผลการ${val > 0 ? 'เพิ่ม' : 'ลด'}สต๊อก ${what} ${val > 0 ? '+' : ''}${val} ชิ้น:`, { title: 'ปรับสต๊อก', defaultValue: val > 0 ? 'รับสินค้าเข้า' : 'ปรับยอดตามนับจริง' });
     if (!reason) return;
 
     if (api.USE_BACKEND) {
       api.adjustStock(prodId, val, reason, variant?.id)
         .then(updated => setProducts(list => list.map(p => p.id === prodId ? updated : p)))
-        .catch(err => alert(`ปรับสต๊อกไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`ปรับสต๊อกไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -1157,7 +1158,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         const data = XLSX.utils.sheet_to_json<any>(ws);
 
         if (data.length === 0) {
-          alert('ไม่พบข้อมูลรายการสินค้าในสเปรดชีต Excel นี้');
+          notify('ไม่พบข้อมูลรายการสินค้าในสเปรดชีต Excel นี้');
           return;
         }
 
@@ -1207,20 +1208,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           api.createProducts(apiRows)
             .then(list => {
               onRefreshAll();
-              alert(`นำเข้าสินค้า ${list.length} รายการเรียบร้อย`);
+              notify(`นำเข้าสินค้า ${list.length} รายการเรียบร้อย`);
             })
-            .catch(err => alert(`นำเข้าไม่สำเร็จ (ไม่มีรายการใดถูกบันทึก): ${err.message}`));
+            .catch(err => notify(`นำเข้าไม่สำเร็จ (ไม่มีรายการใดถูกบันทึก): ${err.message}`));
         } else if (importedCount > 0) {
           StorageService.set('products', newProds);
           setProducts(newProds);
           onAddAuditLog('PRODUCTS_UPLOADED_VIA_EXCEL', 'Product', 'bulk', null, { count: importedCount });
           onRefreshAll();
-          alert(`อัปโหลดเสร็จสมบูรณ์! นำเข้าสินค้าแถวใหม่ ${importedCount} รายการเข้าสู่ตู้อัตโนมัติและคลังสต๊อกสำเร็จค่ะ 🚀`);
+          notify(`อัปโหลดเสร็จสมบูรณ์! นำเข้าสินค้าแถวใหม่ ${importedCount} รายการเข้าสู่ตู้อัตโนมัติและคลังสต๊อกสำเร็จค่ะ 🚀`);
         } else {
-          alert('ไม่พบข้อมูลแถวสินค้าที่หัวคอลัมน์ตรงตามเงื่อนไข ลองดาวน์โหลดไฟล์ตัวอย่างด้านบนมาคีย์ใหม่นะคะ');
+          notify('ไม่พบข้อมูลแถวสินค้าที่หัวคอลัมน์ตรงตามเงื่อนไข ลองดาวน์โหลดไฟล์ตัวอย่างด้านบนมาคีย์ใหม่นะคะ');
         }
       } catch (err: any) {
-        alert('เกิดข้อผิดพลาดขณะแกะไฟล์สเปรดชีต Excel: ' + err.message);
+        notify('เกิดข้อผิดพลาดขณะแกะไฟล์สเปรดชีต Excel: ' + err.message);
       }
     };
     reader.readAsBinaryString(file);
@@ -1267,7 +1268,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     try {
       data = await monthData(kind);
     } catch (err) {
-      alert(`ดึงรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      notify(`ดึงรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       return;
     }
     const tag = `${reportsYear}_${reportsMonth}`;
@@ -2819,7 +2820,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     className="w-full bg-white border border-slate-200 rounded p-2 text-xs"
                   >
                     {[-1, 0, 1].map(d => Number(getTodayDateStr().slice(0, 4)) + d).map(y => (
-                      <option key={y} value={String(y)}>{y + 543} ({y})</option>
+                      <option key={y} value={String(y)}>{y}</option>
                     ))}
                   </select>
                 </div>

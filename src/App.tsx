@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { UserRole, AuditLog } from './types';
-import { initializeState, StorageService } from './mockData';
+import { initializeState, StorageService, formatDateTime } from './mockData';
 import CustomerPanel from './components/CustomerPanel';
 import StaffPOS from './components/StaffPOS';
 import AdminPanel from './components/AdminPanel';
+import { DialogHost } from './components/Dialog';
 import { Shield, Sparkles, User, Users, Briefcase, Star, Clock } from 'lucide-react';
 import * as api from './api';
 
@@ -31,7 +32,7 @@ export default function App() {
     // Aesthetic live clock showing current UTC time
     const updateTime = () => {
       const now = new Date();
-      setCurrentUtcTime(now.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }));
+      setCurrentUtcTime(formatDateTime(now, true));
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
@@ -183,6 +184,8 @@ export default function App() {
         )}
 
       </main>
+
+      <DialogHost />
 
       {/* Footer Branding */}
       <footer className="bg-white border-t border-slate-100 py-6 text-center text-xs text-slate-405 text-slate-500">

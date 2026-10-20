@@ -4,8 +4,9 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
   User, UserRole
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openingHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS } from '../mockData';
+import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openingHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime } from '../mockData';
 import * as api from '../api';
+import { notify, ask } from './Dialog';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -197,7 +198,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         setRedemptions(vouchers.map(v => ({
           id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId,
           rewardName: `${v.rewardEmoji} ${v.rewardName}`, pointsSpent: v.pointsSpent, claimCode: v.code,
-          redeemedAt: new Date(v.createdAt).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' })
+          redeemedAt: formatDate(v.createdAt)
         })));
         setDaysOff(closures);
         // The customer's own rows carry their details; prefer them over the
@@ -293,7 +294,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           setAuthName('');
           setAuthPhone('');
           onRefreshAll();
-          alert('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
+          notify('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
         })
         .catch(err => setAuthError(`❌ ${err.message}`));
       return;
@@ -341,7 +342,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setAuthOrgName('');
     
     onRefreshAll();
-    alert('🎉 สมัครสมาชิกก๊วนและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" (สามารถติดต่อเจ้าหน้าที่สตาฟ ณ ร้านเพื่อยืนยันหลักฐานรับสิทธิ์ส่วนลดพิเศษได้ภายหลังค่ะ) 🌟');
+    notify('🎉 สมัครสมาชิกก๊วนและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" (สามารถติดต่อเจ้าหน้าที่สตาฟ ณ ร้านเพื่อยืนยันหลักฐานรับสิทธิ์ส่วนลดพิเศษได้ภายหลังค่ะ) 🌟');
   };
 
   const handleForgotPassword = (e: React.FormEvent) => {
@@ -385,17 +386,13 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     onRefreshAll();
   };
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
     if (!loggedInUser) return;
     if (api.USE_BACKEND) {
-      alert('การลบบัญชีผ่านระบบยังไม่เปิดให้บริการ กรุณาติดต่อเจ้าหน้าที่ค่ะ');
+      notify('การลบบัญชีผ่านระบบยังไม่เปิดให้บริการ กรุณาติดต่อเจ้าหน้าที่ค่ะ');
       return;
     }
-    const confirm1 = window.confirm(`⚠️ คำเตือนความปลอดภัยสูงสุด: \nคุณแน่ใจหรือไม่ว่าต้องการ "ลบบัญชีผู้ใช้" ของคุณออกจากสยามคอมเพล็กซ์อย่างถาวร? \n\n* ข้อมูลสิทธิ์ส่วนลดและประวัติประวัติส่วนตัวทั้งหมดของคุณจะถูกทำลายทิ้งทันที!`);
-    if (!confirm1) return;
-
-    const confirm2 = window.confirm(`🔥 ยืนยันครั้งสุดท้าย (Action Irreversible): \nกดตกลงเพื่อยืนยันลบชื่อ "${loggedInUser.name}" ออกจากสารบัญหลักอย่างถาวร`);
-    if (!confirm2) return;
+    if (!(await ask(`ลบบัญชี "${loggedInUser.name}" ถาวร?\nแต้ม สิทธิ์ส่วนลด และประวัติของคุณจะหายไป และกู้คืนไม่ได้`, { title: '⚠️ ลบบัญชี', okLabel: 'ลบบัญชีถาวร', cancelLabel: 'ไม่ลบ', danger: true }))) return;
 
     // Perform permanent removal
     const allUsers = StorageService.get<User[]>('users', []);
@@ -410,7 +407,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setLoggedInUser(null);
     setActiveStep(1);
     onRefreshAll();
-    alert('🗑️ ดำเนินการลบบัญชีของคุณออกจากเซิร์ฟเวอร์เรียบร้อยแล้วค่ะ หวังว่าจะมีโอกาสได้กลับมาบริการท่านอีกครั้งนะคะ ขอบคุณค่ะ');
+    notify('🗑️ ดำเนินการลบบัญชีของคุณออกจากเซิร์ฟเวอร์เรียบร้อยแล้วค่ะ หวังว่าจะมีโอกาสได้กลับมาบริการท่านอีกครั้งนะคะ ขอบคุณค่ะ');
   };
 
   // Set default court when court type changes
@@ -487,7 +484,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
   const handleToggleSlot = (startTime: string) => {
     if (!loggedInUser) {
-      alert('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ระบบ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน จึงจะสามารถเลือกสนามและช่วงเวลาสำหรับจองเล่นกีฬาได้ค่ะ 🌟');
+      notify('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ระบบ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน จึงจะสามารถเลือกสนามและช่วงเวลาสำหรับจองเล่นกีฬาได้ค่ะ 🌟');
       const consoleElem = document.getElementById('customer-auth-console');
       if (consoleElem) {
         consoleElem.scrollIntoView({ behavior: 'smooth' });
@@ -500,7 +497,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     } else {
       // Constraint 1: max 3 hours total per booking
       if (selectedSlots.length >= 3) {
-        alert('คุณสามารถจองได้สูงสุดไม่เกิน 3 ชั่วโมง (3 สล็อต) ต่อการจอง 1 ครั้งค่ะ');
+        notify('คุณสามารถจองได้สูงสุดไม่เกิน 3 ชั่วโมง (3 สล็อต) ต่อการจอง 1 ครั้งค่ะ');
         return;
       }
       
@@ -508,7 +505,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       const currentCourts = selectedSlots.map(s => s.courtId);
       const uniqueCourts = new Set([...currentCourts, selectedCourtId]);
       if (uniqueCourts.size > 3) {
-        alert('คุณสามารถเลือกสนามได้ไม่เกิน 3 สนาม ต่อการจอง 1 ครั้งค่ะ');
+        notify('คุณสามารถเลือกสนามได้ไม่เกิน 3 สนาม ต่อการจอง 1 ครั้งค่ะ');
         return;
       }
 
@@ -521,7 +518,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       );
 
       if (isSlotOccupied) {
-        alert('ขออภัยค่ะ! ช่วงเวลานี้ถูกผู้อื่นจองไปแล้ว กรุณาเลือกเวลาอื่น');
+        notify('ขออภัยค่ะ! ช่วงเวลานี้ถูกผู้อื่นจองไปแล้ว กรุณาเลือกเวลาอื่น');
         return;
       }
 
@@ -534,7 +531,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       );
 
       if (blockedItem) {
-        alert(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
+        notify(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
         return;
       }
 
@@ -544,7 +541,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
   const handleToggleSlotInGrid = (courtId: string, startTime: string) => {
     if (!loggedInUser) {
-      alert('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ระบบ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน จึงจะสามารถเลือกสนามและช่วงเวลาสำหรับจองเล่นกีฬาได้ค่ะ 🌟');
+      notify('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ระบบ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน จึงจะสามารถเลือกสนามและช่วงเวลาสำหรับจองเล่นกีฬาได้ค่ะ 🌟');
       const consoleElem = document.getElementById('customer-auth-console');
       if (consoleElem) {
         consoleElem.scrollIntoView({ behavior: 'smooth' });
@@ -557,7 +554,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     } else {
       // Constraint 1: max 3 hours total per booking
       if (selectedSlots.length >= 3) {
-        alert('คุณสามารถจองได้สูงสุดไม่เกิน 3 ชั่วโมง (3 สล็อต) ต่อการจอง 1 ครั้งค่ะ');
+        notify('คุณสามารถจองได้สูงสุดไม่เกิน 3 ชั่วโมง (3 สล็อต) ต่อการจอง 1 ครั้งค่ะ');
         return;
       }
       
@@ -565,7 +562,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       const currentCourts = selectedSlots.map(s => s.courtId);
       const uniqueCourts = new Set([...currentCourts, courtId]);
       if (uniqueCourts.size > 3) {
-        alert('คุณสามารถเลือกสนามได้ไม่เกิน 3 สนาม ต่อการจอง 1 ครั้งค่ะ');
+        notify('คุณสามารถเลือกสนามได้ไม่เกิน 3 สนาม ต่อการจอง 1 ครั้งค่ะ');
         return;
       }
 
@@ -574,32 +571,32 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       // correctly blocked when the full court is already booked, and vice
       // versa - a same-court-id-only check would miss that conflict.
       if (!isCourtSlotAvailable(courtId, selectedDate, startTime, bookings, courts)) {
-        alert('ขออภัยค่ะ! ช่วงเวลานี้ถูกผู้อื่นจองไปแล้ว กรุณาเลือกเวลาอื่น');
+        notify('ขออภัยค่ะ! ช่วงเวลานี้ถูกผู้อื่นจองไปแล้ว กรุณาเลือกเวลาอื่น');
         return;
       }
 
       // Check peak constraint for half-court resources (FR-1.2)
       const targetCourt = courts.find(c => c.id === courtId);
       if (targetCourt?.offPeakOnly && !isHourOffPeak(targetCourt.type, selectedDate, parseInt(startTime.split(':')[0], 10))) {
-        alert('⚠️ ขออภัยค่ะ สนามครึ่งสนาม (B / C) เปิดให้บริการจองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
+        notify('⚠️ ขออภัยค่ะ สนามครึ่งสนาม (B / C) เปิดให้บริการจองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
         return;
       }
 
       // Online bookings open a configurable number of days ahead (server rule)
       if (selectedDate > lastBookableDate()) {
-        alert(`ขออภัยค่ะ เปิดให้จองออนไลน์ล่วงหน้าได้ถึงวันที่ ${lastBookableDate()} เท่านั้น`);
+        notify(`ขออภัยค่ะ เปิดให้จองออนไลน์ล่วงหน้าได้ถึงวันที่ ${lastBookableDate()} เท่านั้น`);
         return;
       }
 
       // Already started: online bookings must start in the future (server rule)
       if (slotTiming(selectedDate, startTime).started) {
-        alert('ขออภัยค่ะ ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ กรุณาติดต่อเคาน์เตอร์');
+        notify('ขออภัยค่ะ ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ กรุณาติดต่อเคาน์เตอร์');
         return;
       }
 
       // Outside opening hours (no pricing rule covers it) - the server refuses these
       if (targetCourt && !calculatePrice(targetCourt.type, selectedDate, startTime, MemberType.NORMAL, targetCourt).isOpen) {
-        alert('ขออภัยค่ะ ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ');
+        notify('ขออภัยค่ะ ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ');
         return;
       }
 
@@ -612,7 +609,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       );
 
       if (blockedItem) {
-        alert(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
+        notify(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
         return;
       }
 
@@ -620,33 +617,32 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     }
   };
 
-  const handleRedeemReward = (reward: Reward) => {
+  const handleRedeemReward = async (reward: Reward) => {
     if (!loggedInUser) {
-      alert('กรุณาเข้าสู่ระบบก่อนทำการแลกรางวัลค่ะ!');
+      notify('กรุณาเข้าสู่ระบบก่อนทำการแลกรางวัลค่ะ!');
       return;
     }
     // API mode: points live in the backend's ledger; the server deducts
     // them and issues the voucher in one transaction.
     if (api.USE_BACKEND) {
-      if (!window.confirm(`🎁 ยืนยันใช้ ${reward.cost} แต้ม แลก "${reward.emoji} ${reward.name}" ใช่หรือไม่?`)) return;
+      if (!(await ask(`ใช้ ${reward.cost} แต้ม แลก "${reward.emoji} ${reward.name}"?`, { title: '🎁 แลกแต้ม', okLabel: 'แลกเลย' }))) return;
       api.redeemReward(reward.id)
         .then(v => {
           onAddAuditLog('LOYALTY_POINT_REDEEMED', 'User', loggedInUser.id, null, { gift: v.rewardName, voucherCode: v.code });
-          alert(`🎉 แลกรางวัลสำเร็จ!\nรหัสรับของรางวัล: ${v.code}\nแสดงรหัสนี้ที่เคาน์เตอร์ภายในวันที่ ${new Date(v.expiresAt).toLocaleDateString('th-TH')}`);
+          notify(`🎉 แลกรางวัลสำเร็จ!\nรหัสรับของรางวัล: ${v.code}\nแสดงรหัสนี้ที่เคาน์เตอร์ภายในวันที่ ${formatDate(v.expiresAt)}`);
           onRefreshAll();
         })
-        .catch(err => alert(`แลกรางวัลไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`แลกรางวัลไม่สำเร็จ: ${err.message}`));
       return;
     }
 
     const currentPoints = loggedInUser.points || 0;
     if (currentPoints < reward.cost) {
-      alert(`ขออภัยค่ะ! แต้มสะสมของคุณไม่เพียงพอสำหรับการแลก ${reward.name} (ต้องการ ${reward.cost} แต้ม แต่คุณมี ${currentPoints} แต้ม)`);
+      notify(`ขออภัยค่ะ! แต้มสะสมของคุณไม่เพียงพอสำหรับการแลก ${reward.name} (ต้องการ ${reward.cost} แต้ม แต่คุณมี ${currentPoints} แต้ม)`);
       return;
     }
 
-    const confirmRedeem = window.confirm(`🎁 ยืนยันสิทธิ์แลกแต้มสะสม:\n\nต้องการใช้แต้มสะสมจำนวน ${reward.cost} แต้ม เพื่อแลกรับรางวัล "${reward.emoji} ${reward.name}" ใช่หรือไม่?`);
-    if (!confirmRedeem) return;
+    if (!(await ask(`ใช้ ${reward.cost} แต้ม แลก "${reward.emoji} ${reward.name}"?`, { title: '🎁 แลกแต้ม', okLabel: 'แลกเลย' }))) return;
 
     // Deduct points
     const newPoints = currentPoints - reward.cost;
@@ -676,13 +672,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       rewardName: reward.name,
       pointsSpent: reward.cost,
       claimCode,
-      redeemedAt: new Date().toLocaleDateString('th-TH', { 
-        year: 'numeric', 
-        month: 'short', 
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      }) + ' น.'
+      redeemedAt: formatDateTime(Date.now()) + ' น.'
     };
 
     const currentVouchers = StorageService.get<Redemption[]>('redemptions', []);
@@ -710,7 +700,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     StorageService.set('line_messages', [newMsg, ...currentLine]);
     setLineMessages([newMsg, ...currentLine]);
 
-    alert(`🎉 แลกรางวัล "${reward.name}" สำเร็จ!\nระบบได้หักคะแนนคงเหลือของคุณ -${reward.cost} แต้ม\n\nรหัสคูปองสำหรับเคลมของคุณคือ: ${claimCode}\n(รายละเอียดและรหัสเคลมระบุไว้ในประวัติแลกด้านล่าง และส่งแจ้งเตือนเข้าทางช่องแชท LINE เรียบร้อยแล้วค่ะ!)`);
+    notify(`🎉 แลกรางวัล "${reward.name}" สำเร็จ!\nระบบได้หักคะแนนคงเหลือของคุณ -${reward.cost} แต้ม\n\nรหัสคูปองสำหรับเคลมของคุณคือ: ${claimCode}\n(รายละเอียดและรหัสเคลมระบุไว้ในประวัติแลกด้านล่าง และส่งแจ้งเตือนเข้าทางช่องแชท LINE เรียบร้อยแล้วค่ะ!)`);
     
     onRefreshAll();
   };
@@ -735,11 +725,11 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   // Phase 1 Core Booking Submission
   const handleProceedToCheckout = () => {
     if (!loggedInUser) {
-      alert('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน เพื่อทำรายการจองและแสตมป์ยอดส่วนลดประจำตัวผู้เล่นค่ะ 🌟');
+      notify('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน เพื่อทำรายการจองและแสตมป์ยอดส่วนลดประจำตัวผู้เล่นค่ะ 🌟');
       return;
     }
     if (selectedSlots.length === 0) {
-      alert('กรุณาเลือกสนาม และช่วงเวลาต้องการจองอย่างน้อย 1 ชั่วโมง!');
+      notify('กรุณาเลือกสนาม และช่วงเวลาต้องการจองอย่างน้อย 1 ชั่วโมง!');
       return;
     }
     // Verify slot double-booking for all selected
@@ -754,7 +744,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
     if (occupied) {
       const cName = courts.find(c => c.id === occupied.courtId)?.name || 'สนาม';
-      alert(`ขออภัยค่ะ! ช่วงเวลา ${occupied.startTime} น. ของ ${cName} ถูกผู้อื่นจองไปแล้วระหว่างทำรายการ กรุณาเลือกสล็อตอื่น`);
+      notify(`ขออภัยค่ะ! ช่วงเวลา ${occupied.startTime} น. ของ ${cName} ถูกผู้อื่นจองไปแล้วระหว่างทำรายการ กรุณาเลือกสล็อตอื่น`);
       return;
     }
 
@@ -764,11 +754,11 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const handleBookingSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!loggedInUser) {
-      alert('🔒 กรุณาลงชื่อเข้าใช้ระบบก่อนค่ะ!');
+      notify('🔒 กรุณาลงชื่อเข้าใช้ระบบก่อนค่ะ!');
       return;
     }
     if (selectedSlots.length === 0) {
-      alert('กรุณาเลือกวันเวลาที่จอง!');
+      notify('กรุณาเลือกวันเวลาที่จอง!');
       return;
     }
 
@@ -794,7 +784,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           onRefreshAll();
         })
         .catch(err => {
-          alert(`ขออภัยค่ะ จองไม่สำเร็จ: ${err.message}`);
+          notify(`ขออภัยค่ะ จองไม่สำเร็จ: ${err.message}`);
           onRefreshAll(); // reload availability - someone may have taken the slot
         });
       return;
@@ -910,7 +900,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           setSelectedSlots([]);
           onRefreshAll();
         })
-        .catch(err => alert(`อัพโหลดสลิปไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`อัพโหลดสลิปไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -1421,30 +1411,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   </div>
                 </div>
 
-                {/* Overlay lock notice if not logged in */}
+                {/* Anyone can see what's free; picking a slot asks to log in
+                    (handleToggleSlotInGrid). */}
                 <div className="relative">
                   {!loggedInUser && (
-                    <div className="absolute inset-0 bg-white/75 backdrop-blur-[2px] z-30 flex flex-col items-center justify-center p-4 text-center rounded-2xl">
-                      <div className="bg-slate-900 border border-slate-800 text-white p-5 rounded-2xl shadow-xl max-w-sm space-y-3">
-                        <Shield className="h-6 w-6 text-amber-500 mx-auto animate-pulse" />
-                        <h3 className="text-xs font-black text-slate-100 uppercase tracking-widest">🔒 ต้องเข้าสู่ระบบก่อนจึงจะเลือกจองได้</h3>
-                        <p className="text-[10px] text-slate-350 leading-relaxed">
-                          คุณลูกค้าจะต้องลงชื่อเข้าใช้ระบบ (Login) หรือลงทะเบียนสมาชิกด้านบนก่อน จึงจะสามารถคลิกเลือกจองสนามกีฬาในตารางด้านล่างได้ค่ะ
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const consoleElem = document.getElementById('customer-auth-console');
-                            if (consoleElem) {
-                              consoleElem.scrollIntoView({ behavior: 'smooth' });
-                            }
-                          }}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[9px] px-3.5 py-1.5 rounded-lg transition-all"
-                        >
-                          👉 เลื่อนไปด้านบนเพื่อเข้าสู่ระบบ
-                        </button>
-                      </div>
-                    </div>
+                    <p id="guest-availability-hint" className="mb-2 text-xs bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg px-3 py-2">
+                      👀 ดูช่วงเวลาว่างได้เลย — <button type="button" className="underline font-bold"
+                        onClick={() => document.getElementById('customer-auth-console')?.scrollIntoView({ behavior: 'smooth' })}>เข้าสู่ระบบหรือสมัครสมาชิก</button> เพื่อจองและดูราคาสมาชิก
+                    </p>
                   )}
 
                   {/* Grid-based occupancy matrix */}
