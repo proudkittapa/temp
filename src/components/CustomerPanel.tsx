@@ -7,6 +7,11 @@ import {
 import { StorageService, calculatePrice, generatePromptPayPayload, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
+import { QRCodeSVG } from 'qrcode.react';
+
+// How long an online booking waits for its slip before the backend cancels
+// it (service.PaymentHoldDuration in the Go backend).
+const PAYMENT_HOLD_MINUTES = 30;
 import { Calendar, Clock, CreditCard, CheckCircle, AlertTriangle, MessageSquare, ToggleLeft, ToggleRight, Trash2, Shield, Phone, FileImage, Sparkles, UserCheck } from 'lucide-react';
 
 interface CustomerPanelProps {
@@ -76,6 +81,16 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   // UI state
   const [activeStep, setActiveStep] = useState<number>(1); // 1: Select Slot, 2: Info & Checkout, 3: QR Payment & Upload Slip
   const [currentBooking, setCurrentBooking] = useState<Booking | null>(null);
+  // The group's payment shown in step 3: its amount is the whole group's
+  // total (currentBooking is only the first hour), and its createdAt drives
+  // the payment-hold countdown.
+  const [currentPayment, setCurrentPayment] = useState<Payment | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (activeStep !== 3) return;
+    const t = setInterval(() => setNowTick(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, [activeStep]);
   const [qrCodePayload, setQrCodePayload] = useState<string>('');
   const [slipFile, setSlipFile] = useState<string>(''); // simulation base64/url
   const [showLineSimulator, setShowLineSimulator] = useState<boolean>(false);
@@ -716,6 +731,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       api.createBookings(selectedDate, selectedSlots)
         .then(group => {
           setCurrentBooking(group.bookings[0]);
+          setCurrentPayment(group.payment);
           setQrCodePayload(group.promptPayPayload);
           setActiveStep(3);
           const breakdown = group.bookings.map(b => {
@@ -790,6 +806,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     StorageService.set('payments', [...currentPayments, newPayment]);
 
     setCurrentBooking(newBookings[0]); // Use first as main reference
+    setCurrentPayment(newPayment);
     setQrCodePayload(qrPayload);
     setActiveStep(3);
 
@@ -812,6 +829,19 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   };
 
   // Simulating Slip uploading
+  // Re-opens the QR + slip upload step for a booking still awaiting payment,
+  // so a customer who left the page (or uploaded the wrong slip) can pay or
+  // re-send it from their booking history instead of losing the booking.
+  const handleReopenPayment = (booking: Booking, payment: Payment) => {
+    setCurrentBooking(booking);
+    setCurrentPayment(payment);
+    setQrCodePayload(payment.qrPayload || '');
+    setSlipFile('');
+    setActiveStep(3);
+    setNowTick(Date.now());
+    setTimeout(() => document.getElementById('promptpay-qr-display')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  };
+
   const handleSlipUploadSimulation = (mockImgUrl: string, realFile?: File) => {
     if (!currentBooking) return;
 
@@ -1752,34 +1782,30 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   </div>
                 </div>
 
-                {/* Simulated QR block code */}
-                <div className="h-44 w-44 bg-white border border-slate-200 p-2 relative flex items-center justify-center">
-                  {/* Decorative corner borders */}
-                  <div className="absolute top-1 left-1 h-3 w-3 border-t-2 border-l-2 border-sky-950" />
-                  <div className="absolute top-1 right-1 h-3 w-3 border-t-2 border-r-2 border-sky-950" />
-                  <div className="absolute bottom-1 left-1 h-3 w-3 border-b-2 border-l-2 border-sky-950" />
-                  <div className="absolute bottom-1 right-1 h-3 w-3 border-b-2 border-r-2 border-sky-950" />
-                  
-                  {/* Mini visual QR pattern */}
-                  <div className="grid grid-cols-6 gap-0.5 opacity-90 scale-95 select-none">
-                    {Array.from({ length: 36 }).map((_, i) => {
-                      const isFiller = i % 2 === 0 || i % 7 === 0 || i < 6 || i > 30 || i % 11 === 0;
-                      return (
-                        <div key={i} className={`h-6 w-6 ${isFiller ? 'bg-slate-900' : 'bg-transparent border border-slate-100'}`} />
-                      );
-                    })}
-                  </div>
-                  {/* Promptpay logo center icon */}
-                  <div className="absolute inset-0 m-auto h-8 w-8 bg-white border border-slate-200 flex items-center justify-center rounded">
-                    <span className="text-[9px] font-black text-sky-900 leading-tight">TH</span>
-                  </div>
+                {/* The actual PromptPay (EMVCo) payload as a scannable QR code */}
+                <div className="bg-white border border-slate-200 p-3 rounded">
+                  {qrCodePayload ? (
+                    <QRCodeSVG value={qrCodePayload} size={176} level="M" />
+                  ) : (
+                    <div className="h-44 w-44 flex items-center justify-center text-[10px] text-slate-400">ไม่พบ QR</div>
+                  )}
                 </div>
 
                 <div className="text-center space-y-1">
                   <p className="text-xs font-semibold text-slate-500">สแกนชำระบัญชีสปอร์ตคอมเพล็กซ์</p>
-                  <p className="text-sm font-black text-slate-800">{courts.find(c => c.id === currentBooking.courtId)?.name}</p>
+                  <p className="text-sm font-black text-slate-800">รหัสจอง {currentBooking.bookingCode}</p>
                   <p className="text-xs text-sky-900 font-bold select-all bg-sky-50 px-2 py-0.5 rounded">บจก. กีฬาแฮปปี้ พาร์คคอมเพล็กซ์</p>
-                  <p className="text-xs font-extrabold text-slate-800 text-lg mt-1">ยอดโอน: {currentBooking.totalAmount} บาท</p>
+                  <p className="text-xs font-extrabold text-slate-800 text-lg mt-1">ยอดโอน: {currentPayment?.amount ?? currentBooking.totalAmount} บาท</p>
+                  {currentPayment?.status === PaymentStatus.PENDING && (() => {
+                    // Capped: server and browser clocks can differ slightly.
+                    const minutesLeft = Math.min(PAYMENT_HOLD_MINUTES, Math.ceil((new Date(currentPayment.createdAt).getTime() + PAYMENT_HOLD_MINUTES * 60000 - nowTick) / 60000));
+                    return minutesLeft > 0
+                      ? <p className="text-[11px] font-bold text-amber-700">⏳ กรุณาชำระและส่งสลิปภายใน {minutesLeft} นาที</p>
+                      : <p className="text-[11px] font-bold text-rose-700">⌛ หมดเวลาชำระแล้ว ระบบอาจยกเลิกการจองนี้</p>;
+                  })()}
+                  {currentPayment?.status === PaymentStatus.SLIP_UPLOADED && (
+                    <p className="text-[11px] font-bold text-sky-700">📨 ส่งสลิปแล้ว รอพนักงานตรวจ — อัปโหลดใหม่ได้หากส่งผิดรูป</p>
+                  )}
                 </div>
               </div>
 
@@ -1789,7 +1815,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   <span className="block text-xs font-semibold text-slate-700 mb-2">อัพโหลดรูปภาพสลิปธนาคาร (Simulation Upload):</span>
                   
                   <div className="space-y-2">
-                    {SLIP_SAMPLES.map((sample, sIdx) => (
+                    {/* Stock-photo "slips" are a demo shortcut - never offer them to real customers. */}
+                    {import.meta.env.DEV && SLIP_SAMPLES.map((sample, sIdx) => (
                       <button
                         key={sIdx}
                         type="button"
@@ -1844,7 +1871,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 }}
                 className="bg-slate-550 hover:bg-slate-100 text-xs font-bold text-slate-600 py-2 px-4 rounded text-center transition"
               >
-                ยกเลิกรายการจองชั่วคราว
+                ชำระภายหลัง (กลับมาส่งสลิปได้จากรายการจองด้านล่าง ภายใน {PAYMENT_HOLD_MINUTES} นาที)
               </button>
             </div>
           </div>
@@ -1892,9 +1919,18 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 );
               }
 
+              const groupsWithButton = new Set<string>();
               return userFilteredFutureBookings.map((booking) => {
                 const courtName = courts.find(c => c.id === booking.courtId)?.name || 'สนามกีฬาทั่วไป';
-                const matchedPayment = payments.find(p => p.bookingId === booking.id);
+                // The payment hangs off the group's first row; every row of
+                // the group (same code) shares it.
+                const matchedPayment = payments.find(p => p.bookingId === booking.id) ||
+                  payments.find(p => bookings.some(b => b.id === p.bookingId && b.bookingCode === booking.bookingCode && b.userId === booking.userId));
+                const awaitingSlip = booking.status === BookingStatus.PENDING_PAYMENT && !!matchedPayment &&
+                  (matchedPayment.status === PaymentStatus.PENDING || matchedPayment.status === PaymentStatus.SLIP_UPLOADED);
+                // One upload button per booking group, not one per hour.
+                const showUploadButton = awaitingSlip && !groupsWithButton.has(booking.bookingCode);
+                if (showUploadButton) groupsWithButton.add(booking.bookingCode);
 
                 let statusBadge = '';
                 if (booking.status === BookingStatus.CONFIRMED) statusBadge = 'bg-emerald-600 text-white';
@@ -1909,7 +1945,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         <span className="font-mono font-bold text-slate-200">{booking.bookingCode}</span>
                         <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${statusBadge}`}>
                           {booking.status === BookingStatus.CONFIRMED && 'อนุมัติเรียบร้อย'}
-                          {booking.status === BookingStatus.PENDING_PAYMENT && 'รอสต๊าฟเช็คสลิป / รอสลิป'}
+                          {booking.status === BookingStatus.PENDING_PAYMENT && (matchedPayment?.status === PaymentStatus.SLIP_UPLOADED ? 'รอสต๊าฟเช็คสลิป' : 'รอชำระเงิน / รอสลิป')}
                           {booking.status === BookingStatus.CANCELLED && 'ยกเลิกรายการ'}
                         </span>
                       </div>
@@ -1929,6 +1965,18 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                           <a href={matchedPayment.slipUrl} target="_blank" rel="noreferrer" className="text-sky-400 underline font-bold hover:text-sky-300">กดดูรูปสลิป</a>
                         ) : 'ไม่มีการอัพโหลด'}
                       </span>
+                      {showUploadButton && matchedPayment && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const root = bookings.find(b => b.id === matchedPayment.bookingId) || booking;
+                            handleReopenPayment(root, matchedPayment);
+                          }}
+                          className="mt-1 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition"
+                        >
+                          {matchedPayment.status === PaymentStatus.SLIP_UPLOADED ? '🔁 ส่งสลิปใหม่' : '📤 ชำระเงิน / อัปโหลดสลิป'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
