@@ -1702,7 +1702,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                   👤 {matchedBooking.userName}
                                 </div>
                                 <span className="absolute bottom-0.5 right-1 text-[8px] opacity-70 font-mono scale-[0.8]">
-                                  {isPending ? '⏳ รอนุมัติ' : '✓ โอนแล้ว'}
+                                  {isPending ? '⏳ รอชำระ' : '✓ ชำระแล้ว'}
                                 </span>
                                 {/* Hover interactive tooltip */}
                                 <div className="absolute hidden group-hover:block bg-slate-900 text-slate-10 text-[9.5px] p-2.5 rounded-lg shadow-md z-30 w-44 left-1/2 -translate-x-1/2 -top-16 border border-slate-700 bg-[#0f172a] text-[#f8fafc] leading-tight text-left">
@@ -1949,8 +1949,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                       <tr>
                         <th className="px-4 py-3">ประเภทกีฬา</th>
                         <th className="px-4 py-3">ช่วงชั่วโมง</th>
-                        <th className="px-4 py-3">ประเภทวันในเว็บ</th>
-                        <th className="px-4 py-3">สิทธิ์สกัดกั้น</th>
+                        <th className="px-4 py-3">วัน</th>
+                        <th className="px-4 py-3">ประเภทราคา</th>
                         <th className="px-4 py-3 text-right">ค่าเช่า / ชม.</th>
                         <th className="px-4 py-3 text-center">จัดการคำสั่ง</th>
                       </tr>
@@ -1965,7 +1965,15 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             className="w-full bg-white border border-slate-250 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
                           />
                         </th>
-                        <th className="p-2 text-slate-400 font-normal text-[9px] italic text-center">--</th>
+                        <th className="p-2">
+                          <input
+                            type="text"
+                            placeholder="ค้นหาป้ายชื่อ..."
+                            value={filterLabel}
+                            onChange={(e) => setFilterLabel(e.target.value)}
+                            className="w-full bg-white border border-slate-250 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
+                          />
+                        </th>
                         <th className="p-2">
                           <select
                             value={filterDayType}
@@ -1980,38 +1988,33 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         <th className="p-2">
                           <input 
                             type="text"
-                            placeholder="ค้นหาราคา..."
+                            placeholder="PEAK / OFFPEAK..."
                             value={filterPriceType}
                             onChange={(e) => setFilterPriceType(e.target.value)}
                             className="w-full bg-white border border-slate-250 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
                           />
                         </th>
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="ค้นหาชื่อเกณฑ์/ป้ายชื่อ..."
-                            value={filterLabel}
-                            onChange={(e) => setFilterLabel(e.target.value)}
-                            className="w-full bg-white border border-slate-250 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
-                          />
-                        </th>
+                        <th className="p-2"></th>
                         <th className="p-2"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredPricingRules.map((rule) => (
                         <tr key={rule.id} className="hover:bg-slate-50 transition">
-                          <td className="px-4 py-3 font-bold text-slate-800">{rule.courtType}</td>
+                          <td className="px-4 py-3 font-bold text-slate-800">
+                            {rule.courtType}
+                            {rule.label && <span className="block text-[10px] font-normal text-slate-500">{rule.label}</span>}
+                          </td>
                           <td className="px-4 py-3 font-mono">{rule.startHour.toString().padStart(2, '0')}:00 - {rule.endHour.toString().padStart(2, '0')}:00 น.</td>
                           <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap ${
                               rule.dayType === DayType.WEEKDAY ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-800'
                             }`}>
                               {rule.dayType === DayType.WEEKDAY ? 'วันธรรมดา จ-ศ' : 'เสาร์ - อาทิตย์'}
                             </span>
                           </td>
                           <td className="px-4 py-3 font-semibold">{rule.priceType}</td>
-                          <td className="px-4 py-3 text-right font-black text-slate-950">{rule.pricePerHour} บาท</td>
+                          <td className="px-4 py-3 text-right font-black text-slate-950 whitespace-nowrap">{formatBaht(rule.pricePerHour)} บาท</td>
                           <td className="px-4 py-3 text-center flex justify-center gap-1.5">
                             <button
                               onClick={() => {
@@ -2106,7 +2109,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                       type="submit" 
                       className="w-full bg-slate-900 hover:bg-slate-800 py-2.5 rounded text-white font-bold transition text-xs shadow-sm font-sans"
                     >
-                      เพิ่มสนามกีฬาเข้าสต๊อก
+                      เพิ่มสนาม
                     </button>
                   </form>
                 </div>
@@ -2214,7 +2217,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                       type="submit" 
                       className="w-full bg-rose-700 hover:bg-rose-850 py-2.5 rounded text-white font-bold transition text-xs shadow-sm font-sans"
                     >
-                      ล็อคปิดสิทธิ์เวลานี้
+                      บันทึกวันปิดบริการ
                     </button>
                   </form>
                 </div>
@@ -2623,7 +2626,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         <th className="p-3">ข้อมูลโปรไฟล์หลัก / ล็อกอิน</th>
                         <th className="p-3">ระดับสิทธิ์และส่วนลด</th>
                         <th className="p-3">ยศเวรทำงาน (Role)</th>
-                        <th className="p-3">รหัสผ่านที่สลัก</th>
                         <th className="p-3 text-center">🏆 แต้มสะสม CRM</th>
                         <th className="p-3 text-center">ปฏิบัติการและมาตรการ</th>
                       </tr>
@@ -2690,11 +2692,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                 <span className="block text-[8px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
                               )}
                             </td>
-
-                             {/* Password display masked to preserve privacy */}
-                             <td className="p-3 font-mono text-slate-400 bg-slate-50/30">
-                               ••••••
-                             </td>
 
                              {/* Points balance cell */}
                              <td className="p-3 text-center bg-amber-50/10 font-bold text-amber-600 font-mono text-xs">
@@ -2908,7 +2905,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             </div>
 
             {/* Logs loop */}
-            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1 text-xs">
+            <p className="text-xs text-slate-500">{filteredAuditLogs.length} รายการ (ล่าสุดอยู่บนสุด)</p>
+            <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1 text-xs">
               {filteredAuditLogs.length === 0 ? (
                 <p className="text-slate-400 text-center py-10">ไม่พบประวัติพฤติกรรมในฐานสลักสำหรับเกณฑ์ค่าดึงค้นหานี้</p>
               ) : (
@@ -3005,11 +3003,18 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                           </div>
                           
                           <div className="text-[11px] font-sans text-slate-350">
-                            👤 ผู้บันทึกกานต์: <span className="bg-slate-800 px-2 py-0.5 rounded text-white font-mono font-bold">{log.userName}</span>
+                            👤 ผู้ทำรายการ: <span className="bg-slate-800 px-2 py-0.5 rounded text-white font-mono font-bold">{log.userName}</span>
                           </div>
                         </div>
 
-                        {/* Human readable diff box */}
+                        {/* Details fold away: a sale lists a dozen fields, which
+                            used to fill the whole box with one entry. */}
+                        {(changedProperties.length > 0 || log.before || log.after) && (
+                        <details className="group/d">
+                          <summary className="text-[10px] text-sky-300 hover:text-sky-200 cursor-pointer select-none font-bold font-sans">
+                            ดูรายละเอียด{changedProperties.length > 0 ? ` (${changedProperties.length} ค่า)` : ''}
+                          </summary>
+                          <div className="space-y-3 mt-2">
                         {changedProperties.length > 0 && (
                           <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 text-[10.5px] space-y-1.5 font-sans">
                             <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
@@ -3055,6 +3060,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                               </div>
                             </div>
                           </details>
+                        )}
+                          </div>
+                        </details>
                         )}
                       </div>
                     );

@@ -384,6 +384,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       }
     }
 
+    if (walkinPayMethod === PaymentMethod.CASH && !(await confirmCashWithoutShift())) return;
+
     if (api.USE_BACKEND) {
       // The server re-checks availability against every booking (online
       // and walk-in), prices the slot, and credits a registered customer
@@ -728,6 +730,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setSelectedReceiptOrder(null);
   };
 
+  // Cash taken with no drawer shift open is in no shift's count, so the
+  // drawer won't add up at closing. Ask before taking it.
+  const confirmCashWithoutShift = async (): Promise<boolean> => {
+    if (shift) return true;
+    return ask('ยังไม่ได้เปิดกะลิ้นชัก — เงินสดรายการนี้จะไม่ถูกนับในยอดปิดกะ\nควรเปิดกะก่อนที่แท็บ "ยอดลิ้นชักวันนี้"\n\nรับเงินสดต่อโดยไม่เปิดกะ?',
+      { title: '⚠️ ยังไม่ได้เปิดกะ', okLabel: 'รับเงินสดต่อ', cancelLabel: 'ยกเลิก (ไปเปิดกะก่อน)' });
+  };
+
   // One counter action at a time: a double click or an impatient second tap
   // must not send the same sale, booking or refund twice. Wraps the button
   // handlers (not the handlers they call), and `busy` greys the buttons.
@@ -824,6 +834,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Manager/admin: the customer paid this unpaid booking in cash at the
   // counter - confirms it like an approved slip (counted in the cash drawer).
   const handleMarkPaidInCash = async (booking: Booking) => {
+    if (!(await confirmCashWithoutShift())) return;
     if (!(await ask(`ยืนยันว่าได้รับเงินสดสำหรับการจอง ${booking.bookingCode} แล้ว?`, { okLabel: 'ได้รับเงินสดแล้ว' }))) return;
     const done = (count: number, pts: number) => {
       onAddAuditLog('PAID_IN_CASH_RECORDED', 'Booking', booking.id, null, { bookingCode: booking.bookingCode });
@@ -1007,11 +1018,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Checkout of the cart (F&B and/or equipment for sale). An all-equipment
   // cart is recorded as an equipment sale, anything else as F&B.
-  const handleCartCheckout = () => {
+  const handleCartCheckout = async () => {
     if (cartItems.length === 0) {
       notify('รถเข็นใบเสร็จว่างเปล่า! กรุณากดสินค้าเติมตระกร้า');
       return;
     }
+    if (cartPayMethod === PaymentMethod.CASH && !(await confirmCashWithoutShift())) return;
     const type = cartItems.every(i => i.product.category === ProductCat.EQUIPMENT) ? OrderType.EQUIPMENT_SALE : OrderType.FB;
     const done = (orderCode: string, total: number, pts: number) => {
       setCartItems([]);
@@ -1084,7 +1096,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   };
 
   // Equipment rental (FR-5.3): the catalog price, one item; shoes by size.
-  const handleRentalRentSubmit = (e: React.FormEvent) => {
+  const handleRentalRentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!rentalRenterName || !selectedProductId) {
       notify('กรุณากรอกชื่อผู้ขอเช่าเล่น และ เลือกชนิดอุปกรณ์กีฬา!');
@@ -1104,6 +1116,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       notify(`ขออภัยค่ะ! รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label} ถูกยืมหมดแล้ว`);
       return;
     }
+    if (!(await confirmCashWithoutShift())) return; // rentals are paid in cash
     const sizeNote = variant ? ` (รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label})` : '';
     const done = (orderCode: string, pts: number) => {
       setRentalRenterName('');
@@ -1956,14 +1969,18 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
                         {/* Interactive check actions */}
                         <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
+                          {/* The slip itself, so it is checked before approving
+                              (tap to open it full size). */}
                           {pay.slipUrl && (
                             <a 
                               href={pay.slipUrl} 
                               target="_blank" 
                               rel="noreferrer" 
-                              className="text-xs text-sky-800 font-bold bg-sky-50 px-3 py-1.5 rounded hover:bg-sky-100 mr-auto text-center"
+                              title="เปิดสลิปขนาดเต็ม"
+                              className="mr-auto flex items-center gap-2 text-xs text-sky-800 font-bold"
                             >
-                              👀 ดึงดูสลิปโอนจริง
+                              <img src={pay.slipUrl} alt="สลิปโอนเงิน" className="h-20 w-16 object-cover rounded border border-slate-300 bg-white" />
+                              <span className="underline">ดูสลิปเต็ม</span>
                             </a>
                           )}
                           
@@ -2047,7 +2064,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 ) : (
                   <div className="text-center py-20 text-slate-400 font-sans space-y-2">
                     <CheckCircle2 className="h-10 w-10 text-slate-300 mx-auto" />
-                    <p className="text-xs font-bold">ไม่มีการปฎิเสธรายการโอนคาคีย์</p>
+                    <p className="text-xs font-bold">ยังไม่ได้เลือกรายการที่จะปฏิเสธ</p>
                     <p className="text-[9.5px] text-slate-400">เลือกกด 'ปฏิเสธ (Reject)' เพื่อเปิดแผงสาเหตุที่นี่</p>
                   </div>
                 )}
@@ -2061,7 +2078,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
             {/* Products Selector Grid (Left-Side) */}
             <div className="col-span-1 lg:col-span-7 space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-700 block">เมนูอาหารและเครื่องดื่ม (F&B Only):</span>
+                <span className="text-xs font-bold text-slate-700 block">อาหาร เครื่องดื่ม และอุปกรณ์ (ขายขาด):</span>
                 <span className="text-[10px] text-slate-400 font-medium">กดเลือกอาหาร/เครื่องดื่มเพื่อเพิ่มลงในตะกร้า</span>
               </div>
 
@@ -2501,29 +2518,29 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-semibold text-slate-500 block uppercase">คอร์ทที่ยืนยันการเล่นแล้ว</span>
-                <span className="font-extrabold text-slate-800 text-3xl mt-1 block">{calculateLedger().bookingCount} สล็อต</span>
-                <p className="text-[10px] text-slate-400 mt-2">จองแบบวอล์คอินขอบิล: {calculateLedger().walkinCount}</p>
+                <span className="text-[10px] font-semibold text-slate-500 block uppercase">ชั่วโมงสนามที่เล่นวันนี้ (ชำระแล้ว)</span>
+                <span className="font-extrabold text-slate-800 text-3xl mt-1 block">{calculateLedger().bookingCount} ชม.</span>
+                <p className="text-[10px] text-slate-400 mt-2">ในนี้เป็น Walk-in: {calculateLedger().walkinCount}</p>
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-semibold text-slate-500 block uppercase">รวมประมาณการล่วงหน้าที่ต้องปิดกล่อง</span>
+                <span className="text-[10px] font-semibold text-slate-500 block uppercase">เงินที่รับวันนี้ทั้งหมด</span>
                 <span className="font-extrabold text-emerald-700 text-3xl mt-1 block">{formatBaht(calculateLedger().totalExpected)} บาท</span>
-                <p className="text-[10px] text-slate-400 mt-2">ยอดสนาม: {formatBaht(calculateLedger().bookingIncome)} | F&B: {formatBaht(calculateLedger().fbIncome)} | ของเครื่อง: {formatBaht(calculateLedger().rentalIncome)}</p>
+                <p className="text-[10px] text-slate-400 mt-2">ค่าสนาม: {formatBaht(calculateLedger().bookingIncome)} (รวมเงินจองล่วงหน้าของวันอื่น) | ขายของ: {formatBaht(calculateLedger().fbIncome)} | ค่าเช่า: {formatBaht(calculateLedger().rentalIncome)}</p>
                 {calculateLedger().refunded > 0 && (
                   <p className="text-[10px] text-sky-700 font-bold mt-1">💸 คืนเงินวันนี้: {formatBaht(calculateLedger().refunded)} บาท</p>
                 )}
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <span className="text-[10px] font-semibold text-slate-500 block uppercase">ความต่าง Ledger การเงิน (CASH vs พร้อมเพย์)</span>
+                <span className="text-[10px] font-semibold text-slate-500 block uppercase">แยกตามช่องทางรับเงิน (วันนี้)</span>
                 <div className="mt-2 space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">💵 รวมคาดยอดเงินสด (ในลิ้นชัก):</span>
+                    <span className="text-slate-500">💵 เงินสดที่รับวันนี้:</span>
                     <span id="ledger-cash" className="font-bold text-slate-800">{formatBaht(calculateLedger().cashExpected)} บาท</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-500">📲 รวมสลิปผ่าน QR:</span>
+                    <span className="text-slate-500">📲 โอน / พร้อมเพย์:</span>
                     <span id="ledger-qr" className="font-bold text-slate-800 text-slate-800">{formatBaht(calculateLedger().qrExpected)} บาท</span>
                   </div>
                 </div>
@@ -2542,7 +2559,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Bookings with confirmed status */}
                 <div className="space-y-2.5">
-                  <span className="text-[10.5px] font-bold text-slate-700 block">🥇 รายการจองสนามวันนี้ (Verified Court Bookings):</span>
+                  <span className="text-[10.5px] font-bold text-slate-700 block">🥇 การจองที่เล่นวันนี้ (ชำระแล้ว):</span>
                   <div className="space-y-2 max-h-[250px] overflow-y-auto border border-slate-100 rounded-lg p-2.5 bg-slate-50/30">
                     {todayBookingList.filter(isPaidBooking).map(b => (
                       <div key={b.id} className="bg-white p-2.5 rounded-lg border border-slate-200 text-[10.5px] flex items-center justify-between hover:bg-slate-50 transition">

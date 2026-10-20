@@ -18,10 +18,101 @@ Entry format:
 
 ---
 
+## 2026-10-21 — First-time user walkthrough fixes
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `c194b36`)
+- **Background:** Owner asked to "recheck everything makes sense, act as if
+  using the app for the first time". Walked through API mode on an empty
+  database (`arena_fresh`) as a new customer (sign up, book, pay, upload a
+  slip), as staff (approve the slip), as a manager (cash walk-in, open
+  shift, sell, close shift) and as admin (every tab), with screenshots at
+  each step. Frontend only; no backend change.
+
+### Changed
+1. **Sign-up form** (`CustomerPanel.tsx`): the first field was labelled
+   "อีเมล / เบอร์โทรศัพท์" with the example "user@mail.com หรือ
+   0845678901" but is the email - a newcomer typing their phone there got
+   the server's English "email address is not valid". In sign-up it is now
+   "อีเมล (ไม่บังคับ)" (optional, as the server allows), the phone field says
+   it is the login, the password field says "at least 6" and it is checked
+   before sending. Tab "สมัครสัญญาสมาชิกใหม่" → "สมัครสมาชิกใหม่".
+2. **Thai error messages for customers:** sign-in, sign-up, booking, slip
+   and reward errors from the server (English) are shown in Thai
+   (`customerErrorThai`): wrong password, already registered, bad phone,
+   suspended, slot just taken, hour started, off-peak only, closed, outside
+   hours, booking window, 3-hour limit, unpaid-booking limit, duplicate
+   slip, not enough points, busy, network. Unknown messages still show as
+   sent.
+3. **Payment screen:** removed the made-up account name "บจก. กีฬาแฮปปี้
+   พาร์คคอมเพล็กซ์" under the QR (now "ตรวจชื่อผู้รับในแอปธนาคารก่อนกดโอน");
+   "(Simulation Upload)" heading and the dangling "--- หรือ ---" only in dev
+   builds; the real upload button is the main green button; the steps box
+   had a garbled word and promised a LINE confirmation that is not built -
+   now says where to see the status; "within 5 minutes" promise removed.
+4. **LINE simulator:** hidden in production API builds (it simulates
+   notifications that don't exist yet, TODO item 2) and shows only the
+   signed-in customer's messages (it showed the demo customer's to
+   everyone). Its floating button moved to the bottom-left - on desktop it
+   covered the "ยืนยันการจอง" button.
+5. **Court type tabs and header:** counts were typed in ("Basketball (1)"
+   while the grid shows 3 basketball courts; wrong as soon as an admin adds
+   or closes a court) - now counted from the court list, in Thai, and a type
+   with no courts is hidden. Header tagline no longer lists fixed counts.
+   Legend "ว่าง (ปกติ)" → "ว่าง (Off-Peak / ราคาปกติ)" to match the cells.
+6. **Staff POS:** the slip queue shows the slip picture on the card (staff
+   could approve without opening the link); taking cash (walk-in, sale,
+   rental, mark-paid) with no drawer shift open asks first - that cash is
+   in no shift's count, which made the drawer screen show two different
+   cash figures; day-report cards relabelled: "ชั่วโมงสนามที่เล่นวันนี้
+   (ชำระแล้ว)", "เงินที่รับวันนี้ทั้งหมด" (court money includes advance
+   payments for other days), "แยกตามช่องทางรับเงิน", "เงินสดที่รับวันนี้"
+   (it was "in the drawer", which is the shift box's job); menu header no
+   longer says "F&B only" above the shuttlecocks; garbled text in the
+   empty reject panel.
+7. **Admin:** dashboard grid marked cash bookings "✓ โอนแล้ว" →
+   "✓ ชำระแล้ว"; pricing table header "สิทธิ์สกัดกั้น" → "ประเภทราคา", the
+   filter boxes now sit under the right columns, the rule label is shown
+   (a filter searched it but it was never displayed), prices/day badges
+   don't wrap; users table lost the "รหัสผ่าน" column that only ever showed
+   dots (it pushed the actions column off screen); audit log entries are a
+   one-line summary with details folded (one sale filled the whole box, so
+   the log looked like it had one entry) plus a count; button labels "เพิ่ม
+   สนามกีฬาเข้าสต๊อก" → "เพิ่มสนาม", "ล็อคปิดสิทธิ์เวลานี้" → "บันทึกวันปิด
+   บริการ"; "ผู้บันทึกกานต์" → "ผู้ทำรายการ".
+
+### Verified
+- `tsc`, vitest 32/32.
+- Playwright walkthrough scripts (`/var/tmp/fresh/s1-s12.cjs`) on a fresh
+  database, no page errors: sign-up with a too-short password → Thai
+  message; sign-up without email works; wrong password → Thai message;
+  duplicate slip → "สลิปนี้เคยใช้กับการจองอื่นแล้ว..."; new slip shows as a
+  picture in the staff queue; slip approved → customer sees "อนุมัติ
+  เรียบร้อย" and +2 points; shift closed at 1,030 matching; cash walk-in
+  with no shift → warning, cancelling it books nothing; tabs read
+  "บาสเกตบอล (3) | แบดมินตัน (12) | พิกเคิลบอล (3) | ห้องประชุม (1)" in both
+  modes; phone 390px has no sideways scroll.
+- Earlier regression scripts re-run: `ui14` (double-click walk-in → one
+  booking, stuck pending walk-in cleared, cash receipt "เงินสด (CASH)" -
+  now after accepting the no-shift warning) and `ui15` (date/hours kept on
+  refresh, ledger redeem, suspended customer signed out) pass.
+
+### Not done / follow-ups
+- Staff and admin screens still show the server's English error messages.
+- Creating an online booking is not written to the audit log (only the
+  slip approval is); walk-ins and sales are.
+- Taking cash with no shift open is warned, not blocked - owner to decide
+  whether to block it.
+- The real business name / PromptPay account name should be shown on the
+  payment screen and receipts once known (see TODO item 5).
+- The three owner decisions from the review entry below are still open.
+
+---
+
 ## 2026-10-20 — Fixes from the full UI/backend review
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `8d7ad74`)
+- **Commit(s):** `c194b36` (on `main`, parent `8d7ad74`)
 - **Background:** A four-part review (customer UI, staff/admin UI, booking
   and money backend, shop/reports/auth backend) found the issues below. The
   owner said "leave the pending, fix the rest": three items that need the

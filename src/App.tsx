@@ -98,7 +98,7 @@ export default function App() {
                 SPORTS COMPLEX THAILAND
                 <Sparkles className="h-4 w-4 text-amber-500 fill-amber-500" />
               </h1>
-              <p className="text-[10px] text-slate-500 font-medium mt-0.5">ระบบจัดการสนามแบด 12 • บาส 1 • พิคเคิล 3 • ห้องประชุม 1</p>
+              <p className="text-[10px] text-slate-500 font-medium mt-0.5">จองสนามแบดมินตัน • บาสเกตบอล • พิกเคิลบอล • ห้องประชุม</p>
             </div>
           </div>
 

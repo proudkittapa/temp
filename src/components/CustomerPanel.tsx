@@ -41,6 +41,47 @@ interface Redemption {
   redeemedAt: string;
 }
 
+// The LINE chat preview simulates notifications that aren't sent yet (see
+// TODO.md item 2): demo and dev builds only, never a real customer site.
+const SHOW_LINE_SIM = !(import.meta.env.PROD && api.USE_BACKEND);
+
+const COURT_TYPE_LABEL: Record<CourtType, string> = {
+  [CourtType.BADMINTON]: '🏸 แบดมินตัน',
+  [CourtType.BASKETBALL]: '🏀 บาสเกตบอล',
+  [CourtType.PICKLEBALL]: '🏓 พิกเคิลบอล',
+  [CourtType.MEETING_ROOM]: '👥 ห้องประชุม'
+};
+
+// The server answers in English; customers get the common problems in
+// Thai (sign-in, sign-up, booking, slips). Anything unrecognised is shown as sent.
+function customerErrorThai(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes('invalid login credentials')) return 'เบอร์โทร/อีเมล หรือรหัสผ่านไม่ถูกต้อง';
+  if (m.includes('already registered')) return 'เบอร์โทรหรืออีเมลนี้สมัครไว้แล้ว — เข้าสู่ระบบ หรือกด "ลืมรหัสผ่าน"';
+  if (m.includes('at least 9 digits') || m.includes('phone number is too long')) return 'เบอร์โทรไม่ถูกต้อง (ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678)';
+  if (m.includes('suspended')) return 'บัญชีนี้ถูกระงับ กรุณาติดต่อพนักงาน';
+  if (m.includes('email address is not valid')) return 'อีเมลไม่ถูกต้อง (เว้นว่างได้ถ้าไม่มี)';
+  if (m.includes('at least 6 characters')) return 'รหัสผ่านต้องมีอย่างน้อย 6 ตัว';
+  if (m.includes('at most 72 characters')) return 'รหัสผ่านยาวเกินไป (ไม่เกิน 72 ตัว)';
+  if (m.includes('name is required')) return 'กรุณาใส่ชื่อ (ไม่เกิน 100 ตัวอักษร)';
+  if (m.includes('too many unpaid') || m.includes('awaiting payment')) return 'คุณมีการจองที่รอชำระ/รอตรวจสลิปอยู่ครบจำนวนแล้ว กรุณารอให้ยืนยันก่อนจองเพิ่ม';
+  if (m.includes('too many')) return 'ลองผิดหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่';
+  // Booking and slip problems
+  if (m.includes('slot already booked')) return 'ช่วงเวลานี้เพิ่งถูกจองไป กรุณาเลือกเวลาอื่น';
+  if (m.includes('has already started') || m.includes('has already passed')) return 'ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ (ติดต่อเคาน์เตอร์ได้)';
+  if (m.includes('off-peak hours')) return 'สนามนี้จองได้เฉพาะช่วง Off-Peak';
+  if (m.includes('is closed at') || m.includes('currently closed')) return 'สนามปิดบริการในช่วงเวลานี้ กรุณาเลือกเวลาหรือสนามอื่น';
+  if (m.includes('outside opening hours') || m.includes('no price set')) return 'ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ';
+  if (m.includes('days ahead')) return 'จองล่วงหน้าได้ไม่เกินจำนวนวันที่สนามกำหนด กรุณาเลือกวันที่ใกล้กว่านี้';
+  if (m.includes('slots per booking')) return 'จองได้สูงสุด 3 ชั่วโมงต่อครั้ง';
+  if (m.includes('slip image was already used')) return 'สลิปนี้เคยใช้กับการจองอื่นแล้ว กรุณาส่งสลิปของการโอนครั้งนี้';
+  if (m.includes('insufficient points') || m.includes('not enough points')) return 'แต้มไม่พอ';
+  if (m.includes('busy')) return 'ระบบกำลังทำรายการเดียวกันอยู่ กรุณาลองใหม่อีกครั้ง';
+  if (m.includes('invalid state')) return 'รายการนี้ถูกเปลี่ยนสถานะไปแล้ว กรุณากด "เรียงใหม่" เพื่อดูสถานะล่าสุด';
+  if (m.includes('failed to fetch') || m.includes('network')) return 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่';
+  return message;
+}
+
 // LINE message times: ISO timestamps, shown in Bangkok time. Older saved
 // messages stored only a local time string ("13:56:02"); show those as-is.
 function lineMessageTime(ts: string): string {
@@ -215,6 +256,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   // and the customer's own bookings+payments (for history) from the backend.
   const [apiError, setApiError] = useState<string | null>(null);
   const loggedInUserId = loggedInUser?.id;
+  // Only the signed-in customer's own messages (the store holds everyone's).
+  const myLineMessages = loggedInUser
+    ? lineMessages.filter(m => normalizePhone(m.recipientPhone) === normalizePhone(loggedInUser.phone || ''))
+    : [];
   useEffect(() => {
     if (!api.USE_BACKEND || !selectedDate) return;
     let cancelled = false;
@@ -290,7 +335,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           setAuthPassword('');
           onRefreshAll();
         })
-        .catch(err => setAuthError(`❌ ${err.message}`));
+        .catch(err => setAuthError(`❌ ${customerErrorThai(err.message)}`));
       return;
     }
 
@@ -330,8 +375,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setAuthError(null);
     setForgotResult(null);
 
-    if (!authName || !authPhone || !authEmail || !authPassword) {
-      setAuthError('❌ กรุณากรอกข้อมูลสำคัญให้ครบถ้วนทุกช่องเพื่อความปลอดภัย');
+    if (!authName || !authPhone || !authPassword) {
+      setAuthError('❌ กรุณาใส่ชื่อ เบอร์โทร และรหัสผ่าน');
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthError('❌ รหัสผ่านต้องมีอย่างน้อย 6 ตัว');
       return;
     }
 
@@ -346,12 +395,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           onRefreshAll();
           notify('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
         })
-        .catch(err => setAuthError(`❌ ${err.message}`));
+        .catch(err => setAuthError(`❌ ${customerErrorThai(err.message)}`));
       return;
     }
 
     const allUsers = StorageService.get<User[]>('users', []);
-    const emailExists = allUsers.some(u => u.email?.toLowerCase() === authEmail.toLowerCase());
+    const emailExists = !!authEmail.trim() && allUsers.some(u => u.email?.toLowerCase() === authEmail.trim().toLowerCase());
     const phoneExists = allUsers.some(u => normalizePhone(u.phone) === normalizePhone(authPhone));
 
     if (emailExists) {
@@ -661,7 +710,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           notify(`🎉 แลกรางวัลสำเร็จ!\nรหัสรับของรางวัล: ${v.code}\nแสดงรหัสนี้ที่เคาน์เตอร์ภายในวันที่ ${formatDate(v.expiresAt)}`);
           onRefreshAll();
         })
-        .catch(err => notify(`แลกรางวัลไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`แลกรางวัลไม่สำเร็จ: ${customerErrorThai(err.message)}`));
       return;
     }
 
@@ -803,7 +852,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           onRefreshAll();
         })
         .catch(err => {
-          notify(`ขออภัยค่ะ จองไม่สำเร็จ: ${err.message}`);
+          notify(`ขออภัยค่ะ จองไม่สำเร็จ: ${customerErrorThai(err.message)}`);
           onRefreshAll(); // reload availability - someone may have taken the slot
         });
       return;
@@ -914,12 +963,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         .then(file => api.uploadSlip(currentBooking.id, file, realFile?.name || 'sample-slip.jpg'))
         .then(() => {
           setSlipFile(realFile ? URL.createObjectURL(realFile) : mockImgUrl);
-          setBookingSuccessAlert("อัพโหลดสลิปเรียบร้อยแล้ว! สตาฟกำลังทำการตรวจสอบสลิปภายใน 5 นาที");
+          setBookingSuccessAlert("ส่งสลิปเรียบร้อยแล้ว! พนักงานจะตรวจสอบและยืนยันการจอง ดูสถานะได้ที่รายการจองด้านล่าง");
           setActiveStep(1);
           setSelectedSlots([]);
           onRefreshAll();
         })
-        .catch(err => notify(`อัพโหลดสลิปไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(`ส่งสลิปไม่สำเร็จ: ${customerErrorThai(err.message)}`));
       return;
     }
 
@@ -944,7 +993,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     // Save state change in logs
     onAddAuditLog('SLIP_UPLOADED_BY_CUSTOMER', 'Payment', currentBooking.id, { status: PaymentStatus.PENDING }, { status: PaymentStatus.SLIP_UPLOADED, slipUrl: mockImgUrl });
 
-    setBookingSuccessAlert("อัพโหลดสลิปเรียบร้อยแล้ว! ระบบ LINE OA และสตาฟกำลังทำการตรวจสอบสลิปภายใน 5 นาที");
+    setBookingSuccessAlert("ส่งสลิปเรียบร้อยแล้ว! พนักงานจะตรวจสอบและยืนยันการจอง ดูสถานะได้ที่รายการจองด้านล่าง");
     setActiveStep(1); // Return to booking screen
     setSelectedSlots([]);
     onRefreshAll();
@@ -1093,20 +1142,22 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
       {/* Dynamic Line Notification Simulator Button (demo). On phones: a
           small round button that never covers the booking bar or forms. */}
+      {SHOW_LINE_SIM && (
       <button 
         id="btn-line-sim-toggle"
         aria-label="ข้อความ LINE (จำลอง)"
         aria-expanded={showLineSimulator}
         onClick={() => setShowLineSimulator(!showLineSimulator)}
-        className={`fixed z-30 items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl transition duration-200 bottom-4 right-4 p-3 sm:bottom-6 sm:right-6 sm:px-5 sm:py-3 ${isNarrow && activeStep === 1 && selectedSlots.length > 0 ? 'hidden' : 'flex'}`}
+        className={`fixed z-30 items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl transition duration-200 bottom-4 left-4 p-3 sm:bottom-6 sm:left-6 sm:px-5 sm:py-3 ${isNarrow && activeStep === 1 && selectedSlots.length > 0 ? 'hidden' : 'flex'}`}
       >
         <span className="relative flex h-3 w-3">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-100 opacity-75"></span>
           <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
         </span>
         <MessageSquare className="h-5 w-5" />
-        <span className="hidden sm:inline font-sans font-medium text-sm">LINE OA ลูกค้า ({lineMessages.length})</span>
+        <span className="hidden sm:inline font-sans font-medium text-sm">LINE OA ลูกค้า ({myLineMessages.length})</span>
       </button>
+      )}
 
       {/* Main Form Left Arena */}
       <div className={`col-span-1 lg:col-span-8 space-y-6 ${showLineSimulator ? 'lg:col-span-8' : 'lg:col-span-12'}`}>
@@ -1351,7 +1402,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   onClick={() => { setAuthTab('register'); setAuthError(null); setForgotResult(null); }}
                   className={`flex-1 py-1.5 rounded-lg font-bold text-center transition ${authTab === 'register' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'}`}
                 >
-                  📝 สมัครสัญญาสมาชิกใหม่
+                  📝 สมัครสมาชิกใหม่
                 </button>
                 <button
                   onClick={() => { setAuthTab('forgot'); setAuthError(null); setForgotResult(null); }}
@@ -1400,12 +1451,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-slate-400 mb-1">
-                      {authTab === 'forgot' ? 'ระบุเบอร์โทร หรือ อีเมลที่กู้คืน:' : 'ระบุ อีเมล / เบอร์โทรศัพท์ก๊วน:'}
+                      {authTab === 'forgot' ? 'ระบุเบอร์โทร หรือ อีเมลที่กู้คืน:' : authTab === 'register' ? 'อีเมล (ไม่บังคับ):' : 'เบอร์โทรศัพท์ หรือ อีเมล:'}
                     </label>
                     <input
-                      type="text"
-                      required
-                      placeholder="เช่น user@mail.com หรือ 0845678901"
+                      type={authTab === 'register' ? 'email' : 'text'}
+                      required={authTab !== 'register'}
+                      placeholder={authTab === 'register' ? 'เช่น user@mail.com' : 'เช่น 0845678901 หรือ user@mail.com'}
                       value={authEmail}
                       onChange={(e) => setAuthEmail(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white focus:outline-none focus:border-emerald-600"
@@ -1414,7 +1465,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                   {authTab !== 'forgot' && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-400 mb-1">กำหนดรหัสผ่านเข้าใช้ (Password):</label>
+                      <label className="block text-xs font-bold text-slate-400 mb-1">{authTab === 'register' ? 'ตั้งรหัสผ่าน (อย่างน้อย 6 ตัว):' : 'รหัสผ่าน:'}</label>
                       <input
                         type="password"
                         required
@@ -1428,7 +1479,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                   {authTab === 'register' && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-400 mb-1">ระบุเบอร์ติดต่อหลัก (Phone):</label>
+                      <label className="block text-xs font-bold text-slate-400 mb-1">เบอร์มือถือ (ใช้เข้าสู่ระบบ):</label>
                       <input
                         type="tel"
                         required
@@ -1498,7 +1549,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
               {/* Court Types Switcher Tabs */}
               <div id="court-type-tabs" className="flex bg-slate-100 p-1 rounded-xl flex-wrap gap-1">
-                {Object.values(CourtType).map(type => (
+                {Object.values(CourtType).filter(type => type === selectedType || courts.some(c => c.type === type)).map(type => (
                   <button
                     key={type}
                     type="button"
@@ -1509,10 +1560,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    {type === CourtType.BADMINTON && 'Badminton (12) 🏸'}
-                    {type === CourtType.BASKETBALL && 'Basketball (1) 🏀'}
-                    {type === CourtType.PICKLEBALL && 'Pickleball (3) 🏓'}
-                    {type === CourtType.MEETING_ROOM && 'ห้องประชุม (1) 👥'}
+                    {/* Counted from the live court list: admins add and close courts. */}
+                    {COURT_TYPE_LABEL[type]} ({courts.filter(c => c.type === type).length})
                   </button>
                 ))}
               </div>
@@ -1573,7 +1622,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-500 rounded" /> 🔴 จองแล้ว / เต็ม</span>
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-200 rounded" /> ⚠️ ปิดสนาม</span>
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-amber-100 rounded" /> 🟡 ว่าง (Peak)</span>
-                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-slate-100 rounded" /> 🟢 ว่าง (ปกติ)</span>
+                    <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-slate-100 rounded" /> 🟢 ว่าง (Off-Peak / ราคาปกติ)</span>
                     <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-emerald-600 rounded" /> ⭐ เลือกแล้ว</span>
                   </div>
                 </div>
@@ -1916,9 +1965,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 </div>
 
                 <div className="text-center space-y-1">
-                  <p className="text-xs font-semibold text-slate-500">สแกนชำระบัญชีสปอร์ตคอมเพล็กซ์</p>
+                  <p className="text-xs font-semibold text-slate-500">สแกนด้วยแอปธนาคาร ยอดเงินจะขึ้นให้อัตโนมัติ</p>
                   <p className="text-sm font-black text-slate-800">รหัสจอง {currentBooking.bookingCode}</p>
-                  <p className="text-xs text-sky-900 font-bold select-all bg-sky-50 px-2 py-0.5 rounded">บจก. กีฬาแฮปปี้ พาร์คคอมเพล็กซ์</p>
+                  <p className="text-xs text-slate-500">ตรวจชื่อผู้รับในแอปธนาคารก่อนกดโอน</p>
                   <p className="text-xs font-extrabold text-slate-800 text-lg mt-1">ยอดโอน: {formatBaht(currentPayment?.amount ?? currentBooking.totalAmount)} บาท</p>
                   {currentPayment?.status === PaymentStatus.PENDING && (() => {
                     // Capped: server and browser clocks can differ slightly.
@@ -1942,7 +1991,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               {/* Upload Slip Selector Simulator */}
               <div className="space-y-4">
                 <div className="bg-slate-50 p-4 rounded-xl border border-dashed border-slate-200">
-                  <span className="block text-xs font-semibold text-slate-700 mb-2">อัพโหลดรูปภาพสลิปธนาคาร (Simulation Upload):</span>
+                  <span className="block text-xs font-semibold text-slate-700 mb-2">โอนแล้ว ส่งรูปสลิปที่นี่:</span>
                   
                   <div className="space-y-2">
                     {/* Stock-photo "slips" are a demo shortcut - never offer them to real customers. */}
@@ -1963,9 +2012,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   </div>
 
                   <div className="mt-4 text-center">
-                    <p className="text-xs text-slate-400">--- หรือ ---</p>
-                    <label className="inline-flex cursor-pointer mt-2 text-xs bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg font-bold text-slate-700 transition">
-                      <FileImage className="h-3 w-3 mr-1" /> เลือกไฟล์จริงจากเครื่อง
+                    {import.meta.env.DEV && <p className="text-xs text-slate-400">--- หรือ ---</p>}
+                    <label className="inline-flex items-center cursor-pointer mt-2 text-sm bg-emerald-600 hover:bg-emerald-500 px-5 py-2.5 rounded-lg font-bold text-white transition">
+                      <FileImage className="h-4 w-4 mr-1.5" /> เลือกรูปสลิปจากเครื่อง
                       <input 
                         type="file" 
                         accept="image/*" 
@@ -1984,10 +2033,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 </div>
 
                 <div className="p-4 bg-amber-50 rounded-lg text-xs space-y-1 p-3.5 border border-amber-200 text-amber-800">
-                  <p className="font-bold">เงื่อนไขสำคัญหลังจากอัพโหลด:</p>
-                  <p>1. คอร์ทสำรองสิทธิ์การจองให้คุณ 30 นาที</p>
-                  <p>2. สต๊าฟจะตรวจสอบความแม่นยำของสลิปและกสีกรณ์</p>
-                  <p>3. คุณจะได้รับแจ้งเตือนใบรับจอง ยืนยันสำเร็จ (CONFIRMED) ผ่านไลน์ LINE OA</p>
+                  <p className="font-bold">ขั้นตอนหลังจอง:</p>
+                  <p>1. ระบบกันสนามไว้ให้ {PAYMENT_HOLD_MINUTES} นาที — โอนและส่งสลิปภายในเวลานี้</p>
+                  <p>2. พนักงานตรวจสลิปแล้วยืนยันการจอง</p>
+                  <p>3. ดูสถานะได้ที่ "ตรวจสอบสถานะการจอง" ด้านล่าง (ขึ้น "อนุมัติเรียบร้อย" เมื่อยืนยันแล้ว)</p>
                 </div>
               </div>
             </div>
@@ -2128,7 +2177,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       </div>
 
       {/* LINE Notification Sidebar Phone Simulator (Module 5 Integration UI) */}
-      {showLineSimulator && (
+      {SHOW_LINE_SIM && showLineSimulator && (
         <div id="line-phone-simulator" className="col-span-1 lg:col-span-4 transition-all duration-300 ease-in-out">
           <div className="sticky top-6 bg-slate-950 text-white rounded-[32px] border-8 border-slate-800 overflow-hidden shadow-2xl h-[650px] flex flex-col">
             
@@ -2165,7 +2214,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               </div>
 
               {/* Loop client side LINE alerts */}
-              {lineMessages.map((msg) => (
+              {myLineMessages.map((msg) => (
                 <div key={msg.id} className="flex flex-col items-start gap-1 max-w-[85%]">
                   <span className="text-[11px] text-slate-400 pl-8 font-mono">{lineMessageTime(msg.timestamp)}</span>
                   <div className="flex items-start gap-2">
@@ -2177,7 +2226,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 </div>
               ))}
 
-              {lineMessages.length === 0 && (
+              {myLineMessages.length === 0 && (
                 <p className="text-xs text-slate-500 text-center pt-10">ไม่มีแจ้งเตือนในขณะนี้ ยืนยันการจองเพื่อเริ่มรับ Push message ทาง LINE</p>
               )}
             </div>
