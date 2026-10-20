@@ -192,6 +192,11 @@ type PricingConfig struct {
 	// How many days ahead customers may book online (staff at the counter
 	// are not limited).
 	MaxAdvanceDays int `json:"max_advance_days" db:"max_advance_days" gorm:"column:max_advance_days;default:30"`
+	// Opening hours: the first bookable slot starts at OpenHour, the last
+	// ends at CloseHour (0-24). Inside them, pricing rules decide which
+	// hours each sport is open (an hour no rule covers can't be booked).
+	OpenHour  int `json:"open_hour" db:"open_hour" gorm:"column:open_hour;default:7"`
+	CloseHour int `json:"close_hour" db:"close_hour" gorm:"column:close_hour;default:23"`
 }
 
 // MemberDiscount mirrors the frontend's MemberDiscountRule - one row per

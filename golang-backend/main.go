@@ -159,6 +159,7 @@ func main() {
 	pricingHandler := handler.NewPricingHandler(service.NewPricingAdminService(db))
 	rewardService := service.NewRewardService(db, usrRepo)
 	rewardHandler := handler.NewRewardHandler(rewardService)
+	courtHandler := handler.NewCourtHandler(service.NewCourtAdminService(db))
 	shopHandler := handler.NewShopHandler(posService, service.NewReportService(db, posService), bookingService)
 
 	arenaHandler := handler.NewArenaHandler(
@@ -299,6 +300,12 @@ func main() {
 		api.POST("/admin/days-off", managerOnly, dayOffHandler.Create)
 		api.DELETE("/admin/days-off/:id", managerOnly, dayOffHandler.Delete)
 
+		// Courts: admins add them and open/close them for booking; never
+		// deleted (bookings and reports point at them)
+		api.GET("/admin/courts", managerOnly, courtHandler.List)
+		api.POST("/admin/courts", adminOnly, courtHandler.Create)
+		api.PUT("/admin/courts/:id", adminOnly, courtHandler.Update)
+
 		// Pricing engine (FR-2) - admin only; used by every booking price
 		api.POST("/admin/pricing-rules", adminOnly, pricingHandler.SaveRule)
 		api.PUT("/admin/pricing-rules/:id", adminOnly, pricingHandler.SaveRule)
@@ -346,6 +353,8 @@ func seedDefaults(db *gorm.DB) {
 		ID:                   "global",
 		HalfCourtRatePercent: 50,
 		MaxAdvanceDays:       30,
+		OpenHour:             service.DefaultOpenHour,
+		CloseHour:            service.DefaultCloseHour,
 	}).Error)
 
 	discounts := []model.MemberDiscount{

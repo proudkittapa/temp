@@ -4,7 +4,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
   User, UserRole
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS } from '../mockData';
+import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openingHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
 import { QRCodeSVG } from 'qrcode.react';
@@ -429,10 +429,11 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setSelectedSlots([]);
   };
 
-  // Generate operating hours slots (e.g. 07:00 to 23:00)
+  // Slots within the opening hours (admin setting, default 07:00-23:00)
   const getAvailableSlots = () => {
     const hours = [];
-    for (let h = OPENING_HOUR; h < CLOSING_HOUR; h++) {
+    const { open, close } = openingHours();
+    for (let h = open; h < close; h++) {
       const start = h.toString().padStart(2, '0') + ':00';
       const end = (h + 1).toString().padStart(2, '0') + ':00';
       hours.push({ start, end, hourNum: h });

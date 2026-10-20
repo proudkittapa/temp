@@ -90,7 +90,11 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		return nil, err
 	}
 	db := s.db.WithContext(ctx)
-	d := &Dashboard{Date: date, HoursPerDay: ClosingHour - OpeningHour, MonthBySport: map[string]float64{}}
+	var cfg model.PricingConfig
+	if err := db.First(&cfg, "id = ?", "global").Error; err != nil {
+		return nil, err
+	}
+	d := &Dashboard{Date: date, HoursPerDay: cfg.CloseHour - cfg.OpenHour, MonthBySport: map[string]float64{}}
 
 	// The day
 	if err := db.Model(&model.Booking{}).Select("COALESCE(SUM(total_amount), 0)").
@@ -173,7 +177,7 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		byHour[h.StartTime] = h.Share
 	}
 	capacity := float64(d.PhysicalCourts) * 30
-	for h := OpeningHour; h < ClosingHour; h++ {
+	for h := cfg.OpenHour; h < cfg.CloseHour; h++ {
 		label := fmt.Sprintf("%02d:00", h)
 		d.HourlyOccupancy = append(d.HourlyOccupancy, HourOccupancy{Hour: label, Percent: pct(byHour[label], capacity)})
 	}

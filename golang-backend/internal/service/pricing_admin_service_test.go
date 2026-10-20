@@ -26,9 +26,21 @@ func TestValidateRule(t *testing.T) {
 		"past midnight":      func(r *model.PricingRule) { r.EndHour = 25 },
 		"negative price":     func(r *model.PricingRule) { r.PricePerHour = -1 },
 		"free hour":          func(r *model.PricingRule) { r.PricePerHour = 0 },
-		"before opening":     func(r *model.PricingRule) { r.StartHour = 6 },
-		"after closing":      func(r *model.PricingRule) { r.StartHour, r.EndHour = 22, 24 },
+		"negative start":     func(r *model.PricingRule) { r.StartHour = -1 },
 	}
+	// Rules may cover any hours of the day: the opening hours setting
+	// decides which of them can be booked.
+	for name, mutate := range map[string]func(*model.PricingRule){
+		"early morning":  func(r *model.PricingRule) { r.StartHour = 6 },
+		"until midnight": func(r *model.PricingRule) { r.StartHour, r.EndHour = 22, 24 },
+	} {
+		r := good
+		mutate(&r)
+		if err := validateRule(&r); err != nil {
+			t.Errorf("%s: rejected: %v", name, err)
+		}
+	}
+
 	for name, mutate := range bad {
 		r := good
 		mutate(&r)

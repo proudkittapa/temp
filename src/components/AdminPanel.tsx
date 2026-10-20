@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   Court, CourtType, PricingRule, DayType, PriceType, 
-  OperatingHours, User, UserRole, MemberType, Booking, BookingStatus, 
-  Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
+  User, UserRole, MemberType, Booking, BookingStatus, 
+  Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 // Bookable hours per court per day (dashboard occupancy).
-const HOURS_PER_DAY = CLOSING_HOUR - OPENING_HOUR;
+const hoursPerDay = () => { const { open, close } = openingHours(); return close - open; };
 
 interface AdminPanelProps {
   currentUserRole: UserRole;
@@ -29,7 +29,6 @@ interface AdminPanelProps {
 export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefresh, onRefreshAll }: AdminPanelProps) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
-  const [operatingHours, setOperatingHours] = useState<OperatingHours[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -190,9 +189,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   // Load state from localStorage on triggerRefresh
   useEffect(() => {
-    setCourts(StorageService.get<Court[]>('courts', []));
+    // In API mode courts, like the rest below, come from the backend.
+    if (!api.USE_BACKEND) setCourts(StorageService.get<Court[]>('courts', []));
     if (!api.USE_BACKEND) setPricingRules(StorageService.get<PricingRule[]>('pricing_rules', []));
-    setOperatingHours(StorageService.get<OperatingHours[]>('operating_hours', []));
     if (!api.USE_BACKEND) setProducts(StorageService.get<Product[]>('products', []));
     // In API mode the user list comes from the backend (see the effect below).
     if (!api.USE_BACKEND) setUsers(StorageService.get<User[]>('users', []));
@@ -239,7 +238,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
     // Occupancy on dashboardSelectedDate: share of physical court-hours sold
     // (a half-court booking fills half of its court).
-    const occupancyRate = Math.round(occupiedShare(dailyBookings) / (physicalCourtCount() * HOURS_PER_DAY || 1) * 1000) / 10;
+    const occupancyRate = Math.round(occupiedShare(dailyBookings) / (physicalCourtCount() * hoursPerDay() || 1) * 1000) / 10;
 
     // All-time Metrics
     const confirmedBookings = bookings.filter(b => isPaidBooking(b));
@@ -304,8 +303,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const inRange = bookings.filter(b => b.date >= start && b.date <= end && isPaidBooking(b));
     const capacity = physicalCourtCount() * 30 || 1;
     const out = [];
-    for (let h = OPENING_HOUR; h < CLOSING_HOUR; h++) {
-      const label = `${String(h).padStart(2, '0')}:00`;
+    for (const label of openSlotHours()) {
       out.push({ hourName: label, 'เฉลี่ยอัตรา (%)': Math.round(occupiedShare(inRange.filter(b => b.startTime === label)) / capacity * 100) });
     }
     return out;
@@ -331,6 +329,47 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   };
 
   const PIE_COLORS = ['#34d399', '#f59e0b', '#38bdf8'];
+
+  // Opening hours (admin setting): first slot start / last slot end.
+  const [openHourSetting, setOpenHourSetting] = useState<number>(() => openingHours().open);
+  const [closeHourSetting, setCloseHourSetting] = useState<number>(() => openingHours().close);
+
+  // Hours inside [open, close) that some sport has no price for on weekdays
+  // or weekends - those can't be booked for that sport.
+  const unpricedHours = (open: number, close: number) => {
+    const gaps: string[] = [];
+    for (const type of Object.values(CourtType)) {
+      for (const day of [DayType.WEEKDAY, DayType.WEEKEND]) {
+        const missing: number[] = [];
+        for (let h = open; h < close; h++) {
+          if (!pricingRules.some(r => r.isActive && r.courtType === type && r.dayType === day && h >= r.startHour && h < r.endHour)) missing.push(h);
+        }
+        if (missing.length) gaps.push(`${type} ${day === DayType.WEEKDAY ? 'วันธรรมดา' : 'เสาร์-อาทิตย์'}: ${missing.map(h => `${String(h).padStart(2, '0')}:00`).join(', ')}`);
+      }
+    }
+    return gaps;
+  };
+
+  const handleSaveOpeningHours = () => {
+    const open = Number(openHourSetting), close = Number(closeHourSetting);
+    if (!(open >= 0 && close <= 24 && open < close)) {
+      alert('เวลาเปิดต้องน้อยกว่าเวลาปิด (0:00 - 24:00)');
+      return;
+    }
+    const gaps = unpricedHours(open, close);
+    if (gaps.length && !window.confirm(`ชั่วโมงต่อไปนี้ยังไม่มีเรทราคา จะยังจองไม่ได้จนกว่าจะเพิ่มกฎราคา:\n${gaps.join('\n')}\n\nบันทึกเวลาเปิด-ปิดต่อไหม?`)) return;
+    const done = () => {
+      onAddAuditLog('OPENING_HOURS_UPDATED', 'PricingConfig', 'global', null, { openHour: open, closeHour: close });
+      onRefreshAll();
+      alert(`บันทึกเวลาเปิด-ปิด ${String(open).padStart(2, '0')}:00 - ${String(close).padStart(2, '0')}:00 แล้ว`);
+    };
+    if (api.USE_BACKEND) {
+      api.setOpeningHours(open, close).then(() => api.syncPricingCache()).then(done).catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    StorageService.set('pricing_config', { ...StorageService.get<PricingConfig>('pricing_config', { id: 'global', halfCourtRatePercent: 50 }), openHour: open, closeHour: close });
+    done();
+  };
 
   // How many days ahead customers may book online (admin setting).
   const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(() =>
@@ -359,10 +398,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const handleSavePricingRule = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Same limits as the server: rules are also the opening hours, which
-    // run 07:00-23:00, and a free hour can't be paid by PromptPay.
-    if (ruleStartHour < OPENING_HOUR || ruleEndHour > CLOSING_HOUR || ruleStartHour >= ruleEndHour) {
-      alert(`ช่วงเวลาต้องอยู่ระหว่าง ${OPENING_HOUR}:00 - ${CLOSING_HOUR}:00 และเวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด`);
+    // Same limits as the server: a rule covers part of 00:00-24:00 (only
+    // the part inside the opening hours can be booked), and a free hour
+    // can't be paid by PromptPay.
+    if (ruleStartHour < 0 || ruleEndHour > 24 || ruleStartHour >= ruleEndHour) {
+      alert('ช่วงเวลาต้องอยู่ระหว่าง 0:00 - 24:00 และเวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด');
       return;
     }
     if (!(Number(rulePrice) > 0)) {
@@ -448,6 +488,18 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const handleCreateCourt = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCourtName) return;
+    if (api.USE_BACKEND) {
+      api.createCourt({ name: newCourtName, type: newCourtType, halfCourt: newCourtAllowHalf })
+        .then(c => {
+          onAddAuditLog('COURT_CREATED', 'Court', c.id, null, c);
+          setNewCourtName('');
+          setNewCourtAllowHalf(false);
+          onRefreshAll();
+          alert(`เพิ่มสนาม "${c.name}" แล้ว ลูกค้าและพนักงานจองได้ทันที`);
+        })
+        .catch(err => alert(`เพิ่มสนามไม่สำเร็จ: ${err.message}`));
+      return;
+    }
     const current = StorageService.get<Court[]>('courts', []);
     const cId = newCourtType.toLowerCase().substring(0, 3) + '-' + (current.length + 1) + '-' + Math.floor(100 + Math.random() * 900);
     const newC: Court = {
@@ -472,7 +524,24 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     alert(`เพิ่มสนามกีฬา "${newC.name}" เข้าสู่คอมเพล็กซ์สำเร็จเรียบร้อยค่ะ!`);
   };
 
+  // Open/close a court for new bookings. Courts are never deleted: old
+  // bookings and reports point at them.
   const handleToggleCourtActive = (id: string) => {
+    if (api.USE_BACKEND) {
+      const court = courts.find(c => c.id === id);
+      if (!court) return;
+      if (court.isActive && !window.confirm(`ปิด "${court.name}" ไม่ให้จองใหม่? (การจองที่มีอยู่แล้วจะไม่ถูกยกเลิกอัตโนมัติ)`)) return;
+      api.updateCourt(id, { isActive: !court.isActive })
+        .then(r => {
+          onAddAuditLog('COURT_TOGGLED_ACTIVE', 'Court', id, { active: court.isActive }, { active: r.court.isActive });
+          onRefreshAll();
+          if (r.upcomingBookings > 0) {
+            alert(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจองตั้งแต่วันนี้ ${r.upcomingBookings} รายการบนสนามนี้ — ติดต่อลูกค้าเพื่อย้ายหรือยกเลิก (Staff POS → รายการจอง)`);
+          }
+        })
+        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
     const current = StorageService.get<Court[]>('courts', []);
     const updated = current.map(c => {
       if (c.id === id) {
@@ -487,16 +556,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     onRefreshAll();
   };
 
-  const handleDeleteCourt = (id: string) => {
-    if (!window.confirm('คุณต้องการลบสนามกีฬานี้ออกจากระบบอย่างถาวรใช่หรือไม่? ข้อมูลการจองเก่าในระบบอาจไม่สมดุล')) return;
-    const current = StorageService.get<Court[]>('courts', []);
-    const updated = current.filter(c => c.id !== id);
-    StorageService.set('courts', updated);
-    setCourts(updated);
-    onAddAuditLog('COURT_DELETED', 'Court', id, null, null);
-    onRefreshAll();
-    alert('ลบข้อมูลสนามออกจากสต๊อกเรียบร้อยแล้วค่ะ');
-  };
 
   // API mode: closures live in the backend (which enforces them on every
   // booking), and changing them needs a manager/admin login.
@@ -511,6 +570,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const canEditPricing = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
   // Staff roles and suspending accounts are admin-only on the server too.
   const canManageAccounts = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
+  // Adding courts and opening/closing them is admin-only on the server;
+  // managers close a court temporarily with a closure (วันปิดบริการ).
+  const canManageCourts = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
   useEffect(() => {
     if (!canEditPricing && (activeAdminTab === 'pricing' || activeAdminTab === 'member_discounts')) {
       setActiveAdminTab('dashboard');
@@ -533,8 +595,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setAdminApiError('เซสชันผู้จัดการหมดอายุหรือไม่มีสิทธิ์ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
-        const [closures, pricing, apiUsers, apiProducts, logs] = await Promise.all([
-          api.listDaysOff(getTodayDateStr()), api.syncPricingCache(), api.listUsers(), api.adminListProducts(),
+        const [closures, pricing, apiUsers, apiProducts, apiCourts, logs] = await Promise.all([
+          api.listDaysOff(getTodayDateStr()), api.syncPricingCache(), api.listUsers(), api.adminListProducts(), api.adminListCourts(),
           // The audit trail is for admins only (RBAC).
           me!.role === UserRole.ADMIN ? api.auditLogs({ limit: 500 }) : Promise.resolve([] as AuditLog[])
         ]);
@@ -542,6 +604,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         setDaysOff(closures);
         setUsers(apiUsers);
         setProducts(apiProducts);
+        setCourts(apiCourts);
+        setOpenHourSetting(pricing.config.openHour ?? 7);
+        setCloseHourSetting(pricing.config.closeHour ?? 23);
         setAuditLogs(logs);
         setMaxAdvanceDays(pricing.config.maxAdvanceDays ?? 30);
         setPricingRules(pricing.rules);
@@ -1380,7 +1445,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-250 text-xs shadow-xs">
                   <span className="text-indigo-800 block font-bold text-[10px]">อัตราเข้าใช้สนามประจำวัน (Occupancy)</span>
                   <span className="text-2xl font-extrabold text-indigo-950 mt-1 block">{getDashboardStats().occupancyRate}%</span>
-                  <p className="text-[9px] text-indigo-700 mt-1">ชั่วโมงสนามที่ขายได้ จาก {physicalCourtCount()} สนาม × {HOURS_PER_DAY} ชั่วโมง</p>
+                  <p className="text-[9px] text-indigo-700 mt-1">ชั่วโมงสนามที่ขายได้ จาก {physicalCourtCount()} สนาม × {api.USE_BACKEND ? dash?.hoursPerDay ?? hoursPerDay() : hoursPerDay()} ชั่วโมง</p>
                 </div>
               </div>
             </div>
@@ -1549,7 +1614,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   <thead>
                     <tr className="bg-slate-100 text-[10px] uppercase font-black text-slate-500 border-b border-slate-200">
                       <th className="p-3 bg-slate-100 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-36">สนาม (Court Name)</th>
-                      {["07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"].map((time) => (
+                      {openSlotHours().map((time) => (
                         <th key={time} className="p-2 text-center text-[9px] min-w-[70px] border-l border-slate-205">
                           {time} น.
                         </th>
@@ -1567,7 +1632,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         </td>
 
                         {/* Hourly timeline slot cells */}
-                        {["07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00"].map((time) => {
+                        {openSlotHours().map((time) => {
                           const targetH = parseInt(time.split(':')[0], 10);
                           
                           // 1. Check for double booking - includes mutex-group
@@ -1693,6 +1758,18 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 <span className="text-slate-600">วัน (พนักงานจองที่เคาน์เตอร์ได้ไม่จำกัด)</span>
                 <button type="button" onClick={handleSaveMaxAdvanceDays} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
               </div>
+              <div id="opening-hours-setting" className="mt-2 flex flex-wrap items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
+                <span className="text-slate-600">เวลาเปิดให้จอง</span>
+                <select value={openHourSetting} onChange={e => setOpenHourSetting(Number(e.target.value))} className="border border-slate-300 rounded px-2 py-1">
+                  {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+                </select>
+                <span className="text-slate-600">ถึง</span>
+                <select value={closeHourSetting} onChange={e => setCloseHourSetting(Number(e.target.value))} className="border border-slate-300 rounded px-2 py-1">
+                  {Array.from({ length: 24 }, (_, i) => i + 1).map(h => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+                </select>
+                <button type="button" onClick={handleSaveOpeningHours} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
+                <span className="text-[10px] text-slate-500 w-full">ในช่วงนี้ ชั่วโมงที่มีกฎราคาเท่านั้นที่จองได้ (เช่น ไม่มีเรท 06:00 = กีฬานั้นยังไม่เปิด 06:00)</span>
+              </div>
               <p className="text-xs text-slate-500">คุณสามารถกำหนดค่า ราคาปกติ, ราคา Peak ยิ่งเร่งด่วนตามเงื่อนไขช่วงชั่วโมง, และชนิดวันธรรมดา/เสาร์อาทิตย์</p>
             </div>
 
@@ -1749,20 +1826,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-slate-700 font-semibold mb-1.5">4. ช่วงชั่วโมงเวลา เริ่ม ({OPENING_HOUR}-{CLOSING_HOUR - 1})</label>
+                      <label className="block text-slate-700 font-semibold mb-1.5">4. ช่วงชั่วโมงเวลา เริ่ม (0-23)</label>
                       <input 
                         type="number"
-                        min={OPENING_HOUR} max={CLOSING_HOUR - 1}
+                        min={0} max={23}
                         value={ruleStartHour}
                         onChange={(e) => setRuleStartHour(Number(e.target.value))}
                         className="w-full bg-white border border-slate-200 py-1.5 px-3 rounded-lg"
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-700 font-semibold mb-1.5">5. ชั่วโมง สิ้นสุด ({OPENING_HOUR + 1}-{CLOSING_HOUR})</label>
+                      <label className="block text-slate-700 font-semibold mb-1.5">5. ชั่วโมง สิ้นสุด (1-24)</label>
                       <input 
                         type="number"
-                        min={OPENING_HOUR + 1} max={CLOSING_HOUR}
+                        min={1} max={24}
                         value={ruleEndHour}
                         onChange={(e) => setRuleEndHour(Number(e.target.value))}
                         className="w-full bg-white border border-slate-200 py-1.5 px-3 rounded-lg"
@@ -1951,7 +2028,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               {/* Creator Forms (Col 4) */}
               <div className="col-span-1 lg:col-span-4 space-y-6">
                 
-                {/* 1. Add Court Form */}
+                {/* 1. Add Court Form (admins) */}
+                {canManageCourts && (
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
                   <span className="text-xs font-bold text-slate-800 block mb-4 text-emerald-950">🏟️ เพิ่มรายสนามกีฬาในระบบ</span>
                   
@@ -1990,7 +2068,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             onChange={(e) => setNewCourtAllowHalf(e.target.checked)}
                             className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                           />
-                          จองครึ่งสนามได้
+                          เป็นครึ่งสนาม (คิดราคาครึ่งสนาม)
                         </label>
                       </div>
                     </div>
@@ -2003,6 +2081,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     </button>
                   </form>
                 </div>
+                )}
 
                 {/* 2. Add Special Closed Day / Holiday */}
                 <div className="bg-rose-50/50 p-5 rounded-2xl border border-rose-200 text-xs space-y-4 shadow-sm">
@@ -2070,7 +2149,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             onChange={(e) => setNewDayOffStartHour(Number(e.target.value))}
                             className="w-full bg-white border border-slate-200 py-1 px-1.5 rounded text-xs font-bold text-slate-800"
                           >
-                            {[7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22].map(h => (
+                            {openSlotHours().map(t => parseInt(t, 10)).map(h => (
                               <option key={h} value={h}>{String(h).padStart(2, '0')}:00 น.</option>
                             ))}
                           </select>
@@ -2082,7 +2161,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             onChange={(e) => setNewDayOffEndHour(Number(e.target.value))}
                             className="w-full bg-white border border-slate-200 py-1 px-1.5 rounded text-xs font-bold text-slate-800"
                           >
-                            {[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map(h => (
+                            {openSlotHours().map(t => parseInt(t, 10) + 1).map(h => (
                               <option key={h} value={h}>{String(h).padStart(2, '0')}:00 น.</option>
                             ))}
                           </select>
@@ -2128,7 +2207,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                           <th className="px-4 py-3 font-sans">ประเภท</th>
                           <th className="px-4 py-3 font-sans">เงื่อนไขครึ่งสนาม</th>
                           <th className="px-4 py-3 text-center font-sans">สถานะบริการ</th>
-                          <th className="px-4 py-3 text-center font-sans">คำสั่งลบ</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-sans">
@@ -2140,7 +2218,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             <td className="px-4 py-3">
                               {court.shareOfGroup < 1 ? (
                                 <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                                  แบ่งครึ่งสนามได้
+                                  ครึ่งสนาม (ราคาครึ่งสนาม)
                                 </span>
                               ) : (
                                 <span className="bg-slate-100 text-slate-500 text-[10px] px-2 py-0.5 rounded-full font-sans">
@@ -2151,6 +2229,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             <td className="px-4 py-3 text-center">
                               <button
                                 type="button"
+                                disabled={!canManageCourts}
+                                title={canManageCourts ? 'กดเพื่อเปิด/ปิดรับจอง' : 'เฉพาะ Admin (ปิดชั่วคราวใช้ "วันปิดบริการ")'}
                                 onClick={() => handleToggleCourtActive(court.id)}
                                 className={`px-2.5 py-1 rounded-full text-[10px] font-black transition ${
                                   court.isActive 
@@ -2159,15 +2239,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                 }`}
                               >
                                 {court.isActive ? '● กำลังเปิด' : '○ ปิดระงับบริการ'}
-                              </button>
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteCourt(court.id)}
-                                className="text-red-600 hover:text-red-900 font-bold flex items-center gap-0.5 mx-auto text-[10.5px]"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" /> ลบสนาม
                               </button>
                             </td>
                           </tr>
@@ -2667,13 +2738,15 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                     {item.isActive ? 'ใช้งาน' : 'ระงับชั่วคราว'}
                                   </button>
                                   
-                                  <button
+                                  {/* With the backend accounts are suspended, never deleted
+                                      (their bookings and payments must stay on record). */}
+                                  {!api.USE_BACKEND && <button
                                     onClick={() => handleDeleteUserByAdmin(item.id, item.name)}
                                     className="bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 font-bold p-1 rounded transition text-[10px]"
                                     title="ลบข้อมูลถาวร"
                                   >
                                     🗑️ ลบไอดี
-                                  </button>
+                                  </button>}
                                 </div>
                               )}
                             </td>

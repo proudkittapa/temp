@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, isPaidBooking, localDateOf } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import DemoLogins, { DEMO_STAFF } from './DemoLogins';
@@ -439,14 +439,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     onRefreshAll();
   };
 
-  // Dynamic slots available check
-  const getWalkinHours = () => {
-    const list = [];
-    for (let h = OPENING_HOUR; h < CLOSING_HOUR; h++) {
-      list.push(h.toString().padStart(2, '0') + ':00');
-    }
-    return list;
-  };
+  // Slot start times within the opening hours (admin setting)
+  const getWalkinHours = () => openSlotHours();
 
   // Phase 1 CORE: Approve Bank Slips (Slip Verification). Also confirms a
   // PromptPay walk-in once staff see the transfer arrive. Resolves to

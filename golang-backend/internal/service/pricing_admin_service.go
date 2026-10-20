@@ -65,11 +65,11 @@ func validateRule(r *model.PricingRule) error {
 		return fmt.Errorf("%w: day_type must be WEEKDAY or WEEKEND", ErrInvalidBooking)
 	case !validPriceTypes[r.PriceType]:
 		return fmt.Errorf("%w: price_type must be PEAK, OFFPEAK or NORMAL", ErrInvalidBooking)
-	// Rules double as opening hours, so they must lie inside the hours that
-	// can be booked at all - a 23:00-24:00 rule used to save fine but could
-	// never be booked.
-	case r.StartHour < OpeningHour || r.EndHour > ClosingHour || r.StartHour >= r.EndHour:
-		return fmt.Errorf("%w: start_hour must be before end_hour, within %02d:00-%02d:00", ErrInvalidBooking, OpeningHour, ClosingHour)
+	// Rules decide which hours each sport is open inside the opening hours
+	// (PricingConfig.OpenHour/CloseHour); a rule outside them is kept but
+	// books nothing until the hours are widened.
+	case r.StartHour < 0 || r.EndHour > 24 || r.StartHour >= r.EndHour:
+		return fmt.Errorf("%w: start_hour must be before end_hour, within 00:00-24:00", ErrInvalidBooking)
 	// A free hour would produce a 0.00 THB PromptPay QR, which banking
 	// apps reject.
 	case r.PricePerHour <= 0:
@@ -194,7 +194,7 @@ const MaxAdvanceDaysLimit = 365
 // UpdateConfig changes the global pricing settings: the half-court rate
 // (FR-2.4) and/or how many days ahead customers may book online. A nil
 // field is left as it is.
-func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent *float64, maxAdvanceDays *int, actorID, actorName string) (*model.PricingConfig, error) {
+func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent *float64, maxAdvanceDays *int, openHour, closeHour *int, actorID, actorName string) (*model.PricingConfig, error) {
 	if halfCourtPercent != nil && (*halfCourtPercent <= 0 || *halfCourtPercent > 100) {
 		return nil, fmt.Errorf("%w: half_court_rate_percent must be between 1 and 100", ErrInvalidBooking)
 	}
@@ -212,6 +212,15 @@ func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent
 		}
 		if maxAdvanceDays != nil {
 			cfg.MaxAdvanceDays = *maxAdvanceDays
+		}
+		if openHour != nil {
+			cfg.OpenHour = *openHour
+		}
+		if closeHour != nil {
+			cfg.CloseHour = *closeHour
+		}
+		if cfg.OpenHour < 0 || cfg.CloseHour > 24 || cfg.OpenHour >= cfg.CloseHour {
+			return fmt.Errorf("%w: opening hours must satisfy 0 <= open_hour < close_hour <= 24", ErrInvalidBooking)
 		}
 		if err := tx.Save(&cfg).Error; err != nil {
 			return err

@@ -57,7 +57,8 @@ database from the Go Backend section below):
 | Staff slip queue, verify (confirms + awards points), reject | `GET /staff/payments`, `POST /staff/payments/:id/verify`, `POST /staff/payments/:id/reject` |
 | Staff walk-in bookings (PromptPay ones wait for staff to confirm the transfer) + the staff booking grid | `POST /staff/bookings`, `GET /bookings?date=` |
 | Court closures / days off (Admin panel; enforced on every booking) | `GET /days-off`, `POST /admin/days-off`, `DELETE /admin/days-off/:id` |
-| Pricing rules + member-tier discounts (Admin panel; what every booking is charged) | `GET /pricing`, `POST`/`PUT`/`DELETE /admin/pricing-rules`, `PUT /admin/member-discounts/:type` |
+| Pricing rules + member-tier discounts, opening hours, booking window (Admin panel; what every booking is charged) | `GET /pricing`, `POST`/`PUT`/`DELETE /admin/pricing-rules`, `PUT /admin/member-discounts/:type`, `PUT /admin/pricing-config` |
+| Courts: add, rename, open/close for booking (admin; never deleted) | `GET /courts`, `GET /admin/courts`, `POST /admin/courts`, `PUT /admin/courts/:id` |
 | Cancel / refund (manager), record a cash payment (manager), no-show (staff), day's cash-drawer totals | `POST /admin/bookings/:id/cancel`, `POST /admin/payments/:id/refund`, `POST /admin/bookings/:id/mark-cash`, `POST /staff/bookings/:id/no-show`, `GET /staff/summary` |
 | Loyalty rewards: redeem points online, voucher check at the counter | `GET /rewards`, `POST /me/rewards/:id/redeem`, `GET /me/vouchers`, `GET`/`POST /staff/vouchers/:code[/dispense]` |
 | Counter shop: products with stock (shoes per size), F&B / equipment sales, racket & shoe rentals and returns (Staff POS); products and stock changes (Admin panel → 🥤) | `GET /staff/products`, `POST /pos/order`, `GET /staff/orders?date=`, `GET /staff/rentals`, `POST /staff/rentals/items/:id/return`, `GET`/`POST /admin/products`, `PUT /admin/products/:id`, `POST /admin/products/:id/stock` |
@@ -76,12 +77,11 @@ editing prices and discounts needs the admin account `0812345678`). Price
 previews in the UI are refreshed from the backend, so they always match what
 the server charges.
 
-Still `localStorage`-only in API mode (no backend endpoints yet): password
-reset (planned: by phone number, see TODO.md), account deletion, and the
-other Admin/Manager settings (courts,
-deleting users - suspend them instead -, operating hours - the backend has its own `courts` table,
-seeded to match, so a court added only in the Admin panel doesn't exist
-there yet).
+Not available in API mode yet (the screens say "contact staff"): password
+reset (planned: by phone number, see TODO.md) and customers deleting their
+own account. Admins don't delete accounts there either - they suspend them,
+so bookings and payments stay on record. The LINE messages are still a
+simulation kept in the browser (real LINE OA is in TODO.md).
 
 Set `JWT_SECRET` in `golang-backend/.env` (`openssl rand -hex 32`);
 otherwise the backend picks a random one per run and everyone is logged out

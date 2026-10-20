@@ -18,10 +18,71 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Courts on the server, editable opening hours, no user delete in API mode
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `6856bcd`)
+- **Background:** In API mode the Admin courts tab and the "🗑️ ลบไอดี"
+  button only changed the browser's copy (a "new" court couldn't be booked,
+  a "closed" one still could, a "deleted" user could still log in). The
+  owner agreed to: courts on the server (close instead of delete), hide user
+  delete in API mode, and make opening hours editable (they were fixed at
+  07:00-23:00 in code on both sides; the old `operating_hours` list in the
+  Admin panel was loaded but never shown or used).
+
+### Changed
+1. **Courts** (`internal/service/court_admin_service.go`,
+   `internal/handler/court_api.go`): `GET /admin/courts` (managers, incl.
+   closed), `POST /admin/courts` and `PUT /admin/courts/:id` (admins: add,
+   rename, open/close, off-peak-only; type and half-court share fixed).
+   Never deleted. Closing reports `upcoming_bookings` (not auto-cancelled).
+   Duplicate names refused. Audited. Admin panel courts tab uses them in API
+   mode; the delete-court button is gone in both modes (toggle instead);
+   managers see the list but can't add/toggle (they use closures). The
+   "จองครึ่งสนามได้" checkbox was misleading - it makes the court a half
+   court priced at the half-court rate - relabelled.
+2. **Opening hours:** `PricingConfig.OpenHour/CloseHour` (default 7/23,
+   0 <= open < close <= 24) via `PUT /admin/pricing-config`
+   (`open_hour`, `close_hour`). Booking checks them (`checkOpenHour`);
+   `hourSlotEnd` now only validates the format, so bookings made before the
+   hours changed stay valid. Pricing rules may cover any part of
+   00:00-24:00 (they still decide which hours each sport is open); an hour
+   inside the opening hours with no rule now says "no price set for that
+   hour" instead of "outside opening hours". Dashboard hours follow the
+   setting. Frontend: `openingHours()` / `openSlotHours()` in mockData
+   replace `OPENING_HOUR`/`CLOSING_HOUR`; customer, staff and admin grids,
+   closure hour pickers and occupancy use them; `calculatePrice` treats
+   hours outside them as closed. Admin → Pricing has "เวลาเปิดให้จอง"
+   (admin only), warning which sport/day hours have no price rule yet.
+3. **User delete:** hidden in API mode (suspend instead, records kept).
+   Removed the dead `operatingHours` state from the Admin panel.
+
+### Verified
+- `go build`, `go vet`, `go test ./...` (new `TestCheckOpenHour`, rule
+  test updated: 06:00 / 22-24 rules now valid), `tsc`, vitest 29/29.
+- Live API (`/var/tmp/e2e7.sh`): 06:00 refused at 07-23; manager can't
+  change hours (403); open > close refused; at 06-24 a 06:00 slot without a
+  rule refused, with a 06-07 rule booked; back to 07-23 refused again;
+  dashboard hours follow. Courts: manager list OK / create 403; admin
+  create → in public list and bookable; duplicate name and unknown type
+  refused; close → `upcoming_bookings: 1`, gone from public list, booking
+  refused; rename + reopen; audit COURT_CREATED/COURT_UPDATED.
+- Playwright (`/var/tmp/e2e/ui8.cjs`, API mode): admin sets 06-24 → warning
+  lists unpriced hours → customer grid 06:00-23:00 (18 columns); new court
+  appears in the customer grid, closing it removes it; no delete-court or
+  delete-user buttons; manager: no add form, toggles disabled, no Pricing
+  tab; reset to 07-23 → 16 columns. Smoke test both modes: no errors.
+
+### Not done / follow-ups
+- Closing a court doesn't move/cancel its upcoming bookings (count shown).
+- Shift open/close (FR-6.1/6.2) and voiding counter orders, as before.
+
+---
+
 ## 2026-10-20 — Counter sales, rentals and admin reports on the server
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `cd31b74`)
+- **Commit(s):** `6856bcd` (on `main`, parent `cd31b74`)
 - **Background:** The owner asked to fix the first two "still weird" items:
   (1) in API mode the admin dashboard, CSV report and audit log read the
   browser's localStorage; (2) F&B sales and rentals lived only in the

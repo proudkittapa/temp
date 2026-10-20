@@ -124,6 +124,11 @@ export interface PricingConfig {
   halfCourtRatePercent: number;
   // How many days ahead customers may book online (staff aren't limited).
   maxAdvanceDays?: number;
+  // Opening hours: first slot starts at openHour, last ends at closeHour
+  // (0-24). Inside them the pricing rules decide which hours each sport is
+  // open.
+  openHour?: number;
+  closeHour?: number;
 }
 
 export interface OperatingHours {

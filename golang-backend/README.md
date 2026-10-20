@@ -261,10 +261,35 @@ curl -X PUT http://localhost:8080/api/v1/admin/pricing-config \
   -d '{"half_court_rate_percent": 50}'
 ```
 `POST /admin/pricing-rules` creates a rule; `DELETE /admin/pricing-rules/:id`
-removes one. An hour no active rule covers counts as closed. Prices are kept
-to 2 decimal places (satang). `PUT /admin/pricing-config` also takes
-`"max_advance_days"` (default 30, 1-365): how many days ahead customers may
-book online; staff at the counter aren't limited.
+removes one. Prices are kept to 2 decimal places (satang).
+`PUT /admin/pricing-config` also takes `"max_advance_days"` (default 30,
+1-365): how many days ahead customers may book online; staff at the counter
+aren't limited.
+
+**Opening hours:** `"open_hour"` / `"close_hour"` (default 7 / 23, any
+0 <= open < close <= 24) bound every slot - the first starts at open_hour,
+the last ends at close_hour. Inside them a sport is open only in hours an
+active pricing rule covers (rules may cover any part of 00:00-24:00), so
+widening the hours also needs rules for the new hours. Existing bookings
+outside new hours stay valid.
+```bash
+curl -X PUT http://localhost:8080/api/v1/admin/pricing-config \
+  -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" \
+  -d '{"open_hour": 6, "close_hour": 24}'
+```
+
+### 8a. Courts (admin)
+Courts are added and opened/closed for new bookings, never deleted (old
+bookings and reports point at them). Closing a court doesn't cancel what is
+already booked: the answer says how many upcoming bookings remain. Managers
+can list courts; for a temporary repair they add a closure (section 7).
+```bash
+curl http://localhost:8080/api/v1/admin/courts -H "Authorization: Bearer <Manager_Token>"   # closed ones too
+curl -X POST http://localhost:8080/api/v1/admin/courts -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" \
+  -d '{"name": "สนามแบดมินตัน 13", "type": "BADMINTON", "half_court": false}'
+curl -X PUT http://localhost:8080/api/v1/admin/courts/<id> -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" \
+  -d '{"is_active": false}'          # → {"court": {...}, "upcoming_bookings": 2}
+```
 
 ### 8b. Cancellations, refunds, cash, no-shows (FR-6.3)
 Managers/admins cancel bookings (a reason is required and audit-logged).

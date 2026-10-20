@@ -318,7 +318,9 @@ export const DEFAULT_MEMBER_DISCOUNTS: MemberDiscountRule[] = [
 export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   id: 'global',
   halfCourtRatePercent: 50,
-  maxAdvanceDays: 30
+  maxAdvanceDays: 30,
+  openHour: 7,
+  closeHour: 23
 };
 
 // FR-4.2 rewards catalog.
@@ -579,6 +581,10 @@ export function calculatePrice(
   const pricingRules = StorageService.get<PricingRule[]>('pricing_rules', DEFAULT_PRICING_RULES);
   const dayType = getDayType(dateStr);
   const hour = parseInt(startHourStr.split(':')[0], 10);
+  const { open, close } = openingHours();
+  if (!(hour >= open && hour < close)) {
+    return { total: 0, original: 0, priceType: PriceType.NORMAL, discountMessage: '', isOpen: false };
+  }
 
   // 1. Find matching time/day rule. The pricing rules double as opening
   // hours, exactly as on the server (SlotQuoter.Quote): an hour no active
@@ -635,11 +641,20 @@ export function calculatePrice(
   };
 }
 
-// Bookable hours: the first slot starts at 07:00, the last ends at 23:00
-// (REQUIREMENTS.md FR-2.2; the backend's OpeningHour/ClosingHour). Pricing
-// rules must stay inside them.
-export const OPENING_HOUR = 7;
-export const CLOSING_HOUR = 23;
+// Opening hours (admin setting, PricingConfig.openHour/closeHour; default
+// 07:00-23:00, REQUIREMENTS.md FR-2.2): the first slot starts at `open`, the
+// last ends at `close`. In API mode the server's value is cached here.
+export function openingHours(): { open: number; close: number } {
+  const cfg = StorageService.get<PricingConfig>('pricing_config', DEFAULT_PRICING_CONFIG);
+  const open = cfg.openHour ?? 7, close = cfg.closeHour ?? 23;
+  return open >= 0 && close <= 24 && open < close ? { open, close } : { open: 7, close: 23 };
+}
+
+// "HH:00" labels of every slot start within the opening hours.
+export function openSlotHours(): string[] {
+  const { open, close } = openingHours();
+  return Array.from({ length: close - open }, (_, i) => `${String(open + i).padStart(2, '0')}:00`);
+}
 
 // Rewards whose voucher pays for one free off-peak court hour (booked by
 // staff at the counter) rather than an item handed over. Browser-only mode

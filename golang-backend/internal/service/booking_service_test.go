@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -17,14 +18,26 @@ func TestHourSlotEnd(t *testing.T) {
 		}
 	}
 
-	// Anything that isn't a whole hour inside opening hours (07:00-23:00)
-	// must be rejected as a bad request, not passed through to the overlap
-	// query - times are compared as text there, so "9:00" would sort after
-	// "10:00".
-	for _, bad := range []string{"9:00", "09:30", "23:00", "24:00", "00:00", "06:00", "ab:00", "09", "", "09:00:00"} {
+	// Anything that isn't a whole hour of the day must be rejected as a bad
+	// request, not passed through to the overlap query - times are compared
+	// as text there, so "9:00" would sort after "10:00".
+	for _, bad := range []string{"9:00", "09:30", "24:00", "25:00", "-1:00", "ab:00", "09", "", "09:00:00"} {
 		if _, _, err := hourSlotEnd(bad); !errors.Is(err, ErrInvalidBooking) {
 			t.Errorf("hourSlotEnd(%q) err = %v; want ErrInvalidBooking", bad, err)
 		}
+	}
+}
+
+func TestCheckOpenHour(t *testing.T) {
+	cfg := &model.PricingConfig{OpenHour: 6, CloseHour: 24}
+	for h, wantOK := range map[int]bool{5: false, 6: true, 22: true, 23: true} {
+		err := checkOpenHour(cfg, fmt.Sprintf("%02d:00", h), h)
+		if (err == nil) != wantOK || (err != nil && !errors.Is(err, ErrSlotUnavailable)) {
+			t.Errorf("hour %d: err = %v, want open=%v", h, err, wantOK)
+		}
+	}
+	if end, _, err := hourSlotEnd("23:00"); err != nil || end != "24:00" {
+		t.Errorf("hourSlotEnd(23:00) = %q, %v", end, err)
 	}
 }
 

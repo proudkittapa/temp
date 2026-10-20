@@ -103,19 +103,22 @@ func (h *PricingHandler) UpdateMemberDiscount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": d})
 }
 
-// PUT /api/v1/admin/pricing-config {"half_court_rate_percent": 50, "max_advance_days": 30}
-// - either field may be omitted.
+// PUT /api/v1/admin/pricing-config {"half_court_rate_percent": 50,
+// "max_advance_days": 30, "open_hour": 7, "close_hour": 23} - any field may
+// be omitted.
 func (h *PricingHandler) UpdateConfig(c *gin.Context) {
 	var in struct {
 		HalfCourtRatePercent *float64 `json:"half_court_rate_percent"`
 		MaxAdvanceDays       *int     `json:"max_advance_days"`
+		OpenHour             *int     `json:"open_hour"`
+		CloseHour            *int     `json:"close_hour"`
 	}
-	if err := c.ShouldBindJSON(&in); err != nil || (in.HalfCourtRatePercent == nil && in.MaxAdvanceDays == nil) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "send half_court_rate_percent and/or max_advance_days"})
+	if err := c.ShouldBindJSON(&in); err != nil || (in.HalfCourtRatePercent == nil && in.MaxAdvanceDays == nil && in.OpenHour == nil && in.CloseHour == nil) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "send half_court_rate_percent, max_advance_days, open_hour and/or close_hour"})
 		return
 	}
 	actorID, actorName := actor(c)
-	cfg, err := h.pricing.UpdateConfig(c.Request.Context(), in.HalfCourtRatePercent, in.MaxAdvanceDays, actorID, actorName)
+	cfg, err := h.pricing.UpdateConfig(c.Request.Context(), in.HalfCourtRatePercent, in.MaxAdvanceDays, in.OpenHour, in.CloseHour, actorID, actorName)
 	if err != nil {
 		respondError(c, err)
 		return

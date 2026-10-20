@@ -370,10 +370,13 @@ export interface PricingSnapshot {
 }
 
 export async function getPricing(): Promise<PricingSnapshot> {
-  const d = await request<{ rules: ApiPricingRule[]; config: { half_court_rate_percent: number; max_advance_days: number }; member_discounts: ApiMemberDiscount[] }>('/pricing');
+  const d = await request<{ rules: ApiPricingRule[]; config: { half_court_rate_percent: number; max_advance_days: number; open_hour?: number; close_hour?: number }; member_discounts: ApiMemberDiscount[] }>('/pricing');
   return {
     rules: d.rules.map(toRule),
-    config: { id: 'global', halfCourtRatePercent: d.config.half_court_rate_percent, maxAdvanceDays: d.config.max_advance_days },
+    config: {
+      id: 'global', halfCourtRatePercent: d.config.half_court_rate_percent, maxAdvanceDays: d.config.max_advance_days,
+      openHour: d.config.open_hour ?? 7, closeHour: d.config.close_hour ?? 23
+    },
     memberDiscounts: d.member_discounts.map(toDiscount)
   };
 }
@@ -627,6 +630,34 @@ export async function daySummary(date: string): Promise<DaySummary> {
 // Admin: how many days ahead customers may book online.
 export async function setMaxAdvanceDays(days: number): Promise<void> {
   await request('/admin/pricing-config', { method: 'PUT', session: 'admin', body: { max_advance_days: days } });
+}
+
+// Admin: opening hours (first slot start, last slot end, 0-24).
+export async function setOpeningHours(openHour: number, closeHour: number): Promise<void> {
+  await request('/admin/pricing-config', { method: 'PUT', session: 'admin', body: { open_hour: openHour, close_hour: closeHour } });
+}
+
+// ---- courts (admin) ----
+
+// Every court including closed ones (managers/admins).
+export async function adminListCourts(): Promise<Court[]> {
+  return (await request<ApiCourt[]>('/admin/courts', { session: 'admin' })).map(toCourt);
+}
+
+// Admin: add a standalone court (halfCourt = priced at the half-court rate).
+export async function createCourt(input: { name: string; type: CourtType; halfCourt: boolean }): Promise<Court> {
+  return toCourt(await request<ApiCourt>('/admin/courts', {
+    method: 'POST', session: 'admin', body: { name: input.name, type: input.type, half_court: input.halfCourt }
+  }));
+}
+
+// Admin: rename, open/close for booking. upcomingBookings: bookings still
+// standing on a court that was just closed.
+export async function updateCourt(id: string, patch: { name?: string; isActive?: boolean; offPeakOnly?: boolean }): Promise<{ court: Court; upcomingBookings: number }> {
+  const r = await request<{ court: ApiCourt; upcoming_bookings: number }>(`/admin/courts/${encodeURIComponent(id)}`, {
+    method: 'PUT', session: 'admin', body: { name: patch.name, is_active: patch.isActive, off_peak_only: patch.offPeakOnly }
+  });
+  return { court: toCourt(r.court), upcomingBookings: r.upcoming_bookings };
 }
 
 // ---- loyalty rewards (FR-4.2/4.3) ----

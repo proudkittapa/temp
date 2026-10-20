@@ -48,12 +48,11 @@ const (
 	// hold before staff have approved a payment - awaiting a slip or awaiting
 	// review - so nobody can block courts by booking and never paying.
 	MaxUnpaidGroupsPerUser = 3
-	// OpeningHour/ClosingHour bound bookable slots: the first slot starts at
-	// 07:00 and the last ends at 23:00 (REQUIREMENTS.md FR-2.2). Pricing
-	// rules must stay inside these hours too, so the UI grid, the rules and
-	// what can be booked all agree.
-	OpeningHour = 7
-	ClosingHour = 23
+	// DefaultOpenHour/DefaultCloseHour are the opening hours a new database
+	// starts with (07:00-23:00, REQUIREMENTS.md FR-2.2); admins change them
+	// in PricingConfig.OpenHour/CloseHour.
+	DefaultOpenHour  = 7
+	DefaultCloseHour = 23
 )
 
 // Bangkok is the complex's local time zone; "today" and "has this slot
@@ -477,12 +476,19 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 	if err != nil {
 		return nil, err
 	}
+	cfg, err := s.courtRepo.GetPricingConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	seen := map[string]bool{}
 	planned := make([]plannedSlot, 0, len(input.Slots))
 	for _, sl := range input.Slots {
 		endTime, hour, err := hourSlotEnd(sl.StartTime)
 		if err != nil {
+			return nil, err
+		}
+		if err := checkOpenHour(cfg, sl.StartTime, hour); err != nil {
 			return nil, err
 		}
 		key := sl.CourtID + "@" + sl.StartTime
@@ -508,7 +514,9 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 			return nil, fmt.Errorf("pricing calculation failed: %w", err)
 		}
 		if !open {
-			return nil, fmt.Errorf("%w: %s is outside opening hours", ErrSlotUnavailable, sl.StartTime)
+			// Inside the opening hours, but no pricing rule covers this
+			// sport/day/hour - the rules decide which hours each sport opens.
+			return nil, fmt.Errorf("%w: %s is not open at %s (no price set for that hour)", ErrSlotUnavailable, court.Name, sl.StartTime)
 		}
 		// FR-1.2: half-court sides may only be booked off-peak.
 		if court.OffPeakOnly && priceType != "OFFPEAK" {
@@ -599,17 +607,27 @@ func uniqueBookingCode(tx *gorm.DB, date string) (string, error) {
 	return "", errors.New("could not allocate a unique booking code, please retry")
 }
 
-// hourSlotEnd validates an "HH:00" start and returns its one-hour end.
+// hourSlotEnd validates an "HH:00" start (00:00-23:00) and returns its
+// one-hour end. Whether that hour is open is checkOpenHour's job: existing
+// bookings stay valid when the opening hours change later.
 func hourSlotEnd(start string) (string, int, error) {
 	parts := strings.Split(start, ":")
 	if len(parts) != 2 || parts[1] != "00" || len(parts[0]) != 2 {
 		return "", 0, fmt.Errorf("%w: start_time must be on the hour (HH:00), got %q", ErrInvalidBooking, start)
 	}
 	h, err := strconv.Atoi(parts[0])
-	if err != nil || h < OpeningHour || h >= ClosingHour {
-		return "", 0, fmt.Errorf("%w: start hour %q is outside opening hours (%02d:00-%02d:00)", ErrInvalidBooking, start, OpeningHour, ClosingHour)
+	if err != nil || h < 0 || h > 23 {
+		return "", 0, fmt.Errorf("%w: start_time must be on the hour (HH:00), got %q", ErrInvalidBooking, start)
 	}
 	return fmt.Sprintf("%02d:00", h+1), h, nil
+}
+
+// checkOpenHour refuses a slot outside the configured opening hours.
+func checkOpenHour(cfg *model.PricingConfig, start string, hour int) error {
+	if hour < cfg.OpenHour || hour >= cfg.CloseHour {
+		return fmt.Errorf("%w: %s is outside opening hours (%02d:00-%02d:00)", ErrSlotUnavailable, start, cfg.OpenHour, cfg.CloseHour)
+	}
+	return nil
 }
 
 // checkBookingWindow refuses an online booking further ahead than the
