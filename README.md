@@ -54,16 +54,19 @@ database from the Go Backend section below):
 | Slip upload (the real image file) | `POST /bookings/:id/upload-slip` |
 | Staff slip queue, verify (confirms + awards points), reject | `GET /staff/payments`, `POST /staff/payments/:id/verify`, `POST /staff/payments/:id/reject` |
 | Staff walk-in bookings + the staff booking grid | `POST /staff/bookings`, `GET /bookings?date=` |
+| Court closures / days off (Admin panel; enforced on every booking) | `GET /days-off`, `POST /admin/days-off`, `DELETE /admin/days-off/:id` |
 
 `dev-runner.js` starts the backend with `SEED_DEMO_USERS=true`, which creates
 the same demo accounts as `DEFAULT_USERS` (all password `123456`): customers
 `0845678901` (member) and `0856789012` (student), staff `0834567890`. The
-Staff POS panel asks staff to sign in separately from the customer.
+Staff POS panel asks staff to sign in separately from the customer, and the
+Admin panel asks for a manager/admin account (e.g. manager `0823456789`).
 
 Still `localStorage`-only in API mode (no backend endpoints yet): POS / F&B /
 rentals, reward redemption, password reset, account deletion, the day's
-totals report, and all Admin/Manager settings (incl. days off and pricing -
-the backend has its own `day_offs` and `pricing_rules` tables).
+totals report, and the other Admin/Manager settings (pricing, courts,
+products, users, member discounts - the backend has its own
+`pricing_rules`/`courts` tables, seeded to match).
 
 Set `JWT_SECRET` in `golang-backend/.env` (`openssl rand -hex 32`);
 otherwise the backend picks a random one per run and everyone is logged out

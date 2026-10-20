@@ -115,7 +115,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       setPayments(rawPayments);
     }
     setLineMessages(rawLine);
-    setDaysOff(rawDaysOff);
+    if (!api.USE_BACKEND) setDaysOff(rawDaysOff);
     setRedemptions(rawRedemptions);
 
     // Initial Date selection to today
@@ -147,12 +147,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         }
         if (me) setLoggedInUser(me);
 
-        const [apiCourts, dayBookings, mine] = await Promise.all([
+        const [apiCourts, dayBookings, mine, closures] = await Promise.all([
           api.listCourts(),
           api.listBookingsByDate(selectedDate),
-          me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] })
+          me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
+          api.listDaysOff(selectedDate, selectedDate)
         ]);
         if (cancelled) return;
+        setDaysOff(closures);
         // The customer's own rows carry their details; prefer them over the
         // copies in the by-date list.
         const mineById = new Map(mine.bookings.map(b => [b.id, b]));

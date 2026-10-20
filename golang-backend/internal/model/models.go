@@ -196,11 +196,14 @@ type MemberDiscount struct {
 
 // 4. Overrides Days Off / Maintenance Blocks
 type DayOff struct {
-	ID        string    `json:"id" db:"id" gorm:"primaryKey;column:id"`
-	Date      string    `json:"date" db:"date" gorm:"column:date;type:date"`             // "YYYY-MM-DD"
-	CourtID   *string   `json:"court_id,omitempty" db:"court_id" gorm:"column:court_id"` // NULL = all courts
-	Reason    string    `json:"reason" db:"reason" gorm:"column:reason"`
-	IsFullDay bool      `json:"is_full_day" db:"is_full_day" gorm:"column:is_full_day;default:true"`
+	ID      string  `json:"id" db:"id" gorm:"primaryKey;column:id"`
+	Date    string  `json:"date" db:"date" gorm:"column:date;type:date"`             // "YYYY-MM-DD"
+	CourtID *string `json:"court_id,omitempty" db:"court_id" gorm:"column:court_id"` // NULL = all courts
+	Reason  string  `json:"reason" db:"reason" gorm:"column:reason"`
+	// No column default on purpose: with default:true, GORM omits a false
+	// value on insert, silently turning every partial closure into a
+	// full-day one.
+	IsFullDay bool      `json:"is_full_day" db:"is_full_day" gorm:"column:is_full_day"`
 	StartHour *int      `json:"start_hour,omitempty" db:"start_hour" gorm:"column:start_hour"` // set when !IsFullDay
 	EndHour   *int      `json:"end_hour,omitempty" db:"end_hour" gorm:"column:end_hour"`       // set when !IsFullDay
 	CreatedAt time.Time `json:"created_at" db:"created_at" gorm:"column:created_at"`

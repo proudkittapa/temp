@@ -4,24 +4,25 @@
 //   VITE_DATA_SOURCE=local (default) - everything lives in localStorage via
 //     StorageService in mockData.ts; no backend needed.
 //   VITE_DATA_SOURCE=api - customer login/registration, court availability,
-//     bookings, slip upload, staff walk-in bookings and the staff
-//     slip-review queue go through the Go API + Postgres. Features the
+//     bookings, slip upload, staff walk-in bookings, the staff
+//     slip-review queue and court closures (days off) go through the Go
+//     API + Postgres. Features the
 //     backend doesn't cover yet (POS, admin settings, rewards, ...) still
 //     use localStorage.
 //
 // VITE_API_BASE_URL defaults to "/api/v1", which Vite's dev server proxies
 // to the backend on :8080 (see vite.config.ts).
 import {
-  Booking, BookingStatus, Court, CourtType, MemberType, Payment, PaymentMethod,
+  Booking, BookingStatus, Court, CourtType, DayOff, MemberType, Payment, PaymentMethod,
   PaymentStatus, PriceType, User, UserRole
 } from './types';
 
 export const USE_BACKEND = import.meta.env.VITE_DATA_SOURCE === 'api';
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
-// The role switcher lets one browser act as a customer and as staff, so
-// each side keeps its own login instead of sharing one token.
-export type SessionKind = 'customer' | 'staff';
+// The role switcher lets one browser act as customer, staff and
+// manager/admin, so each side keeps its own login instead of sharing one.
+export type SessionKind = 'customer' | 'staff' | 'admin';
 
 interface StoredSession {
   token: string;
@@ -281,6 +282,52 @@ export async function uploadSlip(bookingId: string, file: Blob, filename = 'slip
   const form = new FormData();
   form.append('slip', file, filename);
   await request(`/bookings/${encodeURIComponent(bookingId)}/upload-slip`, { method: 'POST', form, session: 'customer' });
+}
+
+// ---- court closures / days off (FR-1.3) ----
+
+interface ApiDayOff {
+  id: string; date: string; court_id?: string | null; reason: string;
+  is_full_day: boolean; start_hour?: number | null; end_hour?: number | null;
+}
+
+const toDayOff = (d: ApiDayOff): DayOff => ({
+  id: d.id,
+  date: d.date.slice(0, 10),
+  courtId: d.court_id || 'all',
+  reason: d.reason,
+  isFullDay: d.is_full_day,
+  startHour: d.start_hour ?? undefined,
+  endHour: d.end_hour ?? undefined
+});
+
+// Closures with from <= date <= to (to optional). Public: booking grids use
+// it to show closed slots; the server enforces them on every booking.
+export async function listDaysOff(from: string, to?: string): Promise<DayOff[]> {
+  const q = `from=${encodeURIComponent(from)}${to ? `&to=${encodeURIComponent(to)}` : ''}`;
+  return (await request<ApiDayOff[]>(`/days-off?${q}`)).map(toDayOff);
+}
+
+// Manager/admin only. Resolves with the closure plus the existing bookings
+// it overlaps - those still stand, so staff should contact the customers.
+export async function createDayOff(d: Omit<DayOff, 'id'>): Promise<{ dayOff: DayOff; affectedBookings: Booking[] }> {
+  const data = await request<{ day_off: ApiDayOff; affected_bookings: ApiBooking[] }>('/admin/days-off', {
+    method: 'POST',
+    session: 'admin',
+    body: {
+      date: d.date,
+      court_id: d.courtId === 'all' ? null : d.courtId,
+      reason: d.reason,
+      is_full_day: d.isFullDay !== false,
+      start_hour: d.isFullDay === false ? d.startHour : null,
+      end_hour: d.isFullDay === false ? d.endHour : null
+    }
+  });
+  return { dayOff: toDayOff(data.day_off), affectedBookings: data.affected_bookings.map(b => toBooking(b)) };
+}
+
+export async function deleteDayOff(id: string): Promise<void> {
+  await request(`/admin/days-off/${encodeURIComponent(id)}`, { method: 'DELETE', session: 'admin' });
 }
 
 // ---- staff walk-ins ----

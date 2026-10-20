@@ -105,10 +105,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           setStaffApiError('เซสชันพนักงานหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
-        const [apiCourts, dayBookings] = await Promise.all([api.listCourts(), api.listBookingsByDate(walkinDate, 'staff')]);
+        const [apiCourts, dayBookings, closures] = await Promise.all([
+          api.listCourts(),
+          api.listBookingsByDate(walkinDate, 'staff'),
+          api.listDaysOff(walkinDate, walkinDate)
+        ]);
         if (cancelled) return;
         setCourts(apiCourts);
         setBookings(dayBookings);
+        setDaysOff(closures);
       } catch (err) {
         if (!cancelled) setStaffApiError(err instanceof Error ? err.message : String(err));
       }
@@ -157,7 +162,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setPayments(rawPayments);
     setProducts(rawProducts.filter(p => p.isActive));
     setOrders(rawOrders);
-    setDaysOff(rawDaysOff);
+    if (!api.USE_BACKEND) setDaysOff(rawDaysOff);
     setUsers(rawUsers);
 
     // Initial Date selection to today

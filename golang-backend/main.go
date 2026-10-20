@@ -133,6 +133,7 @@ func main() {
 	paymentService := service.NewPaymentService(os.Getenv("PROMPTPAY_ID"))
 	bookingService := service.NewBookingService(db, bkRepo, usrRepo, courtRepo, priceEngineService, paymentService)
 	posService := service.NewPOSService(db, usrRepo)
+	dayOffHandler := handler.NewDayOffHandler(service.NewDayOffService(db))
 
 	arenaHandler := handler.NewArenaHandler(
 		authService,
@@ -186,6 +187,7 @@ func main() {
 		api.GET("/courts", arenaHandler.ListCourts)
 		api.GET("/courts/slots", arenaHandler.GetSlots)
 		api.GET("/bookings", arenaHandler.ListBookings)
+		api.GET("/days-off", dayOffHandler.List)
 
 		// Booking flows
 		api.POST("/bookings", loggedIn, arenaHandler.CreateBooking)
@@ -205,6 +207,10 @@ func main() {
 
 		// Admin & CRM managers wallets configuration
 		api.POST("/admin/users/:id/adjust-points", managerOnly, arenaHandler.ModifyPoints)
+
+		// Court closures (FR-1.3) - enforced by booking creation
+		api.POST("/admin/days-off", managerOnly, dayOffHandler.Create)
+		api.DELETE("/admin/days-off/:id", managerOnly, dayOffHandler.Delete)
 	}
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned

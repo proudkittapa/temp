@@ -199,7 +199,22 @@ curl -X POST http://localhost:8080/api/v1/staff/bookings \
        "customer_name": "Somchai", "customer_phone": "0811111111", "payment_method": "CASH"}'
 ```
 
-### 7. Admin Points Modification & Audit Recording
+### 7. Court Closures / Days Off (FR-1.3)
+Public list (booking grids use it), manager/admin create and delete. A
+closure blocks new bookings (staff walk-ins may override); bookings that
+already exist in the window are returned as `affected_bookings` so staff
+can contact those customers:
+```bash
+curl "http://localhost:8080/api/v1/days-off?from=2026-06-01&to=2026-06-30"
+curl -X POST http://localhost:8080/api/v1/admin/days-off \
+  -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \
+  -d '{"date": "2026-06-20", "court_id": "bad-3", "reason": "Floor repair",
+       "is_full_day": false, "start_hour": 9, "end_hour": 12}'
+curl -X DELETE http://localhost:8080/api/v1/admin/days-off/<id> -H "Authorization: Bearer <Manager_Token>"
+```
+Use `"court_id": null` (or `"all"`) to close every court.
+
+### 8. Admin Points Modification & Audit Recording
 ```bash
 curl -X POST http://localhost:8080/api/v1/admin/users/<user_id>/adjust-points \
   -H "Authorization: Bearer <Manager_Token>" \

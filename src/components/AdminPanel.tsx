@@ -6,6 +6,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
 } from '../types';
 import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict } from '../mockData';
+import * as api from '../api';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
@@ -166,7 +167,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     setPayments(StorageService.get<Payment[]>('payments', []));
     setOrders(StorageService.get<Order[]>('orders', []));
     setAuditLogs(StorageService.get<AuditLog[]>('audit_logs', []));
-    setDaysOff(StorageService.get<DayOff[]>('days_off', []));
+    if (!api.USE_BACKEND) setDaysOff(StorageService.get<DayOff[]>('days_off', []));
     setMemberDiscounts(StorageService.get<MemberDiscountRule[]>('member_discounts', DEFAULT_MEMBER_DISCOUNTS));
   }, [triggerRefresh]);
 
@@ -380,6 +381,56 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     alert('ลบข้อมูลสนามออกจากสต๊อกเรียบร้อยแล้วค่ะ');
   };
 
+  // API mode: closures live in the backend (which enforces them on every
+  // booking), and changing them needs a manager/admin login.
+  const isManagerRole = (u: User | null) => !!u && (u.role === UserRole.MANAGER || u.role === UserRole.ADMIN);
+  const [adminUser, setAdminUser] = useState<User | null>(() => {
+    const u = api.USE_BACKEND ? api.getSession('admin')?.user ?? null : null;
+    return isManagerRole(u) ? u : null;
+  });
+  const [adminIdentity, setAdminIdentity] = useState<string>('');
+  const [adminPassword, setAdminPassword] = useState<string>('');
+  const [adminApiError, setAdminApiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!api.USE_BACKEND || !adminUser) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await api.refreshMe('admin');
+        if (cancelled) return;
+        if (!isManagerRole(me)) {
+          api.logout('admin');
+          setAdminUser(null);
+          setAdminApiError('เซสชันผู้จัดการหมดอายุหรือไม่มีสิทธิ์ กรุณาเข้าสู่ระบบอีกครั้ง');
+          return;
+        }
+        const closures = await api.listDaysOff(getTodayDateStr());
+        if (!cancelled) setDaysOff(closures);
+      } catch (err) {
+        if (!cancelled) setAdminApiError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [triggerRefresh, adminUser]);
+
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminApiError(null);
+    api.login('admin', adminIdentity, adminPassword)
+      .then(user => {
+        if (!isManagerRole(user)) {
+          api.logout('admin');
+          setAdminApiError('ต้องใช้บัญชีผู้จัดการหรือผู้บริหารเท่านั้น');
+          return;
+        }
+        setAdminUser(user);
+        setAdminIdentity('');
+        setAdminPassword('');
+      })
+      .catch(err => setAdminApiError(err.message));
+  };
+
   // DayOff / Special Holidays Settings functions
   const handleSaveDayOff = (e: React.FormEvent) => {
     e.preventDefault();
@@ -387,6 +438,34 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     
     if (!newDayOffIsFullDay && newDayOffStartHour >= newDayOffEndHour) {
       alert('⚠️ เวลาเริ่มต้นจะต้องน้อยกว่าเวลาสิ้นสุดการปิดบริการค่ะ กรุณากรอกใหม่');
+      return;
+    }
+
+    if (api.USE_BACKEND) {
+      api.createDayOff({
+        date: newDayOffDate,
+        courtId: newDayOffCourtId,
+        reason: newDayOffReason,
+        isFullDay: newDayOffIsFullDay,
+        startHour: newDayOffIsFullDay ? undefined : newDayOffStartHour,
+        endHour: newDayOffIsFullDay ? undefined : newDayOffEndHour
+      })
+        .then(({ dayOff, affectedBookings }) => {
+          onAddAuditLog('DAY_OFF_CREATED', 'DayOff', dayOff.id, null, dayOff);
+          setNewDayOffDate('');
+          setNewDayOffReason('');
+          setNewDayOffIsFullDay(true);
+          setNewDayOffStartHour(7);
+          setNewDayOffEndHour(22);
+          onRefreshAll();
+          // A closure blocks new bookings only; existing ones still stand.
+          const affectedNote = affectedBookings.length > 0
+            ? `\n\n⚠️ มีการจองเดิม ${affectedBookings.length} รายการในช่วงเวลาที่ปิด (ยังไม่ถูกยกเลิก) กรุณาติดต่อลูกค้า:\n` +
+              affectedBookings.map(b => `- ${courts.find(c => c.id === b.courtId)?.name || b.courtId} ${b.startTime}–${b.endTime} (${b.bookingCode})`).join('\n')
+            : '';
+          alert('บันทึกปิดบริการ/ระงับการจองวันหยุดพิเศษเรียบร้อยแล้วค่ะ!' + affectedNote);
+        })
+        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -416,6 +495,16 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   const handleDeleteDayOff = (id: string) => {
     if (!window.confirm('คุณแน่ใจว่าต้องการเปิดบริการสนามตามชั่วโมงปกติในวันดังกล่าวใช่ไหม?')) return;
+    if (api.USE_BACKEND) {
+      api.deleteDayOff(id)
+        .then(() => {
+          onAddAuditLog('DAY_OFF_DELETED', 'DayOff', id, null, null);
+          onRefreshAll();
+          alert('ปลดบล็อกช่วงวันหยุดพิเศษและเปิดให้บริการปกติแล้วค่ะ');
+        })
+        .catch(err => alert(`ลบไม่สำเร็จ: ${err.message}`));
+      return;
+    }
     const current = StorageService.get<DayOff[]>('days_off', []);
     const updated = current.filter(item => item.id !== id);
     StorageService.set('days_off', updated);
@@ -796,6 +885,24 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const matchLabel = !filterLabel || rule.label.toLowerCase().includes(filterLabel.toLowerCase());
     return matchCourt && matchPrice && matchDay && matchLabel;
   });
+
+  // API mode: the settings here act as a manager/admin, so sign in first
+  // (separately from the customer and staff logins in the same browser).
+  if (api.USE_BACKEND && !adminUser) {
+    return (
+      <div className="max-w-sm mx-auto my-10 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <form onSubmit={handleAdminLogin} className="space-y-3 text-xs">
+          <p className="text-sm font-bold text-slate-800">เข้าสู่ระบบผู้จัดการ / ผู้บริหาร</p>
+          {adminApiError && (
+            <p className="text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠️ {adminApiError}</p>
+          )}
+          <input value={adminIdentity} onChange={e => setAdminIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลผู้จัดการ" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
+          <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
+          <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -50,9 +50,6 @@ func (r *CourtRepository) CreateDayOff(ctx context.Context, d *model.DayOff) err
 	return nil
 }
 
-// IsDayOffActive checks whether a specific hour is blocked for this court
-// (FR-1.3): a closure with CourtID = NULL applies to every court, and a
-// non-full-day closure only blocks the [StartHour, EndHour) window.
 // ListDayOffs returns every closure on a date (all-court and per-court),
 // so a multi-slot booking can check them in memory instead of one query
 // per slot.
@@ -64,7 +61,9 @@ func (r *CourtRepository) ListDayOffs(ctx context.Context, date string) ([]model
 	return closures, nil
 }
 
-// ClosureFor returns the closure (if any) that blocks courtID at hour.
+// ClosureFor returns the closure (if any) that blocks courtID at hour
+// (FR-1.3): a closure with CourtID = nil applies to every court, and a
+// non-full-day closure only blocks the [StartHour, EndHour) window.
 func ClosureFor(closures []model.DayOff, courtID string, hour int) *model.DayOff {
 	for i, do := range closures {
 		if do.CourtID != nil && *do.CourtID != courtID {
