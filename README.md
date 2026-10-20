@@ -58,8 +58,11 @@ database from the Go Backend section below):
 | Pricing rules + member-tier discounts (Admin panel; what every booking is charged) | `GET /pricing`, `POST`/`PUT`/`DELETE /admin/pricing-rules`, `PUT /admin/member-discounts/:type` |
 
 `dev-runner.js` starts the backend with `SEED_DEMO_USERS=true`, which creates
-the same demo accounts as `DEFAULT_USERS` (all password `123456`): customers
-`0845678901` (member) and `0856789012` (student), staff `0834567890`. The
+the same demo accounts as `DEFAULT_USERS` (all password `123456`) on every
+start: customers `0845678901` (member) and `0856789012` (student), staff
+`0834567890`, manager `0823456789`, admin `0812345678`. In dev (`npm run dev`
+or `npm run dev:api`) every login screen also has one-click buttons for these
+accounts; production builds don't include them. The
 Staff POS panel asks staff to sign in separately from the customer, and the
 Admin panel asks for a manager/admin account (e.g. manager `0823456789`;
 editing prices and discounts needs the admin account `0812345678`). Price

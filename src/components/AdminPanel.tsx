@@ -7,6 +7,7 @@ import {
 } from '../types';
 import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict } from '../mockData';
 import * as api from '../api';
+import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
@@ -462,8 +463,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    adminLoginWith(adminIdentity, adminPassword);
+  };
+
+  const adminLoginWith = (identity: string, password: string) => {
     setAdminApiError(null);
-    api.login('admin', adminIdentity, adminPassword)
+    api.login('admin', identity, password)
       .then(user => {
         if (!isManagerRole(user)) {
           api.logout('admin');
@@ -945,6 +950,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           <input value={adminIdentity} onChange={e => setAdminIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลผู้จัดการ" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
           <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
           <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
+          <DemoLogins accounts={DEMO_ADMINS} onPick={adminLoginWith} />
         </form>
       </div>
     );

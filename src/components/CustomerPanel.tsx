@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { StorageService, calculatePrice, generatePromptPayPayload, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
 import * as api from '../api';
+import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
 import { Calendar, Clock, CreditCard, CheckCircle, AlertTriangle, MessageSquare, ToggleLeft, ToggleRight, Trash2, Shield, Phone, FileImage, Sparkles, UserCheck } from 'lucide-react';
 
 interface CustomerPanelProps {
@@ -175,11 +176,16 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   // Customer Auth Function Handlers
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    loginWith(authEmail, authPassword);
+  };
+
+  // Shared by the login form and the dev-only demo account buttons.
+  const loginWith = (identity: string, password: string) => {
     setAuthError(null);
     setForgotResult(null);
 
     if (api.USE_BACKEND) {
-      api.login('customer', authEmail, authPassword)
+      api.login('customer', identity, password)
         .then(user => {
           if (user.role !== UserRole.CUSTOMER) {
             api.logout('customer');
@@ -198,7 +204,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
     const allUsers = StorageService.get<User[]>('users', []);
     const foundUser = allUsers.find(
-      u => (u.email?.toLowerCase() === authEmail.toLowerCase() || u.phone === authEmail) && u.role === UserRole.CUSTOMER
+      u => (u.email?.toLowerCase() === identity.toLowerCase() || u.phone === identity) && u.role === UserRole.CUSTOMER
     );
 
     if (!foundUser) {
@@ -206,7 +212,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       return;
     }
 
-    if (foundUser.password !== authPassword) {
+    if (foundUser.password !== password) {
       setAuthError('❌ รหัสผ่านไม่ถูกต้อง กรุณากรอกใหม่อีกครั้ง');
       return;
     }
@@ -1223,6 +1229,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     {authTab === 'forgot' && '🔍 ดึงรหัสผ่านของฉันคืนชีพ'}
                   </button>
                 </div>
+                {authTab === 'login' && <DemoLogins accounts={DEMO_CUSTOMERS} onPick={loginWith} dark />}
               </form>
             </div>
           )}

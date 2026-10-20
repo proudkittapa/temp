@@ -5,6 +5,7 @@ import {
 } from '../types';
 import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
 import * as api from '../api';
+import DemoLogins, { DEMO_STAFF } from './DemoLogins';
 import { Check, X, ShoppingCart, Activity, RefreshCw, AlertTriangle, Coffee, ShieldCheck, Dumbbell, Receipt, Plus, Minus, CheckCircle2, UserCheck, AlertOctagon } from 'lucide-react';
 
 interface StaffPOSProps {
@@ -124,8 +125,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   const handleStaffLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    staffLoginWith(staffIdentity, staffPassword);
+  };
+
+  const staffLoginWith = (identity: string, password: string) => {
     setStaffApiError(null);
-    api.login('staff', staffIdentity, staffPassword)
+    api.login('staff', identity, password)
       .then(user => {
         if (user.role === UserRole.CUSTOMER) {
           api.logout('staff');
@@ -809,6 +814,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           <input value={staffIdentity} onChange={e => setStaffIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลพนักงาน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
           <input type="password" value={staffPassword} onChange={e => setStaffPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
           <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
+          <DemoLogins accounts={DEMO_STAFF} onPick={staffLoginWith} />
         </form>
       </div>
     );
