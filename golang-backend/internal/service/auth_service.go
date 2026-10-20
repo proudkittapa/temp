@@ -82,6 +82,8 @@ var (
 	ErrDuplicateUser      = errors.New("this phone number or email is already registered")
 	ErrInvalidPhone       = errors.New("phone number must have at least 9 digits")
 	ErrAccountSuspended   = errors.New("account is suspended - please contact staff")
+	// ErrInvalidRegistration: a field is malformed (bad email, too long...).
+	ErrInvalidRegistration = errors.New("invalid registration details")
 )
 
 type AuthResult struct {
@@ -100,6 +102,21 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 	// Emails are stored lower-case and compared ignoring case, so
 	// "John@Gmail.com" can't become a second account next to john@gmail.com.
 	email = strings.ToLower(strings.TrimSpace(email))
+	name = strings.TrimSpace(name)
+	switch {
+	case name == "" || len(name) > 100:
+		return nil, fmt.Errorf("%w: name is required (max 100 characters)", ErrInvalidRegistration)
+	case len(phone) > 15:
+		return nil, fmt.Errorf("%w: phone number is too long", ErrInvalidRegistration)
+	// Login matches email OR phone, so an "email" that is really someone
+	// else's phone number would take over that number.
+	case email != "" && (len(email) > 254 || !strings.Contains(email, "@") || strings.ContainsAny(email, " \t") ||
+		strings.Index(email, "@") == 0 || !strings.Contains(email[strings.Index(email, "@"):], ".")):
+		return nil, fmt.Errorf("%w: email address is not valid", ErrInvalidRegistration)
+	// bcrypt only hashes 72 bytes and refuses longer passwords.
+	case len(password) > 72:
+		return nil, fmt.Errorf("%w: password must be at most 72 characters", ErrInvalidRegistration)
+	}
 	// The unique indexes on users.phone/email are the real guarantee; this
 	// pre-check just gives a clear message in the common case.
 	for _, identity := range []string{phone, email} {
@@ -180,7 +197,7 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 // UserRepository.FindByIdentity) - checking only the oldest locked the
 // other account's owner out.
 func (s *AuthService) Login(ctx context.Context, identity, password, clientIP string) (*AuthResult, error) {
-	wait, err := s.throttle.RetryAfter(ctx, identity, clientIP)
+	wait, done, err := s.throttle.Begin(ctx, identity, clientIP)
 	if err != nil {
 		return nil, err
 	}
@@ -205,12 +222,12 @@ func (s *AuthService) Login(ctx context.Context, identity, password, clientIP st
 	// Same error for unknown user and wrong password so the response
 	// doesn't reveal which phone numbers/emails are registered.
 	if user == nil {
-		if err := s.throttle.Failed(ctx, identity, clientIP); err != nil {
+		if err := done(false); err != nil {
 			return nil, err
 		}
 		return nil, ErrInvalidCredentials
 	}
-	if err := s.throttle.Succeeded(ctx, identity, clientIP); err != nil {
+	if err := done(true); err != nil {
 		return nil, err
 	}
 

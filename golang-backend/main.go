@@ -122,6 +122,8 @@ func main() {
 		&model.Voucher{},
 		&model.Shift{},
 		&model.LoginFailure{},
+		&model.Refund{},
+		&model.AppMigration{},
 	)
 	if err != nil {
 		log.Fatalf("Database initial migration failed: %v\n", err)
@@ -523,11 +525,34 @@ func seedDefaults(db *gorm.DB) {
 	// rw-hour rows created before reward kinds existed default to ITEM.
 	check("reward kind rw-hour", db.Model(&model.RewardCatalogItem{}).Where("id = ?", "rw-hour").
 		Update("kind", model.RewardKindFreeOffPeakHour).Error)
+	// One-off data migrations, each run once (recorded in app_migrations):
+	// running them on every start could rewrite rows created since.
+	once := func(name string, run func() error) {
+		var n int64
+		db.Model(&model.AppMigration{}).Where("name = ?", name).Count(&n)
+		if n > 0 {
+			return
+		}
+		if err := run(); err != nil {
+			check("migration "+name, err)
+			return
+		}
+		check("migration "+name, db.Create(&model.AppMigration{Name: name, RanAt: time.Now()}).Error)
+	}
 	// Payments expired by an earlier version were stored as REJECTED with an
 	// "Expired: ..." reason; give them the EXPIRED status, so a late slip
-	// can still be accepted for them.
-	check("expired payment status", db.Exec("UPDATE payments SET status = ?, expired_at = COALESCE(expired_at, updated_at) "+
-		"WHERE status = ? AND refund_reason LIKE 'Expired:%'", model.PaymentExpired, model.PaymentRejected).Error)
+	// can still be accepted for them. (Once only: a manager's reason text
+	// could start with "Expired:" too.)
+	once("2026-10-expired-payment-status", func() error {
+		return db.Exec("UPDATE payments SET status = ?, expired_at = COALESCE(expired_at, updated_at) "+
+			"WHERE status = ? AND refund_reason LIKE 'Expired:%'", model.PaymentExpired, model.PaymentRejected).Error
+	})
+	// Refunds recorded before per-refund rows existed: one row each.
+	once("2026-10-refund-rows", func() error {
+		return db.Exec("INSERT INTO refunds (id, payment_id, amount, reason, refunded_by, refunded_at) " +
+			"SELECT 'rfd-' || id, id, refund_amount, COALESCE(refund_reason, ''), COALESCE(refunded_by, ''), COALESCE(refunded_at, updated_at) " +
+			"FROM payments p WHERE refund_amount > 0 AND NOT EXISTS (SELECT 1 FROM refunds r WHERE r.payment_id = p.id)").Error
+	})
 
 	// Without the pricing config no booking can be priced at all.
 	var cfgCount int64

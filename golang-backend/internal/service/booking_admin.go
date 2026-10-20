@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -95,6 +96,15 @@ func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.
 	if err := tx.Where("date = ?", date).Find(&closures).Error; err != nil {
 		return err
 	}
+	// Take court-group locks in the same order CreateBookings does
+	// (repository.LockKey), so the two can't deadlock.
+	sort.Slice(rows, func(i, j int) bool {
+		ki, kj := repository.LockKey(byID[rows[i].CourtID]), repository.LockKey(byID[rows[j].CourtID])
+		if ki != kj {
+			return ki < kj
+		}
+		return rows[i].CourtID+rows[i].StartTime < rows[j].CourtID+rows[j].StartTime
+	})
 	locked := map[string][]model.Court{}
 	for _, b := range rows {
 		court, ok := byID[b.CourtID]
@@ -167,7 +177,38 @@ func applyRefund(tx *gorm.DB, p *model.Payment, amount float64, reason, actorID 
 	if total >= p.Amount {
 		updates["status"] = model.PaymentRefunded
 	}
-	return tx.Model(p).Updates(updates).Error
+	if err := tx.Model(p).Updates(updates).Error; err != nil {
+		return err
+	}
+	p.RefundAmount = total
+	return tx.Create(&model.Refund{ID: ids.New("rfd"), PaymentID: p.ID, Amount: amount, Reason: reason, RefundedBy: actorID, RefundedAt: now}).Error
+}
+
+// keptAmount is what the group's still-standing hours cost: hours booked
+// (awaiting payment or confirmed) or played (completed, no-show). Money
+// beyond that, not yet refunded, is refundable.
+func keptAmount(group []model.Booking) float64 {
+	sum := 0.0
+	for _, b := range group {
+		switch b.Status {
+		case model.BookingPendingPayment, model.BookingConfirmed, model.BookingCompleted, model.BookingNoShow:
+			sum += b.TotalAmount
+		}
+	}
+	return RoundBaht(sum)
+}
+
+// moneyReceived: a transfer or cash arrived (or a slip says so) - refunds
+// are possible. A REJECTED payment with a slip may still have real money
+// behind it (its booking was cancelled before the slip was reviewed).
+func moneyReceived(p *model.Payment) bool {
+	switch p.Status {
+	case model.PaymentVerified, model.PaymentSlipUploaded, model.PaymentRefunded:
+		return true
+	case model.PaymentRejected, model.PaymentExpired:
+		return p.SlipURL != nil && *p.SlipURL != ""
+	}
+	return false
 }
 
 // CancelResult reports what a cancellation did.
@@ -226,18 +267,28 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 		if len(cancel) == 0 {
 			return fmt.Errorf("%w: nothing left to cancel in this booking", ErrInvalidState)
 		}
+		// refund = "refund what was received for these hours": nothing to do
+		// when no money arrived (an unpaid hold), so callers can always ask.
 		moneyIn := p.Status == model.PaymentVerified || p.Status == model.PaymentSlipUploaded
-		if refund && !moneyIn {
-			return fmt.Errorf("%w: payment is %s - no money was received to refund", ErrInvalidState, p.Status)
+		if !moneyIn {
+			refund = false
 		}
 
 		now := s.now()
 		paidHours, paidAmount := 0, 0.0
 		for _, b := range cancel {
-			if err := tx.Model(&model.Booking{}).Where("id = ?", b.ID).Updates(map[string]interface{}{
+			// Only if it is still active: a no-show or completion recorded a
+			// moment ago by someone else must not be overwritten (and its
+			// point taken back twice).
+			upd := tx.Model(&model.Booking{}).Where("id = ? AND status IN ?", b.ID,
+				[]model.BookingStatus{model.BookingPendingPayment, model.BookingConfirmed}).Updates(map[string]interface{}{
 				"status": model.BookingCancelled, "cancellation_reason": "Cancelled by " + actorName + ": " + reason, "updated_at": now,
-			}).Error; err != nil {
-				return err
+			})
+			if upd.Error != nil {
+				return upd.Error
+			}
+			if upd.RowsAffected == 0 {
+				return fmt.Errorf("%w: %s %s changed meanwhile - reload and try again", ErrInvalidState, b.Date, b.StartTime)
 			}
 			// Only paid hours earned a point - a free (voucher) hour didn't.
 			if b.Status == model.BookingConfirmed && b.TotalAmount > 0 {
@@ -274,9 +325,28 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 				return err
 			}
 			res.RefundAmount = paidAmount
-		case active == 0 && (p.Status == model.PaymentPending || p.Status == model.PaymentSlipUploaded):
-			// Nothing left to pay for.
-			if err := tx.Model(p).Updates(map[string]interface{}{"status": model.PaymentRejected, "refund_reason": reason, "updated_at": now}).Error; err != nil {
+		case active > 0 && (p.Status == model.PaymentPending || p.Status == model.PaymentExpired):
+			// Unpaid and some hours stay: the customer now owes less, so the
+			// amount and its QR shrink - otherwise they'd pay for the
+			// cancelled hours too and nothing could refund them.
+			newAmount := RoundBaht(p.Amount - paidAmount)
+			qr, err := s.paymentService.CreatePromptPayPayload(newAmount)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(p).Updates(map[string]interface{}{"amount": newAmount, "qr_payload": qr, "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		// Nothing left in the group: close a payment still waiting -
+		// REFUNDED if something was refunded, else REJECTED (a slip that
+		// was sent can still be refunded later, see RefundPayment).
+		if active == 0 && (p.Status == model.PaymentPending || p.Status == model.PaymentSlipUploaded) {
+			st := model.PaymentRejected
+			if p.RefundAmount > 0 {
+				st = model.PaymentRefunded
+			}
+			if err := tx.Model(p).Updates(map[string]interface{}{"status": st, "refund_reason": reason, "updated_at": now}).Error; err != nil {
 				return err
 			}
 		}
@@ -316,7 +386,7 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 		if p, err = lockPayment(tx, paymentID); err != nil {
 			return err
 		}
-		if p.Status != model.PaymentVerified && p.Status != model.PaymentSlipUploaded && p.Status != model.PaymentRefunded {
+		if !moneyReceived(p) {
 			return fmt.Errorf("%w: payment is %s - no money was received to refund", ErrInvalidState, p.Status)
 		}
 		group, root, err := s.bookingGroup(tx, p.BookingID)
@@ -324,26 +394,43 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 			return err
 		}
 		now := s.now()
-		for _, b := range group {
-			switch b.Status {
-			case model.BookingConfirmed, model.BookingCompleted, model.BookingNoShow:
-				return fmt.Errorf("%w: %s %s is still %s - cancel it first (with refund)", ErrInvalidState, b.Date, b.StartTime, b.Status)
-			case model.BookingPendingPayment:
-				// A slip is waiting but the manager decided to refund rather
-				// than confirm: release the slot.
-				if err := tx.Model(&model.Booking{}).Where("id = ?", b.ID).Updates(map[string]interface{}{
+		// A slip still waiting: the manager refunds instead of confirming,
+		// so its hours are released.
+		pendingRows := 0
+		for i, b := range group {
+			if b.Status == model.BookingPendingPayment {
+				if err := tx.Model(&model.Booking{}).Where("id = ? AND status = ?", b.ID, model.BookingPendingPayment).Updates(map[string]interface{}{
 					"status": model.BookingCancelled, "cancellation_reason": "Refunded: " + reason, "updated_at": now,
 				}).Error; err != nil {
 					return err
 				}
+				group[i].Status = model.BookingCancelled
+				pendingRows++
 			}
 		}
-		amt := RoundBaht(p.Amount - p.RefundAmount)
+		// Hours still confirmed or played keep their money; the rest of
+		// what was paid (cancelled hours) can be refunded - also when only
+		// some hours of the group were cancelled.
+		refundable := RoundBaht(p.Amount - p.RefundAmount - keptAmount(group))
+		if refundable <= 0 {
+			return fmt.Errorf("%w: nothing to refund - every paid hour still stands (cancel the hours with refund instead)", ErrInvalidState)
+		}
+		amt := refundable
 		if amount != nil {
 			amt = RoundBaht(*amount)
+			if amt > refundable {
+				return fmt.Errorf("%w: at most %.2f THB can be refunded (the rest pays for hours still booked)", ErrInvalidBooking, refundable)
+			}
 		}
 		if err := applyRefund(tx, p, amt, reason, actorID, now); err != nil {
 			return err
+		}
+		// A waiting slip whose hours were all released is closed now, so
+		// it leaves the review queue and the customer's unpaid count.
+		if keptAmount(group) == 0 && p.Status != model.PaymentRefunded {
+			if err := tx.Model(p).Updates(map[string]interface{}{"status": model.PaymentRefunded, "updated_at": now}).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.First(p, "id = ?", p.ID).Error; err != nil {
 			return err
@@ -379,6 +466,14 @@ func (s *BookingService) MarkPaidInCash(ctx context.Context, paymentID, actorID,
 		}
 		group, root, err := s.bookingGroup(tx, p.BookingID)
 		if err != nil {
+			return err
+		}
+		if err := lockGroupUser(tx, root); err != nil {
+			return err
+		}
+		// Cash into the drawer: wait for a shift close in progress (see
+		// lockDrawerShared) before taking the time.
+		if err := lockDrawerShared(tx); err != nil {
 			return err
 		}
 		now := s.now()
@@ -449,8 +544,12 @@ func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, act
 			return fmt.Errorf("%w: the hour hasn't started yet", ErrInvalidState)
 		}
 		before := b.Status
-		if err := tx.Model(&b).Updates(map[string]interface{}{"status": model.BookingNoShow, "updated_at": now}).Error; err != nil {
-			return err
+		upd := tx.Model(&model.Booking{}).Where("id = ? AND status = ?", b.ID, before).Updates(map[string]interface{}{"status": model.BookingNoShow, "updated_at": now})
+		if upd.Error != nil {
+			return upd.Error
+		}
+		if upd.RowsAffected == 0 {
+			return fmt.Errorf("%w: the booking changed meanwhile - reload and try again", ErrInvalidState)
 		}
 		b.Status = model.BookingNoShow
 		if b.TotalAmount > 0 { // a free (voucher) hour earned no point to take back
@@ -517,7 +616,7 @@ func (s *BookingService) Summary(ctx context.Context, date string) (*DaySummary,
 	if out.PromptPayVerified, err = sum(model.PaymentPromptPay); err != nil {
 		return nil, err
 	}
-	if err := db.Model(&model.Payment{}).Select("COALESCE(SUM(refund_amount), 0)").
+	if err := db.Model(&model.Refund{}).Select("COALESCE(SUM(amount), 0)").
 		Where("refunded_at >= ? AND refunded_at < ?", from, to).Scan(&out.Refunded).Error; err != nil {
 		return nil, err
 	}

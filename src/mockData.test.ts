@@ -12,6 +12,8 @@ import {
   normalizePhone,
   slotTiming,
   memberTierLabel,
+  localDateOf,
+  bangkokStamp,
 } from './mockData';
 import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType } from './types';
 
@@ -255,5 +257,18 @@ describe('roundBaht / formatBaht (2 decimals)', () => {
     expect(roundBaht(10 / 3)).toBe(3.33);
     expect(formatBaht(212.5)).toBe('212.50');
     expect(formatBaht(1530)).toBe('1,530');
+  });
+});
+
+describe('localDateOf / bangkokStamp (Bangkok calendar, any browser time zone)', () => {
+  it('rolls over at midnight Bangkok, not UTC', () => {
+    expect(localDateOf('2026-10-20T16:59:00Z')).toBe('2026-10-20'); // 23:59 Bangkok
+    expect(localDateOf('2026-10-20T17:00:00Z')).toBe('2026-10-21'); // 00:00 Bangkok
+  });
+  it('returns an empty string for an unreadable value', () => {
+    expect(localDateOf('13:56:02')).toBe('');
+  });
+  it('stamps CSV times in Bangkok', () => {
+    expect(bangkokStamp('2026-10-20T06:56:02Z')).toBe('2026-10-20 13:56:02');
   });
 });

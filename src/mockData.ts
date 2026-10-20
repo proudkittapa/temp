@@ -136,16 +136,16 @@ const DEFAULT_USERS: User[] = [
   { id: 'u-cust-std', name: 'น้องพีเดอร์ นักเรียน', email: 'student@school.ac.th', phone: '0856789012', role: UserRole.CUSTOMER, memberType: MemberType.STUDENT, isActive: true, createdAt: '2026-02-12', password: '123456' }
 ];
 
-// Helper to format date with current timezone
-// The local calendar date (YYYY-MM-DD) of an ISO timestamp - stored times
-// are UTC, so slicing the string gives the wrong day before 07:00 Bangkok.
-export const localDateOf = (iso: string) => {
+// The venue's calendar date (YYYY-MM-DD, Asia/Bangkok) of a timestamp -
+// stored times are UTC, so slicing the string gives the wrong day before
+// 07:00 Bangkok, and the browser's own time zone may not be Bangkok.
+const BKK_DATE = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' });
+export const localDateOf = (iso: string | number | Date) => {
   const d = new Date(iso);
-  const adjusted = new Date(d.getTime() - (d.getTimezoneOffset() * 60 * 1000));
-  return adjusted.toISOString().split('T')[0];
+  return isNaN(d.getTime()) ? '' : BKK_DATE.format(d);
 };
 
-export const getTodayDateStr = () => localDateOf(new Date().toISOString());
+export const getTodayDateStr = () => localDateOf(new Date());
 
 // Dates are shown in the Gregorian calendar (2026, not พ.ศ. 2569) with
 // Thai month names, in Bangkok time: "20 ต.ค. 2026" / "20 ต.ค. 2026 13:56".
@@ -157,6 +157,11 @@ export const formatDateTime = (d: string | number | Date, withSeconds = false) =
     timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
     ...(withSeconds ? { second: '2-digit' } : {})
   });
+
+// "2026-10-20 13:56:02" in Bangkok time, for CSV files (sorts as text and
+// spreadsheets read it as a date-time).
+export const bangkokStamp = (d: string | number | Date) =>
+  new Date(d).toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' });
 
 const DEFAULT_BOOKINGS = (): Booking[] => {
   const today = getTodayDateStr();
@@ -200,29 +205,34 @@ const DEFAULT_BOOKINGS = (): Booking[] => {
   ];
 };
 
-const DEFAULT_PAYMENTS = (): Payment[] => [
-  {
-    id: "pay-1",
-    bookingId: "bk-1",
-    amount: 300,
-    method: PaymentMethod.PROMPTPAY,
-    status: PaymentStatus.VERIFIED,
-    slipUrl: "https://images.unsplash.com/photo-1628157582853-a796fa650a6a?w=150",
-    slipUploadedAt: "2026-06-17T08:05:00.000Z",
-    verifiedAt: "2026-06-17T08:10:00.000Z",
-    verifiedBy: "u-staff-1",
-    createdAt: "2026-06-17T08:00:00.000Z"
-  },
-  {
-    id: "pay-2",
-    bookingId: "bk-2",
-    amount: 250,
-    method: PaymentMethod.PROMPTPAY,
-    status: PaymentStatus.PENDING,
-    qrPayload: "00020101021130340016A000000677010111011300668123456785802TH5406250.006304ABCD",
-    createdAt: "2026-06-17T08:15:00.000Z"
-  }
-];
+const DEFAULT_PAYMENTS = (): Payment[] => {
+  const today = getTodayDateStr();
+  return [
+    {
+      id: "pay-1",
+      bookingId: "bk-1",
+      amount: 300,
+      method: PaymentMethod.PROMPTPAY,
+      status: PaymentStatus.VERIFIED,
+      slipUrl: "https://images.unsplash.com/photo-1628157582853-a796fa650a6a?w=150",
+      slipUploadedAt: `${today}T08:05:00.000Z`,
+      verifiedAt: `${today}T08:10:00.000Z`,
+      verifiedBy: "u-staff-1",
+      createdAt: `${today}T08:00:00.000Z`
+    },
+    {
+      // Created "now" with a real QR, so the demo customer can still pay it
+      // instead of it expiring the moment the data is seeded.
+      id: "pay-2",
+      bookingId: "bk-2",
+      amount: 250,
+      method: PaymentMethod.PROMPTPAY,
+      status: PaymentStatus.PENDING,
+      qrPayload: generatePromptPayPayload(LOCAL_PROMPTPAY_ID, 250),
+      createdAt: new Date().toISOString()
+    }
+  ];
+};
 
 const DEFAULT_ORDERS = (): Order[] => {
   const today = getTodayDateStr();

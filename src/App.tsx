@@ -52,7 +52,8 @@ export default function App() {
       ? api.getSession(currentRole === UserRole.CUSTOMER ? 'customer' : currentRole === UserRole.ADMIN ? 'admin' : 'staff')?.user
       : undefined;
     const newLog: AuditLog = {
-      id: 'al-' + Date.now(),
+      // Unique even for two entries in the same millisecond.
+      id: 'al-' + (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`),
       // With the backend, name whoever is actually signed in to this panel.
       userId: sessionUser?.id ?? (currentRole === UserRole.CUSTOMER ? 'guest-customer' : 'current-user'),
       userName: sessionUser ? `${sessionUser.name} (${sessionUser.role})` :

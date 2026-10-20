@@ -181,6 +181,9 @@ export interface Booking {
   createdAt: string;
   createdBy: string; // userId or 'customer'
   cancellationReason?: string;
+  // API mode, staff views only: how the booking's group was paid.
+  paymentMethod?: PaymentMethod;
+  paymentStatus?: PaymentStatus;
 }
 
 export interface Payment {

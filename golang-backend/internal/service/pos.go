@@ -352,6 +352,13 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 
 	var result *CheckoutResult
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Cash into the drawer: wait for a shift close in progress before
+		// taking the time, so the sale lands in exactly one shift.
+		if input.PaymentMeth == model.PaymentCash {
+			if err := lockDrawerShared(tx); err != nil {
+				return err
+			}
+		}
 		now := s.now()
 		orderID := ids.New("ord")
 		total := 0.0
@@ -550,6 +557,10 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID, actorID, acto
 		if order.Type != model.OrderEquipmentRent {
 			return fmt.Errorf("%w: %s is a sale, not a rental", ErrInvalidState, order.OrderCode)
 		}
+		// A voided rental was already put back in stock by the void.
+		if order.Status == model.OrderCancelled {
+			return fmt.Errorf("%w: %s was voided - its items are already back in stock", ErrInvalidState, order.OrderCode)
+		}
 		if item.ReturnedAt != nil {
 			return fmt.Errorf("%w: already returned on %s", ErrInvalidState, item.ReturnedAt.In(Bangkok).Format("2006-01-02 15:04"))
 		}
@@ -570,7 +581,7 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID, actorID, acto
 			return err
 		}
 		if out == 0 {
-			if err := tx.Model(&order).Update("status", model.OrderDelivered).Error; err != nil {
+			if err := tx.Model(&model.Order{}).Where("id = ? AND status = ?", order.ID, model.OrderPreparing).Update("status", model.OrderDelivered).Error; err != nil {
 				return err
 			}
 		}
@@ -621,6 +632,17 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 		if order.CreatedAt.In(Bangkok).Format("2006-01-02") != now.In(Bangkok).Format("2006-01-02") {
 			return fmt.Errorf("%w: only today's sales can be voided", ErrInvalidState)
 		}
+		// A cash sale from a shift already counted and closed: giving the
+		// money back now would leave the current drawer short.
+		if order.PaymentMethod == model.PaymentCash {
+			var closed int64
+			if err := tx.Model(&model.Shift{}).Where("closed_at IS NOT NULL AND opened_at <= ? AND closed_at > ?", order.CreatedAt, order.CreatedAt).Count(&closed).Error; err != nil {
+				return err
+			}
+			if closed > 0 {
+				return fmt.Errorf("%w: %s was paid in a shift that is already closed - it can't be voided now", ErrInvalidState, order.OrderCode)
+			}
+		}
 		var lines []model.OrderItem
 		if err := tx.Where("order_id = ?", order.ID).Find(&lines).Error; err != nil {
 			return err
@@ -628,6 +650,13 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 		for _, l := range lines {
 			if l.ReturnedAt != nil {
 				continue // a returned rental item is already back in stock
+			}
+			// Restocked now: mark a rental line returned so it can't be
+			// "returned" (restocked) again later.
+			if order.Type == model.OrderEquipmentRent {
+				if err := tx.Model(&model.OrderItem{}).Where("id = ?", l.ID).Update("returned_at", now).Error; err != nil {
+					return err
+				}
 			}
 			if err := tx.Model(&model.Product{}).Where("id = ?", l.ProductID).Update("stock", gorm.Expr("stock + ?", l.Qty)).Error; err != nil {
 				return err
@@ -647,7 +676,9 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 			}
 			if earned > 0 {
 				var u model.User
-				if err := tx.First(&u, "id = ?", *order.UserID).Error; err != nil {
+				// Locked, so a redemption at the same moment can't make the
+				// clamped reversal fail.
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&u, "id = ?", *order.UserID).Error; err != nil {
 					return err
 				}
 				taken = int(earned)
@@ -695,38 +726,52 @@ type OrderTotals struct {
 	Count          int64   `json:"orders_count"`
 }
 
-// TotalsBetween sums the non-cancelled orders made in [from, to).
+// TotalsBetween sums the non-cancelled orders made in [from, to): money by
+// payment method (whole orders) and sales by what was sold (each line by its
+// product: rental, equipment, or food & drink) - so a mixed cart is split
+// correctly and agrees with the dashboard's sales split.
 func (s *POSService) TotalsBetween(ctx context.Context, from, to time.Time) (*OrderTotals, error) {
-	var rows []struct {
-		Type          model.OrderType
+	db := s.db.WithContext(ctx)
+	var byMethod []struct {
 		PaymentMethod model.PaymentMethod
 		Total         float64
 		N             int64
 	}
-	err := s.db.WithContext(ctx).Model(&model.Order{}).
-		Select("type, payment_method, COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS n").
+	if err := db.Model(&model.Order{}).
+		Select("payment_method, COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS n").
 		Where("created_at >= ? AND created_at < ? AND status <> ?", from, to, model.OrderCancelled).
-		Group("type, payment_method").Scan(&rows).Error
-	if err != nil {
+		Group("payment_method").Scan(&byMethod).Error; err != nil {
+		return nil, err
+	}
+	var byKind []struct {
+		Kind  string
+		Total float64
+	}
+	if err := db.Raw("SELECT CASE WHEN o.type = ? OR p.is_rental THEN 'rental' WHEN p.category = ? THEN 'equipment' ELSE 'food' END AS kind, "+
+		"COALESCE(SUM(i.qty * i.unit_price), 0) AS total FROM order_items i JOIN orders o ON o.id = i.order_id "+
+		"LEFT JOIN products p ON p.id = i.product_id WHERE o.created_at >= ? AND o.created_at < ? AND o.status <> ? GROUP BY 1",
+		model.OrderEquipmentRent, model.ProductEquipment, from, to, model.OrderCancelled).Scan(&byKind).Error; err != nil {
 		return nil, err
 	}
 	t := &OrderTotals{}
-	for _, r := range rows {
+	for _, r := range byMethod {
 		switch r.PaymentMethod {
 		case model.PaymentCash:
 			t.Cash += r.Total
 		case model.PaymentPromptPay:
 			t.PromptPay += r.Total
 		}
-		switch r.Type {
-		case model.OrderFB:
-			t.FB += r.Total
-		case model.OrderEquipmentSale:
-			t.EquipmentSales += r.Total
-		case model.OrderEquipmentRent:
-			t.Rentals += r.Total
-		}
 		t.Count += r.N
+	}
+	for _, r := range byKind {
+		switch r.Kind {
+		case "rental":
+			t.Rentals += r.Total
+		case "equipment":
+			t.EquipmentSales += r.Total
+		default:
+			t.FB += r.Total
+		}
 	}
 	t.Cash, t.PromptPay, t.FB, t.EquipmentSales, t.Rentals = RoundBaht(t.Cash), RoundBaht(t.PromptPay), RoundBaht(t.FB), RoundBaht(t.EquipmentSales), RoundBaht(t.Rentals)
 	return t, nil

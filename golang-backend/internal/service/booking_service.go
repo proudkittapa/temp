@@ -343,6 +343,13 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		}
 		result.BookingCode = code
 
+		// Cash into the drawer: wait for a shift close in progress before
+		// taking the time, so the sale lands in exactly one shift.
+		if payMethod == model.PaymentCash {
+			if err := lockDrawerShared(tx); err != nil {
+				return err
+			}
+		}
 		now := s.now()
 		locked := map[string][]model.Court{} // LockKey -> locked group
 		total := 0.0
@@ -756,6 +763,34 @@ func (s *BookingService) ListByDate(ctx context.Context, date string) ([]model.B
 	return normalizeDates(list), err
 }
 
+// GroupPayment is how a booking group was (or is to be) paid, for the
+// counter's receipts.
+type GroupPayment struct {
+	Method model.PaymentMethod `json:"method"`
+	Status model.PaymentStatus `json:"status"`
+}
+
+// PaymentsByGroupOnDate maps "booking_code|user_id" to the payment of every
+// booking group on a date (a group's rows all share its date).
+func (s *BookingService) PaymentsByGroupOnDate(ctx context.Context, date string) (map[string]GroupPayment, error) {
+	var rows []struct {
+		BookingCode string
+		UserID      string
+		Method      model.PaymentMethod
+		Status      model.PaymentStatus
+	}
+	err := s.db.WithContext(ctx).Table("payments p").
+		Select("b.booking_code, b.user_id, p.method, p.status").
+		Joins("JOIN bookings b ON b.id = p.booking_id").
+		Where("b.date = ?", date).
+		Scan(&rows).Error
+	out := make(map[string]GroupPayment, len(rows))
+	for _, r := range rows {
+		out[r.BookingCode+"|"+r.UserID] = GroupPayment{Method: r.Method, Status: r.Status}
+	}
+	return out, err
+}
+
 // BookingWithPayment pairs a booking row with its group's payment (the
 // payment hangs off the group's first row, so only that row has one).
 type BookingWithPayment struct {
@@ -903,6 +938,20 @@ func (s *BookingService) bookingGroup(tx *gorm.DB, bookingID string) ([]model.Bo
 		return nil, nil, err
 	}
 	return normalizeDates(group), &root, nil
+}
+
+// lockGroupUser locks the booking's customer row before any court locks,
+// the same order CreateBookings uses (user, then courts), so confirming a
+// late payment and a new booking by the same customer can't deadlock.
+func lockGroupUser(tx *gorm.DB, root *model.Booking) error {
+	if root.UserID == "" || root.UserID == model.WalkInUserID {
+		return nil
+	}
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&model.User{}, "id = ?", root.UserID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
 }
 
 // lockPayment loads a payment FOR UPDATE so two staff clicking verify/reject
@@ -1070,9 +1119,17 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 		if err := checkSlipVersion(p, seenSlipAt); err != nil {
 			return err
 		}
+		// Part of it was already sent back: confirming would book the
+		// hours on money the customer no longer paid.
+		if p.RefundAmount > 0 {
+			return fmt.Errorf("%w: %.2f THB of this payment was refunded - cancel or refund the rest instead of approving", ErrInvalidState, p.RefundAmount)
+		}
 
 		group, root, err := s.bookingGroup(tx, p.BookingID)
 		if err != nil {
+			return err
+		}
+		if err := lockGroupUser(tx, root); err != nil {
 			return err
 		}
 		now := s.now()

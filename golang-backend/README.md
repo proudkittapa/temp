@@ -145,7 +145,11 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
     "password": "Password99"
   }'
 ```
-Phone and email must be unique. Log in later with
+Phone and email must be unique. The server also checks the details: name up
+to 100 characters, a Thai phone number (at most 15 digits), a valid email
+address (optional), and a password of at most 72 characters (bcrypt reads
+only 72 bytes) -
+anything else is refused with 400. Log in later with
 `POST /api/v1/auth/login` and `{"identity": "<phone or email>", "password": "..."}`.
 
 ### 2. Check Availability
@@ -295,9 +299,20 @@ curl -X PUT http://localhost:8080/api/v1/admin/courts/<id> -H "Authorization: Be
 Managers/admins cancel bookings (a reason is required and audit-logged).
 `:id` is any hour of the booking; `booking_ids` limits it to some hours.
 `refund: true` records the cancelled paid hours as refunded (the transfer
-itself is done by staff). Points earned for cancelled hours are taken back
-(never below zero). Payment status becomes `REFUNDED` once refunds cover the
-whole amount.
+itself is done by staff). It only refunds money that was received - paid
+hours, or hours whose slip is still waiting for review - and is ignored for
+an unpaid booking, so a closure can always pass it. Each refund is a row in
+the `refunds` table (amount, reason, who, when; reports and the day summary
+count refunds by these rows), and the payment keeps the running total in
+`refund_amount`. Points earned for cancelled hours are taken back (never
+below zero). Cancelling some hours of an unpaid booking lowers its amount
+and makes a new QR for the rest. Payment status becomes `REFUNDED` once
+refunds cover the whole amount, or once nothing is left standing after a
+refund; with nothing left and no refund, an unpaid or waiting payment
+becomes `REJECTED`. A refunded payment can't be approved any more.
+`/admin/payments/:id/refund` refunds at most what no standing hour still
+pays for. `GET /bookings?date=` gives staff each row's group `payment`
+(`method`, `status`) for receipts.
 ```bash
 curl -X POST http://localhost:8080/api/v1/admin/bookings/<booking_id>/cancel \
   -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \

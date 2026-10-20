@@ -3,9 +3,9 @@ import * as XLSX from 'xlsx';
 import { 
   Court, CourtType, PricingRule, DayType, PriceType, 
   User, UserRole, MemberType, Booking, BookingStatus, 
-  Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig 
+  Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig, LedgerEntryType
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf,  } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf, bangkokStamp, formatDateTime } from '../mockData';
 import * as api from '../api';
 import { notify, ask, askText } from './Dialog';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
@@ -232,7 +232,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const dailyBookingsRevenue = dailyBookings.reduce((sum, b) => sum + Number(b.totalAmount), 0);
 
     const dailyOrders = orders.filter(o => {
-      const orderDate = o.createdAt.split('T')[0];
+      const orderDate = localDateOf(o.createdAt);
       return orderDate === targetDateStr && o.status !== OrderStatus.CANCELLED;
     });
     const dailyOrderRevenue = dailyOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
@@ -441,6 +441,17 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     }
 
     const currentRules = StorageService.get<PricingRule[]>('pricing_rules', []);
+    const prevRule = editingRuleId ? currentRules.find(r => r.id === editingRuleId) : undefined;
+    newRule.isActive = prevRule ? prevRule.isActive : true; // editing doesn't re-enable a rule
+    // Two active rules for the same hour would make the price depend on
+    // which one is found first; the server refuses this too.
+    const clash = newRule.isActive && currentRules.find(r =>
+      r.id !== editingRuleId && r.isActive && r.courtType === newRule.courtType && r.dayType === newRule.dayType &&
+      r.startHour < newRule.endHour && newRule.startHour < r.endHour);
+    if (clash) {
+      notify(`ช่วงเวลาซ้อนกับกติกา "${clash.label}" (${clash.startHour}:00-${clash.endHour}:00) กรุณาแก้ไขหรือปิดกติกานั้นก่อน`);
+      return;
+    }
     let updated = [];
     
     if (editingRuleId) {
@@ -540,12 +551,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             // The court takes no new bookings; offer to cancel the ones it
             // still has (FR-6.3), recording a refund for paid hours.
             const list = r.upcoming.map(b => `- ${b.date} ${b.startTime}–${b.endTime} ${b.userName} (${b.bookingCode})${b.status === BookingStatus.PENDING_PAYMENT ? ' ยังไม่ชำระ' : ''}`).join('\n');
-            if (!(await ask(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจอง ${r.upcoming.length} รายการ:\n${list}\n\nยกเลิกทั้งหมดเลยไหม? รายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { title: 'การจองบนสนามที่ปิด', okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้ ติดต่อลูกค้าเอง', danger: true }))) return;
+            if (!(await ask(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจอง ${r.upcoming.length} รายการ:\n${list}\n\nยกเลิกทั้งหมดเลยไหม? รายการที่ชำระแล้ว (หรือส่งสลิปแล้ว) จะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { title: 'การจองบนสนามที่ปิด', okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้ ติดต่อลูกค้าเอง', danger: true }))) return;
             (async () => {
               let refunded = 0, failed = 0;
               for (const b of r.upcoming) {
                 try {
-                  const res = await api.cancelBooking(b.id, `ปิดสนาม ${r.court.name}`, b.status === BookingStatus.CONFIRMED, [b.id], 'admin');
+                  // refund=true: the server records a refund only of money it received
+                  // (paid hours, or a slip still waiting), and ignores it otherwise.
+                  const res = await api.cancelBooking(b.id, `ปิดสนาม ${r.court.name}`, true, [b.id], 'admin');
                   refunded += res.refundAmount;
                 } catch {
                   failed++;
@@ -712,12 +725,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           // Offer to cancel the overlapped bookings right away (FR-6.3),
           // recording a refund for hours that were already paid.
           const active = affectedBookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING_PAYMENT);
-          if (active.length > 0 && await ask(`ยกเลิกการจองที่ได้รับผลกระทบ ${active.length} รายการเลยไหม?\nรายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้', danger: true })) {
+          if (active.length > 0 && await ask(`ยกเลิกการจองที่ได้รับผลกระทบ ${active.length} รายการเลยไหม?\nรายการที่ชำระแล้ว (หรือส่งสลิปแล้ว) จะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้', danger: true })) {
             (async () => {
               let refunded = 0, failed = 0;
               for (const b of active) {
                 try {
-                  const res = await api.cancelBooking(b.id, `ปิดสนาม: ${dayOff.reason}`, b.status === BookingStatus.CONFIRMED, [b.id], 'admin');
+                  // refund=true: the server records a refund only of money it received
+                  // (paid hours, or a slip still waiting), and ignores it otherwise.
+                  const res = await api.cancelBooking(b.id, `ปิดสนาม: ${dayOff.reason}`, true, [b.id], 'admin');
                   refunded += res.refundAmount;
                 } catch {
                   failed++;
@@ -725,7 +740,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               }
               onAddAuditLog('DAY_OFF_BOOKINGS_CANCELLED', 'DayOff', dayOff.id, null, { cancelled: active.length - failed, refunded });
               onRefreshAll();
-              notify(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${refunded} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
+              notify(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
             })();
           }
         })
@@ -994,26 +1009,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         .catch(err => notify(`ปรับแต้มไม่สำเร็จ: ${err.message}`));
       return;
     }
-    const currentUsers = StorageService.get<User[]>('users', []);
-    const updated = currentUsers.map(u => {
-      if (u.id === userId) {
-        const p = u.points || 0;
-        const newPoints = Math.max(0, p + diff);
-        return { ...u, points: newPoints };
-      }
-      return u;
-    });
-    StorageService.set('users', updated);
-    setUsers(updated);
-    
-    // Also update logged in customer if they are the one
-    const currentCust = StorageService.get<User | null>('current_logged_in_customer', null);
-    if (currentCust && currentCust.id === userId) {
-      currentCust.points = Math.max(0, (currentCust.points || 0) + diff);
-      StorageService.set('current_logged_in_customer', currentCust);
-    }
-    
-    onAddAuditLog('USER_POINTS_ADJUSTED_BY_ADMIN', 'User', userId, null, { diff });
+    // Through the points ledger, so the change is in the customer's points
+    // history like every other one.
+    const reason = await askText(`เหตุผลในการ${diff > 0 ? 'เพิ่ม' : 'ลด'}แต้ม ${Math.abs(diff)} แต้ม (จำเป็น):`, { title: 'ปรับแต้ม' });
+    if (!reason) return;
+    StorageService.addLedgerEntry(userId, LedgerEntryType.ADJUST_MANUAL, diff, adminUser?.id || 'admin', { note: reason });
+    setUsers(StorageService.get<User[]>('users', []));
+
+    onAddAuditLog('USER_POINTS_ADJUSTED_BY_ADMIN', 'User', userId, null, { diff, reason });
     onRefreshAll();
   };
 
@@ -1168,14 +1171,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         const apiRows: api.ProductInput[] = [];
 
         data.forEach((row: any) => {
-          const name = row['ชื่อสินค้า'] || row['name'] || row['Name'];
-          const priceVal = row['ราคา'] || row['price'] || row['Price'];
-          const stockVal = row['จำนวนสินค้า'] || row['สต็อก'] || row['stock'] || row['Stock'];
-          const categoryVal = row['หมวดหมู่'] || row['category'] || row['Category'];
-          const isRentalVal = row['เช่า'] || row['isRental'] || row['IsRental'] || row['เช่าเล่น'] || false;
-          const subCategoryVal = row['หมวดย่อย'] || row['subCategory'] || row['SubCategory'];
+          // The first column that has a value - a 0 price or 0 stock is a
+          // value, not a missing cell.
+          const pick = (...keys: string[]) => {
+            for (const k of keys) if (row[k] !== undefined && row[k] !== null && row[k] !== '') return row[k];
+            return undefined;
+          };
+          const name = pick('ชื่อสินค้า', 'name', 'Name');
+          const priceVal = pick('ราคา', 'price', 'Price');
+          const stockVal = pick('จำนวนสินค้า', 'สต็อก', 'stock', 'Stock');
+          const categoryVal = pick('หมวดหมู่', 'category', 'Category');
+          const isRentalVal = pick('เช่า', 'isRental', 'IsRental', 'เช่าเล่น') ?? false;
+          const subCategoryVal = pick('หมวดย่อย', 'subCategory', 'SubCategory');
 
-          if (!name || isNaN(Number(priceVal))) {
+          if (!name || priceVal === undefined || isNaN(Number(priceVal)) || Number(priceVal) < 0) {
             return; // skip rows with invalid data
           }
 
@@ -1188,7 +1197,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
           apiRows.push({
             name: String(name), category, price: Number(priceVal), isRental,
-            stock: isNaN(Number(stockVal)) ? 50 : Number(stockVal), subCategory: subCategoryVal ? String(subCategoryVal) : undefined
+            stock: stockVal === undefined || isNaN(Number(stockVal)) ? 50 : Number(stockVal), subCategory: subCategoryVal ? String(subCategoryVal) : undefined
           });
           const pId = 'pd-excel-' + Math.random().toString(36).substr(2, 9);
           newProds.push({
@@ -1196,7 +1205,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             name: String(name),
             category: category,
             price: Number(priceVal),
-            stock: isNaN(Number(stockVal)) ? 50 : Number(stockVal),
+            stock: stockVal === undefined || isNaN(Number(stockVal)) ? 50 : Number(stockVal),
             isRental: isRental,
             isActive: true,
             subCategory: subCategoryVal ? String(subCategoryVal) : undefined
@@ -1258,7 +1267,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       // A group's payment hangs off one of its rows.
       const groupIds = new Set(bookings.filter(x => x.bookingCode === b.bookingCode).map(x => x.id));
       const pay = payments.find(p => groupIds.has(p.bookingId));
-      return { ...b, courtName: courts.find(c => c.id === b.courtId)?.name || '', paymentMethod: pay?.method || '', paymentStatus: pay?.status || '', refundAmount: pay?.refundAmount || 0 };
+      // The group's refund is listed once, on the row the payment hangs off
+      // (as the server's report does), so summing the column is right.
+      return { ...b, courtName: courts.find(c => c.id === b.courtId)?.name || '', paymentMethod: pay?.method || '', paymentStatus: pay?.status || '', refundAmount: pay && pay.bookingId === b.id ? pay.refundAmount || 0 : 0 };
     });
     return { rows, monthOrders: orders.filter(o => localDateOf(o.createdAt).startsWith(month)) };
   };
@@ -1282,9 +1293,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       downloadCsv(`SportsComplex_CounterSales_${tag}.csv`,
         ['OrderCode', 'DateTime', 'Type', 'Customer', 'PaymentMethod', 'Status', 'Item', 'Size', 'Qty', 'UnitPrice', 'LineTotal', 'Returned'],
         data.monthOrders.flatMap(o => o.items.map(it => [
-          o.orderCode, new Date(o.createdAt).toLocaleString('sv-SE'), o.type, o.customerName, o.paymentMethod || '', o.status,
+          o.orderCode, bangkokStamp(o.createdAt), o.type, o.customerName, o.paymentMethod || '', o.status,
           productName(it.productId, it.productName), it.shoeSize ? `${it.shoeSize}${it.shoeGender || ''}` : '', it.qty, it.unitPrice,
-          roundBaht(it.qty * it.unitPrice), it.returnedAt ? new Date(it.returnedAt).toLocaleString('sv-SE') : ''
+          roundBaht(it.qty * it.unitPrice), it.returnedAt ? bangkokStamp(it.returnedAt) : ''
         ])));
     }
     onAddAuditLog('REPORT_CSV_EXPORTED', 'Report', 'csv-gen', null, { kind, month: reportsMonth, year: reportsYear });
@@ -2978,7 +2989,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             {meta.label}
                           </span>
                           <span className="text-[10px] text-slate-400/90 font-sans">
-                            🕒 {log.createdAt.replace('T', ' ').slice(0, 19)} น.
+                            🕒 {formatDateTime(log.createdAt, true)} น.
                           </span>
                         </div>
 

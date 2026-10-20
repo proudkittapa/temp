@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Court, CourtType, PriceType, Booking, BookingStatus, 
-  Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
-  User, UserRole
+  Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayOff,
+  User, UserRole, LedgerEntryType
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openingHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime } from '../mockData';
+import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openingHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime } from '../mockData';
 import * as api from '../api';
 import { notify, ask } from './Dialog';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
@@ -39,6 +39,13 @@ interface Redemption {
   pointsSpent: number;
   claimCode: string;
   redeemedAt: string;
+}
+
+// LINE message times: ISO timestamps, shown in Bangkok time. Older saved
+// messages stored only a local time string ("13:56:02"); show those as-is.
+function lineMessageTime(ts: string): string {
+  if (!ts) return '';
+  return isNaN(new Date(ts).getTime()) ? ts : formatDateTime(ts);
 }
 
 const LOYALTY_REWARDS: Reward[] = [
@@ -160,9 +167,22 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     const rawRedemptions = StorageService.get<Redemption[]>('redemptions', []);
     
     // Load current logged in customer (API mode keeps it in the API session)
-    const currentCust = api.USE_BACKEND
+    let currentCust = api.USE_BACKEND
       ? api.getSession('customer')?.user ?? null
       : StorageService.get<User | null>('current_logged_in_customer', null);
+    // Browser-only mode: the saved login is a copy taken at sign-in. Re-read
+    // the account so points/tier changes show, and sign out a customer the
+    // admin has since suspended or deleted.
+    if (!api.USE_BACKEND && currentCust) {
+      const fresh = StorageService.get<User[]>('users', []).find(u => u.id === currentCust!.id);
+      if (!fresh || !fresh.isActive) {
+        StorageService.set('current_logged_in_customer', null);
+        currentCust = null;
+      } else {
+        currentCust = fresh;
+        StorageService.set('current_logged_in_customer', fresh);
+      }
+    }
     if (currentCust) {
       setLoggedInUser(currentCust);
       setMemberName(currentCust.name);
@@ -187,12 +207,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     if (!api.USE_BACKEND) setDaysOff(rawDaysOff);
     if (!api.USE_BACKEND) setRedemptions(rawRedemptions);
 
-    // Initial Date selection to today
-    const today = new Date();
-    const offset = today.getTimezoneOffset();
-    const adjusted = new Date(today.getTime() - (offset * 60 * 1000));
-    const todayStr = adjusted.toISOString().split('T')[0];
-    setSelectedDate(todayStr);
+    // Start on today (Bangkok); a refresh keeps the date the customer chose.
+    setSelectedDate(prev => prev || getTodayDateStr());
   }, [triggerRefresh]);
 
   // API mode: load courts, the selected date's bookings (for availability)
@@ -357,7 +373,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       role: UserRole.CUSTOMER,
       memberType: MemberType.NORMAL,
       isActive: true,
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: getTodayDateStr(),
       password: authPassword
     };
 
@@ -445,6 +461,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   };
 
   // Set default court when court type changes
+  // Keyed on the court ids, not the array: every refresh re-fetches the
+  // courts, and that must not wipe the hours the customer has picked.
+  const courtIdsKey = courts.map(c => c.id).join(',');
   useEffect(() => {
     const matchedCourts = courts.filter(c => c.type === selectedType);
     if (matchedCourts.length > 0) {
@@ -453,7 +472,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       setSelectedCourtId('');
     }
     setSelectedSlots([]);
-  }, [selectedType, courts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedType, courtIdsKey]);
 
   const handleCourtTypeChange = (type: CourtType) => {
     setSelectedType(type);
@@ -472,31 +492,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     return hours;
   };
 
-  // Check slot status
-  const getSlotStatus = (courtId: string, slotTime: string) => {
-    if (!selectedDate) return 'disabled';
-    
-    // Check if there is an existing booking for this court, date and slot time
-    const found = bookings.find(
-      b => b.courtId === courtId && 
-           b.date === selectedDate && 
-           b.startTime === slotTime && 
-           b.status !== BookingStatus.CANCELLED
-    );
-
-    if (found) {
-      return found.isEventBlock ? 'blocked' : 'booked';
-    }
-
-    // Peak hours check
-    const isWeekend = getDayType(selectedDate) === DayType.WEEKEND;
-    const hour = parseInt(slotTime.split(':')[0], 10);
-    const isPeak = isWeekend 
-      ? (hour >= 9 && hour < 22) 
-      : (hour >= 17 && hour < 22);
-
-    return isPeak ? 'peak' : 'normal';
-  };
 
   // Helper to get Price Information inside layout
   const currentPriceDetails = () => {
@@ -670,7 +665,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       return;
     }
 
-    const currentPoints = loggedInUser.points || 0;
+    // The stored balance, not the copy taken at sign-in.
+    const currentPoints = StorageService.get<User[]>('users', []).find(u => u.id === loggedInUser.id)?.points ?? loggedInUser.points ?? 0;
     if (currentPoints < reward.cost) {
       notify(`ขออภัยค่ะ! แต้มสะสมของคุณไม่เพียงพอสำหรับการแลก ${reward.name} (ต้องการ ${reward.cost} แต้ม แต่คุณมี ${currentPoints} แต้ม)`);
       return;
@@ -678,28 +674,17 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
     if (!(await ask(`ใช้ ${reward.cost} แต้ม แลก "${reward.emoji} ${reward.name}"?`, { title: '🎁 แลกแต้ม', okLabel: 'แลกเลย' }))) return;
 
-    // Deduct points
+    // Deduct through the points ledger, like every other points change.
+    const claimCode = `RW-${String(Math.floor(100000 + Math.random() * 900000))}`;
+    const voucherId = 'voucher-' + Date.now();
+    StorageService.addLedgerEntry(loggedInUser.id, LedgerEntryType.REDEEM, -reward.cost, loggedInUser.id, { refType: 'Voucher', refId: voucherId, note: reward.name });
     const newPoints = currentPoints - reward.cost;
-
-    // Update inside stored users list
-    const users = StorageService.get<User[]>('users', []);
-    const updatedUsers = users.map(user => {
-      if (user.id === loggedInUser.id) {
-        return { ...user, points: newPoints };
-      }
-      return user;
-    });
-    StorageService.set('users', updatedUsers);
-
-    // Update loggedInUser and customer storage profile
     const updatedUser = { ...loggedInUser, points: newPoints };
     setLoggedInUser(updatedUser);
-    StorageService.set('current_logged_in_customer', updatedUser);
 
     // Create redemption voucher
-    const claimCode = `RW-${String(Math.floor(100000 + Math.random() * 900000))}`;
     const newVoucher: Redemption = {
-      id: 'voucher-' + Date.now(),
+      id: voucherId,
       userId: loggedInUser.id,
       userName: loggedInUser.name,
       rewardId: reward.id,
@@ -728,7 +713,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       recipientPhone: cleanPhone,
       recipientName: loggedInUser.name,
       text: lpMsg,
-      timestamp: new Date().toLocaleTimeString('th-TH'),
+      timestamp: new Date().toISOString(),
       type: 'CONFIRMED'
     };
     StorageService.set('line_messages', [newMsg, ...currentLine]);
@@ -980,7 +965,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     | { kind: 'started' }
     | { kind: 'peakBlocked' }
     | { kind: 'notOpen' }
-    | { kind: 'free' | 'selected'; price: number; isPeak: boolean };
+    | { kind: 'free' | 'selected'; price: number; isPeak: boolean; isOffPeak: boolean };
   const slotStatus = (court: Court, time: string, hourNum: number): SlotState => {
     // A reservation on this court or a mutex-group sibling (FR-1.2, e.g. the full court)
     const matchedBooking = findConflictingBooking(court.id, selectedDate, time, bookings, courts);
@@ -996,15 +981,29 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     // Online, an hour can only be booked before it starts (the server
     // refuses it after - the counter can still sell it).
     if (slotTiming(selectedDate, time).started) return { kind: 'started' };
-    // Peak/off-peak from the same pricing rules the price uses.
-    const isPeak = !isHourOffPeak(court.type, selectedDate, hourNum);
-    if (court.offPeakOnly && isPeak) return { kind: 'peakBlocked' };
     const price = calculatePrice(court.type, selectedDate, time, loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL, court);
     // No pricing rule covers this hour: the server refuses it.
     if (!price.isOpen) return { kind: 'notOpen' };
+    // Peak/off-peak from the rule the price uses: a NORMAL-rate hour (the
+    // meeting room) is neither, and an off-peak-only court takes OFFPEAK
+    // hours only, as on the server.
+    const isPeak = price.priceType === PriceType.PEAK;
+    if (court.offPeakOnly && price.priceType !== PriceType.OFFPEAK) return { kind: 'peakBlocked' };
     const selected = selectedSlots.some(sl => sl.courtId === court.id && sl.startTime === time);
-    return { kind: selected ? 'selected' : 'free', price: price.total, isPeak };
+    return { kind: selected ? 'selected' : 'free', price: price.total, isPeak, isOffPeak: price.priceType === PriceType.OFFPEAK };
   };
+  // Bookable grid cells act as toggle buttons for keyboards and screen
+  // readers too (Tab to reach, Enter/Space to pick).
+  const cellButton = (courtId: string, time: string, pressed: boolean) => ({
+    role: 'button' as const,
+    tabIndex: 0,
+    'aria-pressed': pressed,
+    'aria-label': `${courts.find(c => c.id === courtId)?.name || ''} ${time}`,
+    onClick: () => handleToggleSlotInGrid(courtId, time),
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleToggleSlotInGrid(courtId, time); }
+    }
+  });
   const SLOT_LABEL: Record<Exclude<SlotState['kind'], 'free' | 'selected'>, string> = {
     booked: 'จองแล้ว', closed: 'ปิดสนาม', started: 'หมดเวลาจอง', peakBlocked: 'เฉพาะ Off-Peak', notOpen: 'ปิดบริการ'
   };
@@ -1066,9 +1065,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
   // Quick date buttons: today, tomorrow, the day after (within the window).
   const quickDates = [0, 1, 2].map(n => {
-    const d = new Date(`${getTodayDateStr()}T00:00:00`);
-    d.setDate(d.getDate() + n);
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const d = new Date(`${getTodayDateStr()}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    const iso = d.toISOString().slice(0, 10);
     return { iso, label: ['วันนี้', 'พรุ่งนี้', 'มะรืน'][n] };
   }).filter(q => q.iso <= lastBookableDate());
 
@@ -1096,6 +1095,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           small round button that never covers the booking bar or forms. */}
       <button 
         id="btn-line-sim-toggle"
+        aria-label="ข้อความ LINE (จำลอง)"
+        aria-expanded={showLineSimulator}
         onClick={() => setShowLineSimulator(!showLineSimulator)}
         className={`fixed z-30 items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-2xl transition duration-200 bottom-4 right-4 p-3 sm:bottom-6 sm:right-6 sm:px-5 sm:py-3 ${isNarrow && activeStep === 1 && selectedSlots.length > 0 ? 'hidden' : 'flex'}`}
       >
@@ -1647,7 +1648,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                   );
                                 case 'selected':
                                   return (
-                                    <td key={time} onClick={() => handleToggleSlotInGrid(court.id, time)}
+                                    <td key={time} {...cellButton(court.id, time, true)}
                                       className="p-1 border-l border-slate-200 bg-emerald-600 text-white text-center font-bold cursor-pointer border-l-emerald-700">
                                       <span className="block text-[11px] font-black">⭐ เลือกแล้ว</span>
                                       <span className="text-xs block">{formatBaht(st.price)}฿</span>
@@ -1655,13 +1656,13 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                   );
                                 default:
                                   return (
-                                    <td key={time} onClick={() => handleToggleSlotInGrid(court.id, time)}
+                                    <td key={time} {...cellButton(court.id, time, false)}
                                       className={`p-1 border-l border-slate-200 text-center cursor-pointer transition min-h-[44px] ${
                                         st.isPeak ? 'bg-amber-50 hover:bg-amber-100 text-amber-900' : 'bg-emerald-50/15 hover:bg-emerald-500/10 text-slate-800'
                                       }`}>
                                       <span className="block text-[11px] font-semibold text-slate-500 leading-none">🟢 ว่าง</span>
                                       <span className="text-xs font-black block mt-0.5 text-slate-800">{formatBaht(st.price)}฿</span>
-                                      <span className="text-[11px] text-slate-500">{st.isPeak ? '⚡ Peak' : 'Off-Peak'}</span>
+                                      <span className="text-[11px] text-slate-500">{st.isPeak ? '⚡ Peak' : st.isOffPeak ? 'Off-Peak' : 'ราคาปกติ'}</span>
                                     </td>
                                   );
                               }
@@ -1823,11 +1824,13 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     <p className="font-bold text-slate-800 text-[11px]">รายการสล็อตเวลาที่ทำจอง ({selectedSlots.length} สล็อต):</p>
                     {selectedSlots.map((s, idx) => {
                       const cName = courts.find(c => c.id === s.courtId)?.name || 'สนาม';
-                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, memberType, courts.find(c => c.id === s.courtId));
+                      // The account's tier, as the server prices it (the
+                      // memberType field is only the editable form copy).
+                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, loggedInUser?.memberType || MemberType.NORMAL, courts.find(c => c.id === s.courtId));
                       return (
                         <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 font-medium font-sans">
                           <span>{idx + 1}. {cName} - เวลา {s.startTime} น.</span>
-                          <span className="font-bold text-slate-800">{formatBaht(detail.total)} บาท <span className="text-xs text-slate-400 font-normal line-through">({detail.original}.-)</span></span>
+                          <span className="font-bold text-slate-800">{formatBaht(detail.total)} บาท {detail.original > detail.total && <span className="text-xs text-slate-400 font-normal line-through">({formatBaht(detail.original)}.-)</span>}</span>
                         </div>
                       );
                     })}
@@ -2164,7 +2167,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               {/* Loop client side LINE alerts */}
               {lineMessages.map((msg) => (
                 <div key={msg.id} className="flex flex-col items-start gap-1 max-w-[85%]">
-                  <span className="text-[11px] text-slate-400 pl-8 font-mono">{msg.timestamp.split('T')[1].slice(0, 5)} น.</span>
+                  <span className="text-[11px] text-slate-400 pl-8 font-mono">{lineMessageTime(msg.timestamp)}</span>
                   <div className="flex items-start gap-2">
                     <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-[11px] font-bold text-white shrink-0">SP</div>
                     <div className="bg-emerald-950 border border-emerald-900/60 p-3 rounded-2xl text-[11px] text-emerald-100 whitespace-pre-wrap font-sans">

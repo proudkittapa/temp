@@ -119,6 +119,7 @@ interface ApiBooking {
   start_time: string; end_time: string; is_half_court: boolean; price_type: string;
   total_amount: number; status: string; is_event_block: boolean; event_name?: string;
   notes?: string; created_by: string; cancellation_reason?: string; created_at: string;
+  payment?: { method: string; status: string }; // staff date list: the group's payment
 }
 interface ApiPayment {
   id: string; booking_id: string; amount: number; method: string; status: string;
@@ -172,7 +173,9 @@ const toBooking = (b: ApiBooking, user?: { name: string; phone: string }): Booki
   notes: b.notes,
   createdAt: b.created_at,
   createdBy: b.created_by,
-  cancellationReason: b.cancellation_reason
+  cancellationReason: b.cancellation_reason,
+  paymentMethod: b.payment?.method as PaymentMethod | undefined,
+  paymentStatus: b.payment?.status as PaymentStatus | undefined
 });
 
 const toPayment = (p: ApiPayment): Payment => ({
@@ -859,7 +862,7 @@ export async function dashboard(date: string): Promise<DashboardData> {
   };
 }
 
-export interface ReportBookingRow extends Booking { courtName: string; paymentMethod: string; paymentStatus: string; refundAmount: number }
+export interface ReportBookingRow extends Omit<Booking, 'paymentMethod' | 'paymentStatus'> { courtName: string; paymentMethod: string; paymentStatus: string; refundAmount: number }
 
 export async function monthReport(month: string, kind?: string): Promise<{ bookings: ReportBookingRow[]; orders: OrderWithNames[] }> {
   const r = await request<{ bookings: (ApiBooking & { court_name: string; payment_method: string; payment_status: string; refund_amount: number })[]; orders: ApiOrder[] }>(

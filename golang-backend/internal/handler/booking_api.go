@@ -21,6 +21,10 @@ const maxSlipBytes = 5 << 20
 // can tell "slot taken" (409) from "bad input" (400) from a server fault.
 func respondError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
+	if repository.IsRetryableConflict(err) {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": "the system was busy with the same booking - please try again"})
+		return
+	}
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		status = http.StatusNotFound
@@ -80,7 +84,29 @@ func (h *ArenaHandler) ListBookings(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": sanitizeBookings(c, list)})
+	if !isStaff(currentRole(c)) {
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": sanitizeBookings(c, list)})
+		return
+	}
+	// Staff also get each row's group payment, so receipts show how it
+	// was paid.
+	pays, err := h.bookingService.PaymentsByGroupOnDate(c.Request.Context(), date)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	type staffBooking struct {
+		model.Booking
+		Payment *service.GroupPayment `json:"payment,omitempty"`
+	}
+	out := make([]staffBooking, len(list))
+	for i, b := range list {
+		out[i] = staffBooking{Booking: b}
+		if p, ok := pays[b.BookingCode+"|"+b.UserID]; ok {
+			out[i].Payment = &p
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": out})
 }
 
 // sanitizeBookings reduces other people's bookings to what an availability

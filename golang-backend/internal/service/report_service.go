@@ -73,7 +73,9 @@ func (s *ReportService) physicalCourts(db *gorm.DB) (int64, error) {
 // paid bookings matching where/args, grouped by groupBy when set.
 func (s *ReportService) occupiedShare(db *gorm.DB, where string, args ...any) (float64, error) {
 	var v float64
-	err := db.Raw("SELECT COALESCE(SUM(COALESCE(c.share_of_group, 1)), 0) FROM bookings b LEFT JOIN courts c ON c.id = b.court_id "+
+	// Only active courts: capacity counts active courts, so hours on a
+	// court closed since would push occupancy past 100%.
+	err := db.Raw("SELECT COALESCE(SUM(c.share_of_group), 0) FROM bookings b JOIN courts c ON c.id = b.court_id AND c.is_active "+
 		"WHERE b.status IN ? AND "+where, append([]any{paidStatuses}, args...)...).Scan(&v).Error
 	return v, err
 }
@@ -134,7 +136,7 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		Where("status <> ?", model.OrderCancelled).Scan(&d.AllTimeOrderSales).Error; err != nil {
 		return nil, err
 	}
-	if err := db.Model(&model.Payment{}).Select("COALESCE(SUM(refund_amount), 0)").Scan(&d.AllTimeRefunds).Error; err != nil {
+	if err := db.Model(&model.Refund{}).Select("COALESCE(SUM(amount), 0)").Scan(&d.AllTimeRefunds).Error; err != nil {
 		return nil, err
 	}
 	if err := db.Model(&model.User{}).Where("role = ?", model.RoleCustomer).Count(&d.CustomerCount).Error; err != nil {
@@ -168,8 +170,8 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		StartTime string
 		Share     float64
 	}
-	if err := db.Raw("SELECT b.start_time, COALESCE(SUM(COALESCE(c.share_of_group, 1)), 0) AS share FROM bookings b "+
-		"LEFT JOIN courts c ON c.id = b.court_id WHERE b.status IN ? AND b.date >= ? AND b.date <= ? GROUP BY b.start_time",
+	if err := db.Raw("SELECT b.start_time, COALESCE(SUM(c.share_of_group), 0) AS share FROM bookings b "+
+		"JOIN courts c ON c.id = b.court_id AND c.is_active WHERE b.status IN ? AND b.date >= ? AND b.date <= ? GROUP BY b.start_time",
 		paidStatuses, start, date).Scan(&hourly).Error; err != nil {
 		return nil, err
 	}
@@ -295,7 +297,12 @@ func (s *ReportService) MonthReport(ctx context.Context, month string) (*MonthRe
 	for i, b := range bookings {
 		p := payByCode[b.BookingCode]
 		out.Bookings[i] = ReportBookingRow{Booking: b, CourtName: courtName[b.CourtID],
-			PaymentMethod: string(p.Method), PaymentStatus: string(p.Status), RefundAmount: p.RefundAmount}
+			PaymentMethod: string(p.Method), PaymentStatus: string(p.Status)}
+		// The refund belongs to the payment, not to each hour: put it on the
+		// payment's own row only, so the column adds up.
+		if p.BookingID == b.ID {
+			out.Bookings[i].RefundAmount = p.RefundAmount
+		}
 	}
 	if out.Orders, err = s.pos.ListOrders(ctx, ms, me); err != nil {
 		return nil, err

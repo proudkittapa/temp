@@ -290,6 +290,24 @@ type Payment struct {
 	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
 }
 
+// Refund is one refund recorded on a payment (money sent back by transfer).
+// Payment.RefundAmount is their running total; reports sum these rows by
+// RefundedAt, so a refund made in two steps on two days lands on each day.
+type Refund struct {
+	ID         string    `json:"id" db:"id" gorm:"primaryKey;column:id"`
+	PaymentID  string    `json:"payment_id" db:"payment_id" gorm:"column:payment_id;index"`
+	Amount     float64   `json:"amount" db:"amount" gorm:"column:amount"`
+	Reason     string    `json:"reason" db:"reason" gorm:"column:reason"`
+	RefundedBy string    `json:"refunded_by" db:"refunded_by" gorm:"column:refunded_by"`
+	RefundedAt time.Time `json:"refunded_at" db:"refunded_at" gorm:"column:refunded_at;index"`
+}
+
+// AppMigration marks a one-off data migration as done, so it never runs twice.
+type AppMigration struct {
+	Name  string    `gorm:"primaryKey;column:name"`
+	RanAt time.Time `gorm:"column:ran_at"`
+}
+
 // 7. Inventory Items (Drinks, sales, rental shoes/rackets)
 type Product struct {
 	ID          string     `json:"id" db:"id" gorm:"primaryKey;column:id"`
@@ -488,6 +506,9 @@ type Shift struct {
 	ExpectedCash *float64   `json:"expected_cash,omitempty" db:"expected_cash" gorm:"column:expected_cash"`
 	VarianceCash *float64   `json:"variance_cash,omitempty" db:"variance_cash" gorm:"column:variance_cash"`
 	Notes        *string    `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
+	// The cash taken during the shift, frozen at close (with ExpectedCash).
+	CashBookingsAtClose *float64 `json:"-" db:"cash_bookings_at_close" gorm:"column:cash_bookings_at_close"`
+	CashOrdersAtClose   *float64 `json:"-" db:"cash_orders_at_close" gorm:"column:cash_orders_at_close"`
 	// Who counted the drawer at the end (may differ from who opened it).
 	ClosedByID   *string `json:"closed_by_id,omitempty" db:"closed_by_id" gorm:"column:closed_by_id"`
 	ClosedByName *string `json:"closed_by_name,omitempty" db:"closed_by_name" gorm:"column:closed_by_name"`

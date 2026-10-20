@@ -40,6 +40,7 @@ type attemptStore interface {
 	record(ctx context.Context, keys []string, at time.Time) error
 	since(ctx context.Context, key string, from time.Time) ([]time.Time, error) // oldest first
 	clear(ctx context.Context, keys []string) error
+	remove(ctx context.Context, keys []string, at time.Time) error // one attempt's rows
 	prune(ctx context.Context, before time.Time) error
 }
 
@@ -96,6 +97,60 @@ func (t *LoginThrottle) RetryAfter(ctx context.Context, identity, ip string) (ti
 	return wait, nil
 }
 
+// Begin records this attempt as a failure *before* the password is checked,
+// then counts. Checking first and recording after the slow password hash
+// let a burst of simultaneous guesses all through; now each guess is
+// counted before it is tried, so of a burst only the first few recorded can
+// be under the limit. wait > 0: refused (and this attempt is not counted).
+// Otherwise call done(true) after a correct password - it clears the
+// account's failures - or done(false), which keeps the recorded failure.
+func (t *LoginThrottle) Begin(ctx context.Context, identity, ip string) (time.Duration, func(ok bool) error, error) {
+	now := t.now()
+	pair, acct, ipKey := t.keys(identity, ip)
+	keys := []string{pair, acct, ipKey}
+	if err := t.store.record(ctx, keys, now); err != nil {
+		return 0, nil, err
+	}
+	wait := time.Duration(0)
+	for _, l := range []struct {
+		key string
+		max int
+	}{{pair, t.maxPerPair}, {acct, t.maxPerAcct}, {ipKey, t.maxPerIP}} {
+		times, err := t.store.since(ctx, l.key, now.Add(-t.window))
+		if err != nil {
+			return 0, nil, err
+		}
+		// Other attempts than this one (which is in the list).
+		prior := make([]time.Time, 0, len(times))
+		skipped := false
+		for _, at := range times {
+			if !skipped && at.Equal(now) {
+				skipped = true
+				continue
+			}
+			prior = append(prior, at)
+		}
+		if len(prior) >= l.max {
+			if w := prior[len(prior)-l.max].Add(t.window).Sub(now); w > wait {
+				wait = w
+			}
+		}
+	}
+	if wait > 0 {
+		return wait, nil, t.store.remove(ctx, keys, now)
+	}
+	done := func(ok bool) error {
+		if !ok {
+			return nil
+		}
+		if err := t.store.clear(ctx, []string{pair, acct}); err != nil {
+			return err
+		}
+		return t.store.remove(ctx, []string{ipKey}, now)
+	}
+	return 0, done, nil
+}
+
 // Failed records a failed attempt.
 func (t *LoginThrottle) Failed(ctx context.Context, identity, ip string) error {
 	pair, acct, ipKey := t.keys(identity, ip)
@@ -137,6 +192,10 @@ func (s *dbAttemptStore) clear(ctx context.Context, keys []string) error {
 	return s.db.WithContext(ctx).Where("key IN ?", keys).Delete(&model.LoginFailure{}).Error
 }
 
+func (s *dbAttemptStore) remove(ctx context.Context, keys []string, at time.Time) error {
+	return s.db.WithContext(ctx).Where("key IN ? AND at = ?", keys, at).Delete(&model.LoginFailure{}).Error
+}
+
 func (s *dbAttemptStore) prune(ctx context.Context, before time.Time) error {
 	return s.db.WithContext(ctx).Where("at <= ?", before).Delete(&model.LoginFailure{}).Error
 }
@@ -176,6 +235,21 @@ func (s *memAttemptStore) clear(_ context.Context, keys []string) error {
 	defer s.mu.Unlock()
 	for _, k := range keys {
 		delete(s.m, k)
+	}
+	return nil
+}
+
+func (s *memAttemptStore) remove(_ context.Context, keys []string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range keys {
+		list := s.m[k]
+		for i, t := range list {
+			if t.Equal(at) {
+				s.m[k] = append(list[:i:i], list[i+1:]...)
+				break
+			}
+		}
 	}
 	return nil
 }

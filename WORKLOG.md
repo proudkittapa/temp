@@ -18,10 +18,136 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Fixes from the full UI/backend review
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `8d7ad74`)
+- **Background:** A four-part review (customer UI, staff/admin UI, booking
+  and money backend, shop/reports/auth backend) found the issues below. The
+  owner said "leave the pending, fix the rest": three items that need the
+  owner's decision are left as they are (see Not done).
+
+### Changed — backend (`golang-backend/`)
+1. **Refunds are records now** (`model.Refund`, table `refunds`): every
+   refund is a row (amount, reason, who, when); `Payment.RefundAmount` is
+   the running total. The day summary and the dashboard's all-time refunds
+   count the rows, so a refund is counted on the day it was made.
+   One-off migrations run through the new `app_migrations` table (`once()`
+   in `main.go`): back-fill refund rows from old payments, and the earlier
+   EXPIRED status migration.
+2. **Cancel (`CancelBookings`)**: `refund` only refunds money that was
+   received (paid hours, or a slip waiting/late) and is ignored otherwise;
+   each row is updated only if still PENDING/CONFIRMED (a concurrent change
+   fails the call instead of being overwritten); cancelling some hours of an
+   unpaid group lowers the amount and regenerates the QR; with nothing left
+   a waiting payment becomes REFUNDED (if refunded) or REJECTED.
+3. **Refund payment**: needs money received; cancels any hours still
+   pending; refunds at most `amount - refunded - what standing hours pay
+   for`; closes as REFUNDED when no paid hour is left. **Verify** refuses a
+   payment that has a refund.
+4. **Locks:** verify, mark-cash, cash walk-ins and cash sales lock the user
+   / the cash drawer (shared lock against shift open/close) in a fixed
+   order; re-reserving late payments locks court groups in key order.
+   Deadlocks / serialization failures answer 409 "busy, try again".
+5. **No-show** and **rental return** are conditional updates (no double
+   effect); a voided sale's rentals are stamped returned and can't be
+   "returned" again; a cash sale from an already-closed shift can't be
+   voided; void locks the user before taking points back.
+6. **Shifts** store their cash breakdown at close, so the closed-shift view
+   no longer changes when later data does.
+7. **Reports:** counter totals split F&B / equipment / rentals by product
+   (a mixed cart was all counted as one); occupancy ignores inactive courts;
+   the month report lists a group's refund once (on the paying row).
+8. **Auth:** login throttling counts the attempt before checking the
+   password (a burst can't slip more than 5 tries through); registration
+   checks name length, phone length, email format (an "email" that is a
+   phone number could take over that login) and password ≤ 72 bytes (400).
+9. **Slots:** default date is today in Bangkok; a bad date answers 400.
+10. **Staff booking list** (`GET /bookings?date=`) now includes each row's
+    group `payment` {method, status} for receipts.
+
+### Changed — frontend (`src/`)
+1. **Bangkok dates everywhere:** `localDateOf`/`getTodayDateStr` use
+   Asia/Bangkok whatever the browser's zone; quick date buttons, the local
+   dashboard, CSV times (`bangkokStamp`) and audit-log times too.
+2. **Customer page:** a refresh no longer resets the chosen date or wipes
+   picked hours (they reset only when the court list really changes); LINE
+   simulator no longer crashes on old time-only timestamps (stored as ISO
+   now); step 2 prices with the account's tier and shows the struck price
+   only when there is a discount; meeting-room hours say "ราคาปกติ" instead
+   of Off-Peak, off-peak-only follows the price rule; grid cells work with
+   the keyboard (Tab + Enter/Space, aria labels); browser-only mode re-reads
+   the signed-in customer (fresh points, signed out if suspended);
+   redemptions go through the points ledger. Dead `getSlotStatus` removed.
+3. **Staff POS:** one action at a time (`guarded`, buttons greyed while
+   busy - a double click made two walk-ins); a waiting PromptPay walk-in
+   that was settled/cancelled/expired elsewhere is cleared instead of
+   blocking new walk-ins; cancel offers a refund when a slip is waiting;
+   receipts list the whole group, show the real payment method and the
+   cashier, and can't be printed for an unpaid booking; the day report uses
+   today's bookings (not the walk-in tab's date) and the server's paid count;
+   browser-only day totals count money by the day it was received; slip
+   upload time shown as date+time; staff name/role refreshed from the
+   server; logging out clears the previous person's screen; a used
+   free-hour voucher clears the voucher check; off-peak-only courts checked
+   for walk-ins; browser-only mode: phone lookup matches customers only,
+   mark-cash only for unpaid/waiting/expired payments, verify refuses a
+   refunded payment; amounts formatted with `formatBaht`.
+4. **Admin:** closures and court closing pass `refund=true` (the server
+   refunds only what was received); Excel import keeps a 0 price/stock;
+   browser-only mode: pricing rules can't overlap (as on the server),
+   editing a rule doesn't re-enable it, manual point changes need a reason
+   and go through the ledger, the CSV lists a group refund once.
+5. **Other:** audit ids use `crypto.randomUUID`; the seeded pending demo
+   payment has a real QR and is created at seed time (it used to expire at
+   once).
+
+### Docs
+- `golang-backend/README.md`: refund rules, registration checks, staff
+  booking list payment field. `TESTING_CHECKLIST.md`: 6d.9-6d.14,
+  7.12-7.16.
+
+### Verified
+- `go vet`, `go test ./...` (incl. new `TestLoginThrottleBurstOnlyLetsFiveThrough`),
+  `tsc`, vitest 32/32 (new Bangkok date tests; also run with
+  `TZ=America/New_York`).
+- Live API scenarios against Postgres (`e2e10/11.sh`), all as expected:
+  partial cancel of an unpaid group 288→144 with a new QR, then verify OK;
+  waiting slip cancelled without refund → REJECTED, refund later →
+  REFUNDED; cancel with refund → REFUNDED and out of the queue; partial
+  refund of a waiting slip closes it and verify is refused; refund capped
+  at what no standing hour pays for; refunds per day from refund rows;
+  voided rental can't be returned; void refused for a closed shift's cash
+  sale; mixed cart splits +15 F&B / +60 equipment; registration rejects a
+  phone-as-email and a 73+ char password; slots with a bad date → 400.
+- Playwright (`ui14-16.cjs`), no page errors: API mode - double-clicked
+  PromptPay walk-in made one booking; a pending walk-in blocks the next
+  until settled, and disappears after it is cancelled on the server;
+  cash walk-in receipt shows "เงินสด (CASH)" with print enabled; day report
+  and customer grid load. Browser-only mode - old LINE timestamp shown
+  without a crash; keyboard Enter picks a grid cell; after a refresh the
+  chosen date and hour stay; redemption writes a REDEEM ledger entry
+  (500→495); a suspended customer is signed out on reload.
+
+### Not done / follow-ups (owner to decide)
+- **Blind cash count:** staff see the expected cash before counting the
+  drawer; hiding it until the count is entered is a policy choice.
+- **Manager permissions vs. spec:** what managers may do with point
+  adjustments and the dashboard differs from REQUIREMENTS.md. Confirm which
+  is wanted.
+- **Basketball closure:** a closure on the full basketball court does not
+  block the half courts (and vice versa). Decide whether a closure should
+  cover the whole court group.
+- Low: the login throttle's per-account limit is keyed by the typed
+  identity, not the resolved user (phone vs. email of the same account
+  count separately).
+
+---
+
 ## 2026-10-20 — Customer booking on phones
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `f57397e`)
+- **Commit(s):** `8d7ad74` (on `main`, parent `f57397e`)
 - **Background:** Owner approved the plan: automatic phone layout with a
   grid/list toggle; show all hours (taken ones greyed); quick day buttons;
   Staff POS / Admin tablet layout left for a later round.

@@ -32,6 +32,13 @@ func IsUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// IsRetryableConflict reports a deadlock (40P01) or serialization failure
+// (40001): two requests collided; repeating the request will work.
+func IsRetryableConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
+}
+
 // Create inserts a brand new customer or staff member user profile row.
 func (r *UserRepository) Create(ctx context.Context, u *model.User) error {
 	if err := r.db.WithContext(ctx).Create(u).Error; err != nil {

@@ -59,7 +59,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // (with the price the server actually charges, member discount included)
   // and confirm only once the transfer has arrived.
   const [pendingWalkin, setPendingWalkin] = useState<{
-    paymentId: string; bookingCode: string; amount: number; qrPayload: string; label: string;
+    paymentId: string; bookingCode: string; date: string; amount: number; qrPayload: string; label: string;
   } | null>(null);
 
   // Receipt printed preview overlay target states
@@ -106,19 +106,27 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [reviewQueue, setReviewQueue] = useState<api.PaymentForReview[]>([]);
   // API mode: today's booking money by method, for the cash-drawer report.
   const [daySummary, setDaySummary] = useState<api.DaySummary | null>(null);
+  // API mode: today's bookings for the day report - `bookings` holds the
+  // walk-in tab's chosen date, which need not be today.
+  const [todayBookingsApi, setTodayBookingsApi] = useState<Booking[]>([]);
   // Reward voucher check at the counter (FR-4.3).
   const [voucherCode, setVoucherCode] = useState<string>('');
   const [voucherFound, setVoucherFound] = useState<{ code: string; reward: string; customer: string; name: string; phone: string; freeHour: boolean; status: string; expires?: string } | null>(null);
   const [voucherError, setVoucherError] = useState<string | null>(null);
 
+  // Effects key on the id and role, not the object: the session check below
+  // replaces staffUser with the server's fresh copy on every refresh.
+  const staffUserId = staffUser?.id;
+  const staffRole = staffUser?.role;
   useEffect(() => {
-    if (!api.USE_BACKEND || !staffUser) return;
+    if (!api.USE_BACKEND || !staffUserId) return;
     let cancelled = false;
-    const isManager = staffUser.role === UserRole.MANAGER || staffUser.role === UserRole.ADMIN;
+    const isManager = staffRole === UserRole.MANAGER || staffRole === UserRole.ADMIN;
     Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals(),
-      api.currentShift(), isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[])])
-      .then(([queue, summary, prods, dayOrders, rentals, openShift, history]) => {
+      api.currentShift(), isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[]), api.listBookingsByDate(getTodayDateStr(), 'staff')])
+      .then(([queue, summary, prods, dayOrders, rentals, openShift, history, todays]) => {
         if (cancelled) return;
+        setTodayBookingsApi(todays);
         setShift(openShift);
         setShiftHistory(history);
         setReviewQueue(queue);
@@ -134,13 +142,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         setStaffApiError(err.message);
       });
     return () => { cancelled = true; };
-  }, [triggerRefresh, staffUser]);
+  }, [triggerRefresh, staffUserId, staffRole]);
 
   // API mode: the walk-in grid shows the backend's bookings for the chosen
   // date (online + walk-in), so the counter can't sell a slot that was
   // already booked online. Also re-validates the staff session.
   useEffect(() => {
-    if (!api.USE_BACKEND || !staffUser || !walkinDate) return;
+    if (!api.USE_BACKEND || !staffUserId || !walkinDate) return;
     let cancelled = false;
     (async () => {
       try {
@@ -152,6 +160,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           setStaffApiError('เซสชันพนักงานหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
+        // Name or role changed by an admin since sign-in.
+        setStaffUser(me);
         const [apiCourts, dayBookings, closures] = await Promise.all([
           api.listCourts(),
           api.listBookingsByDate(walkinDate, 'staff'),
@@ -167,7 +177,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       }
     })();
     return () => { cancelled = true; };
-  }, [triggerRefresh, staffUser, walkinDate]);
+  }, [triggerRefresh, staffUserId, walkinDate]);
 
   const handleStaffLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -190,10 +200,28 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       .catch(err => setStaffApiError(err.message));
   };
 
+  // Nothing of the last staff member's session is left on screen for the
+  // next one.
   const handleStaffLogout = () => {
     api.logout('staff');
     setStaffUser(null);
     setReviewQueue([]);
+    setDaySummary(null);
+    setTodayBookingsApi([]);
+    setShift(null);
+    setShiftHistory([]);
+    setClosedShift(null);
+    setPendingWalkin(null);
+    setSelectedReceiptBooking(null);
+    setSelectedReceiptOrder(null);
+    setCartItems([]);
+    setVoucherCode('');
+    setVoucherFound(null);
+    setVoucherError(null);
+    setRejectId(null);
+    setRejectReason('');
+    setWalkinSuccessAlert(null);
+    setCartSuccessAlert(null);
   };
 
   // Load everything
@@ -241,6 +269,31 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
   }, [courts, products]);
 
+  // A PromptPay walk-in left waiting can be settled elsewhere - approved in
+  // the slip queue, cancelled, or expired after the payment hold - and would
+  // then block every new walk-in. Drop it once its payment is no longer
+  // waiting (API mode: as seen in the walk-in date's bookings).
+  // Until the reloaded lists include it, its absence means nothing.
+  const pendingSeen = React.useRef(false);
+  useEffect(() => {
+    if (!pendingWalkin) { pendingSeen.current = false; return; }
+    let status: PaymentStatus | undefined;
+    let present: boolean;
+    if (api.USE_BACKEND) {
+      if (walkinDate !== pendingWalkin.date) return;
+      // Cancelled rows are left out of the list.
+      const row = bookings.find(b => b.bookingCode === pendingWalkin.bookingCode);
+      present = !!row;
+      status = row?.paymentStatus;
+    } else {
+      const pay = payments.find(p => p.id === pendingWalkin.paymentId);
+      present = !!pay;
+      status = pay?.status;
+    }
+    if (present) pendingSeen.current = true;
+    if ((pendingSeen.current && !present) || (status && status !== PaymentStatus.PENDING)) setPendingWalkin(null);
+  }, [bookings, payments, pendingWalkin, walkinDate]);
+
   // Standard line push simulation
   const pushLineMessage = (phone: string, text: string, type: "CREATED" | "CONFIRMED" | "REMINDER" | "CANCELLED") => {
     const rawLine = StorageService.get<any[]>('line_messages', []);
@@ -253,6 +306,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       text
     };
     StorageService.set('line_messages', [newMsg, ...rawLine]);
+  };
+
+  // A used free-hour voucher: clear the voucher check (it would still show
+  // the code as usable) and go back to the default payment method.
+  const resetVoucherCheck = () => {
+    setVoucherCode('');
+    setVoucherFound(null);
+    setVoucherError(null);
+    setWalkinPayMethod(PaymentMethod.PROMPTPAY);
   };
 
   // Walk-in booking submission
@@ -288,6 +350,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return;
     }
 
+    // Half courts and other off-peak-only courts sell off-peak hours only
+    // (the server refuses the rest).
+    if (slotCourt?.offPeakOnly && calculatePrice(slotCourt.type, walkinDate, walkinSlot, MemberType.NORMAL, slotCourt).priceType !== PriceType.OFFPEAK) {
+      notify('สนามนี้เปิดให้จองเฉพาะช่วง Off-Peak กรุณาเลือกเวลาอื่น');
+      return;
+    }
+
     // Special DayOff override check
     const hourNum = parseInt(walkinSlot.split(':')[0], 10);
     const blockedReason = daysOff.find(
@@ -319,7 +388,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       // The server re-checks availability against every booking (online
       // and walk-in), prices the slot, and credits a registered customer
       // with this phone - the checks above are just early feedback.
-      api.createWalkInBooking({
+      return api.createWalkInBooking({
         date: walkinDate,
         slots: [{ courtId: walkinCourtId, startTime: walkinSlot }],
         customerName: walkinName,
@@ -341,6 +410,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
             setPendingWalkin({
               paymentId: group.payment.id,
               bookingCode: group.bookingCode,
+              date: b.date,
               amount: group.totalAmount,
               qrPayload: group.promptPayPayload,
               label: `${courtName} ${b.date} ${b.startTime}-${b.endTime} (${walkinName})`
@@ -350,13 +420,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           setWalkinName('');
           setWalkinPhone('');
           setWalkinVoucherCode('');
+          if (useVoucher) resetVoucherCheck();
           onRefreshAll();
         })
         .catch(err => {
           notify(`จองไม่สำเร็จ: ${err.message}`);
           onRefreshAll();
         });
-      return;
     }
 
     const courtObj = courts.find(c => c.id === walkinCourtId);
@@ -371,7 +441,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         : 'คูปองนี้ถูกใช้ไปแล้วหรือหมดอายุ');
       return;
     }
-    const registeredUser = voucher ? usersList.find(u => u.id === voucher.userId) : usersList.find(u => normalizePhone(u.phone) === normalizedPhone);
+    const registeredUser = voucher ? usersList.find(u => u.id === voucher.userId) : usersList.find(u => u.role === UserRole.CUSTOMER && normalizePhone(u.phone) === normalizedPhone);
     const resolvedUserId = registeredUser ? registeredUser.id : 'u-walkin-' + Date.now();
 
     // Price through the same engine the grid preview uses (FR-2), instead of
@@ -452,6 +522,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       setPendingWalkin({
         paymentId: newPayment.id,
         bookingCode: bkCode,
+        date: walkinDate,
         amount: priceDetail.total,
         qrPayload: qrPayload || '',
         label: `${courtObj?.name || ''} ${walkinDate} ${walkinSlot}-${newBooking.endTime} (${walkinName})`
@@ -463,6 +534,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setWalkinName('');
     setWalkinPhone('');
     setWalkinVoucherCode('');
+    if (useVoucher) resetVoucherCheck();
     onRefreshAll();
   };
 
@@ -510,6 +582,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (paymentObj.status !== PaymentStatus.SLIP_UPLOADED && paymentObj.status !== PaymentStatus.PENDING) {
       notify(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
       onRefreshAll();
+      return Promise.resolve(false);
+    }
+    if ((paymentObj.refundAmount || 0) > 0) {
+      notify('รายการนี้บันทึกคืนเงินไปแล้ว อนุมัติไม่ได้');
       return Promise.resolve(false);
     }
 
@@ -652,12 +728,30 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setSelectedReceiptOrder(null);
   };
 
+  // One counter action at a time: a double click or an impatient second tap
+  // must not send the same sale, booking or refund twice. Wraps the button
+  // handlers (not the handlers they call), and `busy` greys the buttons.
+  const busyRef = React.useRef(false);
+  const [busy, setBusy] = useState(false);
+  const guarded = <A extends unknown[]>(fn: (...args: A) => unknown) => async (...args: A) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try { await fn(...args); } finally { busyRef.current = false; setBusy(false); }
+  };
+
   // Manager/admin cancellation of a booking (this hour or the whole group),
   // optionally recording a refund of what was paid. Reason required.
   const handleCancelBooking = async (booking: Booking) => {
     const allBookings = api.USE_BACKEND ? bookings : StorageService.get<Booking[]>('bookings', []);
     const group = bookingGroupOf(booking, allBookings).filter(b => b.status === BookingStatus.PENDING_PAYMENT || b.status === BookingStatus.CONFIRMED);
-    const paidOf = (list: Booking[]) => list.filter(b => b.status === BookingStatus.CONFIRMED).reduce((s, b) => s + b.totalAmount, 0);
+    // A slip waiting for review means the customer has (probably) sent the
+    // money for the unpaid hours too, so their refund is offered as well.
+    const groupIdSet = new Set(bookingGroupOf(booking, allBookings).map(b => b.id));
+    const payStatus = api.USE_BACKEND ? booking.paymentStatus : payments.find(p => groupIdSet.has(p.bookingId))?.status;
+    const slipIn = payStatus === PaymentStatus.SLIP_UPLOADED;
+    const paidOf = (list: Booking[]) => roundBaht(list.filter(b => b.status === BookingStatus.CONFIRMED || (slipIn && b.status === BookingStatus.PENDING_PAYMENT))
+      .reduce((s, b) => s + b.totalAmount, 0));
     const groupPaid = paidOf(group), hourPaid = paidOf([booking]);
     // One dialog: reason, which hours, and whether a refund is recorded.
     // Nothing to refund on a free (voucher) hour - the voucher is given back instead.
@@ -670,7 +764,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         { value: 'one', label: `ยกเลิกเฉพาะ ${booking.startTime}-${booking.endTime}` }
       ] : undefined,
       checkbox: groupPaid > 0 ? {
-        label: `บันทึกว่าคืนเงินค่าสนามที่ชำระแล้ว (โอนคืนลูกค้าเอง) — ${group.length > 1 ? `ทั้งหมด ${formatBaht(groupPaid)} / ชั่วโมงนี้ ${formatBaht(hourPaid)}` : formatBaht(groupPaid)} บาท`,
+        label: `บันทึกว่าคืนเงินค่าสนามที่${slipIn ? 'ลูกค้าโอนมาแล้ว (สลิปรอตรวจ)' : 'ชำระแล้ว'} (โอนคืนลูกค้าเอง) — ${group.length > 1 ? `ทั้งหมด ${formatBaht(groupPaid)} / ชั่วโมงนี้ ${formatBaht(hourPaid)}` : formatBaht(groupPaid)} บาท`,
         defaultChecked: true
       } : undefined,
       okLabel: 'ยืนยันยกเลิก',
@@ -684,7 +778,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const refund = answer.checked && paidOf(target) > 0;
 
     if (api.USE_BACKEND) {
-      api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id])
+      return api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id])
         .then(res => {
           onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { ...res, reason });
           closeBookingDetail();
@@ -692,13 +786,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}`);
         })
         .catch(err => notify(`ยกเลิกไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     // Browser-only mode: same rules on localStorage.
     const ids = new Set(target.map(b => b.id));
     const paidRows = target.filter(b => b.status === BookingStatus.CONFIRMED);
-    const refundAmount = roundBaht(target.reduce((s, b) => s + b.totalAmount, 0));
+    const refundAmount = paidOf(target);
     StorageService.set('bookings', allBookings.map(b => ids.has(b.id)
       ? { ...b, status: BookingStatus.CANCELLED, cancellationReason: `ยกเลิกโดยผู้จัดการ: ${reason}` } : b));
     const groupIds = new Set(bookingGroupOf(booking, allBookings).map(b => b.id));
@@ -707,8 +800,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       if (!groupIds.has(p.bookingId)) return p;
       if (refund) {
         const total = roundBaht((p.refundAmount || 0) + refundAmount);
+        // A refunded waiting slip can't be approved any more; with nothing
+        // left standing the payment is closed as refunded.
         return { ...p, refundAmount: total, refundReason: reason, refundedAt: new Date().toISOString(), refundedBy: 'manager',
-          status: total >= p.amount ? PaymentStatus.REFUNDED : p.status };
+          status: total >= p.amount || remaining === 0 ? PaymentStatus.REFUNDED : p.status };
       }
       if (remaining === 0 && (p.status === PaymentStatus.PENDING || p.status === PaymentStatus.SLIP_UPLOADED)) {
         return { ...p, status: PaymentStatus.REJECTED, refundReason: reason };
@@ -737,14 +832,19 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       notify(`บันทึกรับเงินสดแล้ว ยืนยัน ${count} ชั่วโมง${pts ? ` (+${pts} แต้ม)` : ''}`);
     };
     if (api.USE_BACKEND) {
-      api.markBookingPaidInCash(booking.id)
+      return api.markBookingPaidInCash(booking.id)
         .then(res => done(res.bookingsCount, res.pointsAwarded))
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
     }
     const allBookings = StorageService.get<Booking[]>('bookings', []);
     const group = bookingGroupOf(booking, allBookings);
     const groupIds = new Set(group.map(b => b.id));
+    const groupPay = StorageService.get<Payment[]>('payments', []).find(p => groupIds.has(p.bookingId));
+    if (groupPay && ![PaymentStatus.PENDING, PaymentStatus.SLIP_UPLOADED, PaymentStatus.EXPIRED].includes(groupPay.status)) {
+      notify(`การชำระเงินของรายการนี้ถูกดำเนินการไปแล้ว (${groupPay.status})`);
+      onRefreshAll();
+      return;
+    }
     const pending = group.filter(b => b.status === BookingStatus.PENDING_PAYMENT);
     const pendingIds = new Set(pending.map(b => b.id));
     StorageService.set('bookings', allBookings.map(b => pendingIds.has(b.id) ? { ...b, status: BookingStatus.CONFIRMED } : b));
@@ -764,8 +864,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       onRefreshAll();
     };
     if (api.USE_BACKEND) {
-      api.markNoShow(booking.id).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
+      return api.markNoShow(booking.id).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
     }
     StorageService.set('bookings', StorageService.get<Booking[]>('bookings', []).map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
     if (booking.totalAmount > 0) { // a free (voucher) hour earned no point to take back
@@ -780,14 +879,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const reason = await askText(`เหตุผลการคืนเงิน ${formatBaht(pay.amount - (pay.refundAmount || 0))} บาท (จำเป็น):`, { title: '💸 คืนเงิน', okLabel: 'บันทึกคืนเงิน' });
     if (!reason) return;
     if (api.USE_BACKEND) {
-      api.refundPayment(pay.id, reason)
+      return api.refundPayment(pay.id, reason)
         .then(p => {
           onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: p.refundAmount, reason });
           onRefreshAll();
           notify(`บันทึกคืนเงิน ${formatBaht(p.refundAmount || 0)} บาทแล้ว`);
         })
         .catch(err => notify(`คืนเงินไม่สำเร็จ: ${err.message}`));
-      return;
     }
     const allBookings = StorageService.get<Booking[]>('bookings', []);
     const root = allBookings.find(b => b.id === pay.bookingId);
@@ -808,12 +906,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const code = voucherCode.trim().toUpperCase();
     if (!code) return;
     if (api.USE_BACKEND) {
-      api.lookupVoucher(code)
+      return api.lookupVoucher(code)
         .then(v => setVoucherFound({ code: v.code, reward: `${v.rewardEmoji} ${v.rewardName}`, customer: `${v.userName || ''} ${v.userPhone || ''}`,
           name: v.userName || '', phone: v.userPhone || '', freeHour: v.rewardKind === 'FREE_OFFPEAK_HOUR', status: v.status,
           expires: formatDate(v.expiresAt) }))
         .catch(err => setVoucherError(err instanceof api.ApiError && err.status === 404 ? 'ไม่พบรหัสนี้' : err.message));
-      return;
     }
     const v = StorageService.get<LocalVoucher[]>('redemptions', []).find(r => r.claimCode === code);
     if (!v) { setVoucherError('ไม่พบรหัสนี้'); return; }
@@ -842,8 +939,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       notify(`มอบของรางวัล ${voucherFound.reward} แล้ว`);
     };
     if (api.USE_BACKEND) {
-      api.dispenseVoucher(code).then(done).catch(err => setVoucherError(err.message));
-      return;
+      return api.dispenseVoucher(code).then(done).catch(err => setVoucherError(err.message));
     }
     const list = StorageService.get<LocalVoucher[]>('redemptions', []);
     if (list.find(r => r.claimCode === code)?.status === 'REDEEMED') { setVoucherError('รหัสนี้รับของไปแล้ว'); return; }
@@ -854,9 +950,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // A PromptPay walk-in waiting for staff to see the transfer arrive.
   const confirmPendingWalkin = () => {
     if (!pendingWalkin) return;
-    handleVerifySlip(pendingWalkin.paymentId).then(ok => {
+    return handleVerifySlip(pendingWalkin.paymentId).then(ok => {
       if (ok) {
-        setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${pendingWalkin.bookingCode} ยืนยันการรับเงิน ${pendingWalkin.amount} บาทแล้ว!`);
+        setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${pendingWalkin.bookingCode} ยืนยันการรับเงิน ${formatBaht(pendingWalkin.amount)} บาทแล้ว!`);
         setPendingWalkin(null);
       }
     });
@@ -865,7 +961,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const cancelPendingWalkin = async () => {
     if (!pendingWalkin) return;
     if (!(await ask(`ยกเลิกการจอง ${pendingWalkin.bookingCode} ที่ยังไม่ได้ชำระเงินใช่หรือไม่?`, { okLabel: 'ยกเลิกการจอง', cancelLabel: 'ไม่ยกเลิก', danger: true }))) return;
-    handleRejectSlip(pendingWalkin.paymentId, 'ยกเลิกที่เคาน์เตอร์ ยังไม่ได้ชำระเงิน').then(ok => {
+    return handleRejectSlip(pendingWalkin.paymentId, 'ยกเลิกที่เคาน์เตอร์ ยังไม่ได้ชำระเงิน').then(ok => {
       if (ok) setPendingWalkin(null);
     });
   };
@@ -929,7 +1025,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (api.USE_BACKEND) {
       // The server prices the items, checks and takes the stock, and
       // credits the customer with this phone.
-      api.checkout({
+      return api.checkout({
         type, paymentMethod: cartPayMethod, customerName: cartCustomerName, customerPhone: cartCustomerPhone,
         courtId: cartCourtId || undefined, items: cartItems.map(i => ({ productId: i.product.id, qty: i.qty }))
       })
@@ -938,7 +1034,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           done(r.order.orderCode, r.order.totalAmount, r.pointsEarned);
         })
         .catch(err => { notify(`ขายไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
-      return;
     }
 
     // Browser-only mode: same rules on localStorage, with fresh stock.
@@ -1020,7 +1115,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     };
 
     if (api.USE_BACKEND) {
-      api.checkout({
+      return api.checkout({
         type: OrderType.EQUIPMENT_RENT, paymentMethod: PaymentMethod.CASH, customerName: `${rentalRenterName} (เช่าอุปกรณ์)`,
         customerPhone: rentalCustomerPhone, courtId: rentalCourtId || undefined,
         items: [{ productId: prodObj.id, variantId: variant?.id, qty: 1 }]
@@ -1030,7 +1125,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           done(r.order.orderCode, r.pointsEarned);
         })
         .catch(err => { notify(`ปล่อยเช่าไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
-      return;
     }
 
     const orderId = 'o-rental-' + Date.now();
@@ -1077,14 +1171,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // closes once every item is back.
   const handleReturnItem = (orderId: string, itemId: string) => {
     if (api.USE_BACKEND) {
-      api.returnRentalItem(itemId)
+      return api.returnRentalItem(itemId)
         .then(o => {
           onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', o.id, null, { item: itemId, status: o.status });
           onRefreshAll();
           notify('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
         })
         .catch(err => { notify(`บันทึกคืนไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
-      return;
     }
     const rawOrders = StorageService.get<Order[]>('orders', []);
     const orderObj = rawOrders.find(o => o.id === orderId);
@@ -1120,8 +1213,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
     setClosedShift(null);
     if (api.USE_BACKEND) {
-      api.openShift(float).then(() => { setShiftFloatInput(''); onRefreshAll(); }).catch(err => notify(`เปิดกะไม่สำเร็จ: ${err.message}`));
-      return;
+      return api.openShift(float).then(() => { setShiftFloatInput(''); onRefreshAll(); }).catch(err => notify(`เปิดกะไม่สำเร็จ: ${err.message}`));
     }
     const list = StorageService.get<Shift[]>('shifts', []);
     if (list.some(sh => !sh.closedAt)) { notify('มีกะที่เปิดอยู่แล้ว ปิดกะก่อน'); return; }
@@ -1153,8 +1245,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       onRefreshAll();
     };
     if (api.USE_BACKEND) {
-      api.closeShift(counted, shiftNote).then(done).catch(err => notify(`ปิดกะไม่สำเร็จ: ${err.message}`));
-      return;
+      return api.closeShift(counted, shiftNote).then(done).catch(err => notify(`ปิดกะไม่สำเร็จ: ${err.message}`));
     }
     const closedAt = new Date().toISOString();
     const closed: Shift = { ...shift, closedAt, countedCash: roundBaht(counted), expectedCash: shift.expected, varianceCash: variance, notes: shiftNote.trim() || undefined, closedByName: 'คุณ กิตติ (เดโม)' };
@@ -1169,10 +1260,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const reason = await askText(`เหตุผลการยกเลิกบิล ${order.orderCode} (${formatBaht(order.totalAmount)} บาท)\nคืนเงินลูกค้าแล้วค่อยยืนยัน`, { title: '✖ ยกเลิกบิล', okLabel: 'ยกเลิกบิล' });
     if (!reason) return;
     if (api.USE_BACKEND) {
-      api.voidOrder(order.id, reason)
+      return api.voidOrder(order.id, reason)
         .then(() => { onRefreshAll(); notify(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)`); })
         .catch(err => notify(`ยกเลิกบิลไม่สำเร็จ: ${err.message}`));
-      return;
     }
     if (localDateOf(order.createdAt) !== getTodayDateStr()) { notify('ยกเลิกได้เฉพาะบิลของวันนี้'); return; }
     StorageService.set('products', StorageService.get<Product[]>('products', []).map(p => {
@@ -1198,9 +1288,34 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const todaysOrders = () => orders.filter(o => o.status !== OrderStatus.CANCELLED &&
     (api.USE_BACKEND || localDateOf(o.createdAt) === getTodayDateStr()));
 
+  const todayBookingList = api.USE_BACKEND ? todayBookingsApi : bookings.filter(b => b.date === getTodayDateStr());
+
+  // The open receipt: a booking's whole group (one receipt per payment),
+  // how it was paid, and whether it is paid at all - an unpaid booking
+  // gets no receipt.
+  const receipt = (() => {
+    const b = selectedReceiptBooking;
+    if (b) {
+      const pool = api.USE_BACKEND ? [...new Map([...bookings, ...todayBookingsApi].map(x => [x.id, x])).values()] : bookings;
+      const group = bookingGroupOf(b, pool).filter(x => x.status !== BookingStatus.CANCELLED);
+      const rows = (group.length ? group : [b]).sort((x, y) => (x.startTime + x.courtId).localeCompare(y.startTime + y.courtId));
+      const paidRows = rows.filter(isPaidBooking);
+      const ids = new Set(bookingGroupOf(b, pool).map(x => x.id));
+      const method = api.USE_BACKEND ? b.paymentMethod : payments.find(p => ids.has(p.bookingId))?.method;
+      return { code: b.bookingCode, rows: paidRows.length ? paidRows : rows, total: roundBaht(paidRows.reduce((n, x) => n + x.totalAmount, 0)), method, paid: paidRows.length > 0 };
+    }
+    const o = selectedReceiptOrder;
+    if (o) return { code: o.orderCode, rows: [] as Booking[], total: o.totalAmount, method: o.paymentMethod, paid: o.status !== OrderStatus.CANCELLED };
+    return null;
+  })();
+  const METHOD_LABEL: Partial<Record<PaymentMethod, string>> = {
+    [PaymentMethod.CASH]: 'เงินสด (CASH)',
+    [PaymentMethod.PROMPTPAY]: 'โอนผ่านพร้อมเพย์ (PROMPTPAY)',
+    [PaymentMethod.VOUCHER]: 'คูปองชั่วโมงฟรี (VOUCHER)'
+  };
   const calculateLedger = () => {
     const todayStr = getTodayDateStr();
-    const paidBookings = bookings.filter(b => b.date === todayStr && isPaidBooking(b));
+    const paidBookings = todayBookingList.filter(isPaidBooking);
 
     // Day's counter orders: from the server's summary in API mode.
     const dayOrders = todaysOrders();
@@ -1217,22 +1332,21 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       qrFromBookings = daySummary?.promptpayVerified ?? 0;
       refunded = daySummary?.refunded ?? 0;
     } else {
-      // The group's payment hangs off its first row: look it up per group.
-      const paymentFor = (b: Booking) => {
-        const ids = new Set(bookingGroupOf(b, bookings).map(x => x.id));
-        return payments.find(p => ids.has(p.bookingId));
-      };
-      for (const b of paidBookings) {
-        const method = paymentFor(b)?.method;
-        if (method === PaymentMethod.CASH) cashFromBookings += b.totalAmount;
-        else if (method === PaymentMethod.PROMPTPAY) qrFromBookings += b.totalAmount;
+      // Money received today, whatever day it was for - as the server
+      // counts it: payments approved today (refunded ones too, their refund
+      // is counted separately).
+      for (const p of payments) {
+        if (!p.verifiedAt || localDateOf(p.verifiedAt) !== todayStr) continue;
+        if (p.status !== PaymentStatus.VERIFIED && p.status !== PaymentStatus.REFUNDED) continue;
+        if (p.method === PaymentMethod.CASH) cashFromBookings += p.amount;
+        else if (p.method === PaymentMethod.PROMPTPAY) qrFromBookings += p.amount;
       }
-      refunded = payments.filter(p => p.refundedAt?.startsWith(todayStr)).reduce((sum, p) => sum + (p.refundAmount || 0), 0);
+      refunded = payments.filter(p => p.refundedAt && localDateOf(p.refundedAt) === todayStr).reduce((sum, p) => sum + (p.refundAmount || 0), 0);
     }
     const bookingIncome = roundBaht(cashFromBookings + qrFromBookings);
 
     return {
-      bookingCount: paidBookings.length,
+      bookingCount: api.USE_BACKEND ? daySummary?.paidBookings ?? paidBookings.length : paidBookings.length,
       walkinCount: paidBookings.filter(b => b.createdBy !== 'customer' && b.createdBy !== b.userId).length,
       bookingIncome,
       fbIncome,
@@ -1361,7 +1475,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 </div>
               )}
 
-              <form onSubmit={handleWalkinBookingSubmit} className="space-y-4 text-xs">
+              <form onSubmit={e => { e.preventDefault(); void guarded(handleWalkinBookingSubmit)(e); }} className="space-y-4 text-xs">
                 <div>
                   <label className="block text-slate-700 font-semibold mb-1.5">1. เลือกสนามกีฬาที่ใช้</label>
                   <select 
@@ -1500,10 +1614,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={confirmPendingWalkin} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">
+                    <button type="button" disabled={busy} onClick={guarded(confirmPendingWalkin)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">
                       ✅ ได้รับเงินแล้ว ยืนยันการจอง
                     </button>
-                    <button type="button" onClick={cancelPendingWalkin} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg">
+                    <button type="button" disabled={busy} onClick={guarded(cancelPendingWalkin)} className="disabled:opacity-50 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg">
                       ยกเลิกรายการ
                     </button>
                   </div>
@@ -1526,7 +1640,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       <div>
                         <p className="font-bold text-slate-800">{courts.find(c => c.id === b.courtId)?.name}</p>
                         <p className="text-[10px] text-slate-500">ผู้จอง: {b.userName} | เวลา: <span className="font-bold text-slate-700">{b.startTime} - {b.endTime} น.</span></p>
-                        <p className="text-[9px] text-slate-400">รหัสจอง: <span className="font-mono">{b.bookingCode}</span> | ยอด: {b.totalAmount} บ.</p>
+                        <p className="text-[9px] text-slate-400">รหัสจอง: <span className="font-mono">{b.bookingCode}</span> | ยอด: {formatBaht(b.totalAmount)} บ.</p>
                       </div>
                       <div className="flex flex-col gap-1 items-end">
                         {b.status === BookingStatus.PENDING_PAYMENT ? (
@@ -1836,7 +1950,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                               <p className="text-[9.5px] font-black text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 mb-1">⚠️ ส่งสลิปหลังหมดเวลา</p>
                             )}
                             <p className="font-extrabold text-emerald-700 text-sm">{formatBaht(pay.amount)} บาท</p>
-                            <p className="text-[9px] text-slate-400">อัพโหลดเมื่อ: {pay.slipUploadedAt ? pay.slipUploadedAt.split('T')[1].slice(0, 5) : 'ไม่ระบุ'}</p>
+                            <p className="text-[9px] text-slate-400">อัพโหลดเมื่อ: {pay.slipUploadedAt ? formatDateTime(pay.slipUploadedAt) : 'ไม่ระบุ'}</p>
                           </div>
                         </div>
 
@@ -1856,7 +1970,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           {canManageBookings && (
                             <button
                               type="button"
-                              onClick={() => handleRefundPayment(pay)}
+                              disabled={busy} onClick={guarded(() => handleRefundPayment(pay))}
                               title="ลูกค้าโอนแล้วแต่ยืนยันการจองไม่ได้ (เช่น ส่งสลิปช้าและมีผู้อื่นจองไปแล้ว) - บันทึกการคืนเงิน"
                               className="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 py-1.5 px-3 rounded text-[11px] font-bold transition"
                             >
@@ -1876,7 +1990,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           
                           <button
                             type="button"
-                            onClick={() => { void handleVerifySlip(pay.id); }}
+                            disabled={busy} onClick={guarded(() => handleVerifySlip(pay.id))}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
                           >
                             <Check className="h-3.5 w-3.5" /> อนุมัติสล็อตจอง
@@ -1917,7 +2031,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
                     <div className="flex gap-2">
                       <button
-                        onClick={() => { void handleRejectSlip(rejectId); }}
+                        disabled={busy} onClick={guarded(() => handleRejectSlip(rejectId))}
                         className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 px-4 rounded"
                       >
                         ยืนยันการปฎิเสธ (Cancel Booking)
@@ -1988,7 +2102,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <span className="text-xs font-bold flex items-center gap-1"><ShoppingCart className="h-4 w-4 text-emerald-400" /> ตะกร้าใบเสร็จรับเงิน F&B</span>
-                  <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">เวลายื่น: {getTodayDateStr()}</span>
+                  <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">วันที่: {formatDate(Date.now())}</span>
                 </div>
 
                 {/* Cart Loop */}
@@ -2105,7 +2219,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   </div>
 
                   <button
-                    onClick={handleCartCheckout}
+                    disabled={busy} onClick={guarded(handleCartCheckout)}
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded text-xs transition"
                   >
                     ยืนยันการรับเงินสด/โอน และตัดตู้สต๊อกคลัง
@@ -2128,7 +2242,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   <p className="text-xs text-slate-500">กรุณากรอกชื่อผู้ประกันแร็กเก็ต สต๊าฟจะเก็บค่าค้ำหรือค่าบริการล่วงหน้าและบันทึกสต๊อก</p>
                 </div>
 
-                <form onSubmit={handleRentalRentSubmit} className="space-y-4 text-xs">
+                <form onSubmit={e => { e.preventDefault(); void guarded(handleRentalRentSubmit)(e); }} className="space-y-4 text-xs">
                   <div>
                     <label className="block text-amber-600 font-bold mb-1.5">🎁 เบอร์โทรสมาชิก (สะสมแต้ม, เว้นได้):</label>
                     <input
@@ -2262,7 +2376,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       </div>
 
                       <button
-                        onClick={() => handleReturnItem(order.id, item.id)}
+                        disabled={busy} onClick={guarded(() => handleReturnItem(order.id, item.id))}
                         className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-3 rounded text-[10px] shadow-sm transition"
                       >
                         📬 บันทึกคืน
@@ -2307,7 +2421,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   </>
                 )}
                 {voucherFound.status === 'ACTIVE' && !voucherFound.freeHour && (
-                  <button type="button" onClick={handleDispenseVoucher} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">มอบของรางวัลแล้ว</button>
+                  <button type="button" disabled={busy} onClick={guarded(handleDispenseVoucher)} className="disabled:opacity-50 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">มอบของรางวัลแล้ว</button>
                 )}
               </div>
             )}
@@ -2327,7 +2441,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     <input id="shift-float" type="number" min={0} value={shiftFloatInput} onChange={e => setShiftFloatInput(e.target.value)}
                       className="w-40 border border-slate-300 rounded-lg px-3 py-2" placeholder="เช่น 2000" />
                   </div>
-                  <button type="button" onClick={handleOpenShift} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg">เปิดกะ</button>
+                  <button type="button" disabled={busy} onClick={guarded(handleOpenShift)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg">เปิดกะ</button>
                   <p className="text-slate-500 w-full">นับเงินทอนในลิ้นชักก่อนเริ่มขาย แล้วกดเปิดกะ ระบบจะรวมเงินสดที่รับระหว่างกะให้อัตโนมัติ</p>
                 </div>
               ) : (
@@ -2348,7 +2462,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       <label className="block text-slate-600 mb-1">หมายเหตุ (จำเป็นถ้ายอดไม่ตรง)</label>
                       <input id="shift-note" value={shiftNote} onChange={e => setShiftNote(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
                     </div>
-                    <button type="button" onClick={handleCloseShift} className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-lg">นับเงินและปิดกะ</button>
+                    <button type="button" disabled={busy} onClick={guarded(handleCloseShift)} className="disabled:opacity-50 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-lg">นับเงินและปิดกะ</button>
                   </div>
                   <p className="text-[10px] text-slate-500">การคืนเงินลูกค้าเป็นการโอน ไม่ได้จ่ายจากลิ้นชัก จึงไม่ถูกหักจากยอดนี้</p>
                 </div>
@@ -2430,11 +2544,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <div className="space-y-2.5">
                   <span className="text-[10.5px] font-bold text-slate-700 block">🥇 รายการจองสนามวันนี้ (Verified Court Bookings):</span>
                   <div className="space-y-2 max-h-[250px] overflow-y-auto border border-slate-100 rounded-lg p-2.5 bg-slate-50/30">
-                    {bookings.filter(b => b.date === getTodayDateStr() && isPaidBooking(b)).map(b => (
+                    {todayBookingList.filter(isPaidBooking).map(b => (
                       <div key={b.id} className="bg-white p-2.5 rounded-lg border border-slate-200 text-[10.5px] flex items-center justify-between hover:bg-slate-50 transition">
                         <div>
                           <p className="font-bold text-slate-800">{courts.find(c => c.id === b.courtId)?.name || 'สนามกีฬาทั่วไป'}</p>
-                          <p className="text-[9.5px] text-slate-500">ผู้จอง: {b.userName} | ยอด: {b.totalAmount} บ.</p>
+                          <p className="text-[9.5px] text-slate-500">ผู้จอง: {b.userName} | ยอด: {formatBaht(b.totalAmount)} บ.</p>
                           <p className="text-[9px] text-[#475569]">เวลา: {b.startTime} น. | รหัส {b.bookingCode}</p>
                         </div>
                         <button
@@ -2449,7 +2563,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         </button>
                       </div>
                     ))}
-                    {bookings.filter(b => b.date === getTodayDateStr() && b.status === BookingStatus.CONFIRMED).length === 0 && (
+                    {todayBookingList.filter(isPaidBooking).length === 0 && (
                       <p className="text-[9.5px] text-slate-400 text-center py-6">ไม่มีรายการจองสนามเวลานี้</p>
                     )}
                   </div>
@@ -2481,7 +2595,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         {canManageBookings && (
                           <button
                             type="button"
-                            onClick={() => handleVoidOrder(o)}
+                            disabled={busy} onClick={guarded(() => handleVoidOrder(o))}
                             className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1 px-2 rounded text-[9.5px] shrink-0 ml-1"
                           >
                             ✖ ยกเลิกบิล
@@ -2569,7 +2683,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 )}
                 <div className="flex justify-between">
                   <span className="font-semibold text-slate-500">ผู้รับชำระ (Cashier):</span>
-                  <span className="italic">Kitti Counter Desk</span>
+                  <span className="italic">{staffUser?.name || 'เคาน์เตอร์'}</span>
                 </div>
               </div>
 
@@ -2584,21 +2698,18 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-[10px]">
-                    {selectedReceiptBooking && (() => {
-                      const courtName = courts.find(c => c.id === selectedReceiptBooking.courtId)?.name || 'สนามหลักคอมเพล็กซ์';
-                      return (
-                        <tr>
-                          <td className="py-1">
-                            <span className="font-medium text-slate-800">{courtName}</span>
-                            <div className="text-[8.5px] text-slate-400 font-mono">
-                              วันที่เล่น {selectedReceiptBooking.date} ({selectedReceiptBooking.startTime} - {selectedReceiptBooking.endTime} น.)
-                            </div>
-                          </td>
-                          <td className="py-1 text-center font-mono">1 คาบ</td>
-                          <td className="py-1 text-right font-mono font-bold text-slate-800">{formatBaht(selectedReceiptBooking.totalAmount)}</td>
-                        </tr>
-                      );
-                    })()}
+                    {selectedReceiptBooking && receipt?.rows.map(row => (
+                      <tr key={row.id}>
+                        <td className="py-1">
+                          <span className="font-medium text-slate-800">{courts.find(c => c.id === row.courtId)?.name || 'สนามหลักคอมเพล็กซ์'}</span>
+                          <div className="text-[8.5px] text-slate-400 font-mono">
+                            วันที่เล่น {row.date} ({row.startTime} - {row.endTime} น.)
+                          </div>
+                        </td>
+                        <td className="py-1 text-center font-mono">1 ชม.</td>
+                        <td className="py-1 text-right font-mono font-bold text-slate-800">{formatBaht(row.totalAmount)}</td>
+                      </tr>
+                    ))}
 
                     {selectedReceiptOrder && selectedReceiptOrder.items.map((it, idx) => {
                       const prodName = it.productName || products.find(p => p.id === it.productId)?.name || 'สินค้า F&B / อุปกรณ์กีฬา';
@@ -2626,27 +2737,28 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <div className="flex justify-between">
                   <span>ฐานภาษี (VATAble Base):</span>
                   <span className="font-mono">
-                    {((selectedReceiptBooking ? selectedReceiptBooking.totalAmount : (selectedReceiptOrder?.totalAmount || 0)) / 1.07).toFixed(2)}
+                    {((receipt?.total || 0) / 1.07).toFixed(2)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>ภาษีมูลค่าเพิ่ม (VAT 7%):</span>
                   <span className="font-mono mr-1">
-                    {((selectedReceiptBooking ? selectedReceiptBooking.totalAmount : (selectedReceiptOrder?.totalAmount || 0)) * 0.07 / 1.07).toFixed(2)}
+                    {((receipt?.total || 0) * 0.07 / 1.07).toFixed(2)}
                   </span>
                 </div>
                 <div className="flex justify-between font-black text-slate-900 border-t border-slate-200 pt-1.5 text-[11px]">
                   <span>ยอดชำระสุทธิ (Grand Total):</span>
                   <span className="font-mono text-emerald-700 text-[11.5px]">
-                    {formatBaht(selectedReceiptBooking ? selectedReceiptBooking.totalAmount : selectedReceiptOrder?.totalAmount || 0)} บาท
+                    {formatBaht(receipt?.total || 0)} บาท
                   </span>
                 </div>
               </div>
 
               {/* Signature stamp */}
               <div className="pt-2.5 text-center border-t border-slate-200 space-y-0.5 text-[8.5px] text-slate-400">
-                <p>💸 รับชำระแล้วโดย: <span className="font-bold text-slate-700 uppercase">โอนเงินธนาคารอิเล็กทรอนิกส์ (PROMPTPAY BANK DIRECT)</span></p>
-                <p className="font-bold text-emerald-600">✓ ปิดกล่องปิดลิ้นชักเรียบร้อย ถูกต้องตามกฎหมาย</p>
+                {receipt?.paid
+                  ? <p>💸 รับชำระแล้วโดย: <span id="receipt-method" className="font-bold text-slate-700 uppercase">{(receipt.method && METHOD_LABEL[receipt.method]) || receipt.method || '-'}</span></p>
+                  : <p id="receipt-unpaid" className="font-bold text-rose-600">ยังไม่ได้รับชำระเงิน / ยกเลิกแล้ว — ไม่ออกใบเสร็จ</p>}
                 <p className="italic">"ขอบพระคุณลูกค้าที่วางใจคอมเพล็กซ์ของเราค่ะ"</p>
               </div>
             </div>
@@ -2663,13 +2775,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               return (
                 <div id="booking-actions" className="flex flex-wrap gap-2 text-[11px]">
                   {canCash && (
-                    <button type="button" onClick={() => handleMarkPaidInCash(b)} className="flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold py-1.5 rounded-lg">💵 รับเงินสดแล้ว</button>
+                    <button type="button" disabled={busy} onClick={guarded(() => handleMarkPaidInCash(b))} className="disabled:opacity-50 flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold py-1.5 rounded-lg">💵 รับเงินสดแล้ว</button>
                   )}
                   {canNoShow && (
-                    <button type="button" onClick={() => handleMarkNoShow(b)} className="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold py-1.5 rounded-lg">🚫 ไม่มาใช้สนาม</button>
+                    <button type="button" disabled={busy} onClick={guarded(() => handleMarkNoShow(b))} className="disabled:opacity-50 flex-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold py-1.5 rounded-lg">🚫 ไม่มาใช้สนาม</button>
                   )}
                   {canCancel && (
-                    <button type="button" onClick={() => handleCancelBooking(b)} className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded-lg">✖ ยกเลิก / คืนเงิน</button>
+                    <button type="button" disabled={busy} onClick={guarded(() => handleCancelBooking(b))} className="disabled:opacity-50 flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded-lg">✖ ยกเลิก / คืนเงิน</button>
                   )}
                 </div>
               );
@@ -2690,11 +2802,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               
               <button
                 type="button"
+                id="receipt-print"
+                disabled={!receipt?.paid}
                 onClick={() => {
                   window.print();
                   onAddAuditLog('RECEIPT_PRINTED_BY_STAFF', 'Report', selectedReceiptBooking ? selectedReceiptBooking.id : (selectedReceiptOrder?.id || ''), null, null);
                 }}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-xl text-center transition flex justify-center items-center gap-1 shadow-sm font-sans"
+                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-2 rounded-xl text-center transition flex justify-center items-center gap-1 shadow-sm font-sans"
               >
                 <Receipt className="h-3.5 w-3.5" /> พิมพ์บิล/บันทึก PDF
               </button>

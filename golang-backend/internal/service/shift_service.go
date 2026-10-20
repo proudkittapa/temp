@@ -63,8 +63,12 @@ func (s *ShiftService) view(db *gorm.DB, sh model.Shift) (*ShiftView, error) {
 		return nil, err
 	}
 	v := &ShiftView{Shift: sh, CashBookings: b, CashOrders: o, Expected: RoundBaht(sh.OpeningFloat + b + o)}
+	// A closed shift keeps what it was counted against.
 	if sh.ExpectedCash != nil {
-		v.Expected = *sh.ExpectedCash // a closed shift keeps what it was counted against
+		v.Expected = *sh.ExpectedCash
+	}
+	if sh.CashBookingsAtClose != nil && sh.CashOrdersAtClose != nil {
+		v.CashBookings, v.CashOrders = *sh.CashBookingsAtClose, *sh.CashOrdersAtClose
 	}
 	return v, nil
 }
@@ -84,6 +88,14 @@ func (s *ShiftService) Current(ctx context.Context) (*ShiftView, error) {
 
 // shiftLockKey serializes opening/closing so two counters can't both open.
 const shiftLockKey = 4202
+
+// lockDrawerShared is taken (shared) by every cash payment before it stamps
+// its time; Open/Close take the same key exclusively. A cash sale that
+// commits while a shift is being closed therefore either finishes first
+// (and is counted) or waits and lands in the next shift - never in neither.
+func lockDrawerShared(tx *gorm.DB) error {
+	return tx.Exec("SELECT pg_advisory_xact_lock_shared(?)", shiftLockKey).Error
+}
 
 // Open starts a shift with the float counted into the drawer.
 func (s *ShiftService) Open(ctx context.Context, openingFloat float64, staffID, staffName string) (*ShiftView, error) {
@@ -150,6 +162,7 @@ func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffI
 			return fmt.Errorf("%w: the count is %.2f THB off - add a note explaining it", ErrInvalidBooking, variance)
 		}
 		sh.CountedCash, sh.ExpectedCash, sh.VarianceCash = &counted, &v.Expected, &variance
+		sh.CashBookingsAtClose, sh.CashOrdersAtClose = &v.CashBookings, &v.CashOrders
 		sh.ClosedByID, sh.ClosedByName = &staffID, &staffName
 		if notes != "" {
 			sh.Notes = &notes

@@ -77,7 +77,7 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, service.ErrDuplicateUser) {
 			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
-		} else if errors.Is(err, service.ErrInvalidPhone) {
+		} else if errors.Is(err, service.ErrInvalidPhone) || errors.Is(err, service.ErrInvalidRegistration) {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "registration failed, please try again"})
@@ -136,13 +136,18 @@ func (h *ArenaHandler) GetSlots(c *gin.Context) {
 	dateVal := c.Query("date")
 	courtType := c.Query("court_type")
 
+	// "Today" is the complex's day (Bangkok), whatever zone the server runs in.
 	if dateVal == "" {
-		dateVal = time.Now().Format("2006-01-02")
+		dateVal = time.Now().In(service.Bangkok).Format("2006-01-02")
+	}
+	if _, err := time.Parse("2006-01-02", dateVal); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "date must be YYYY-MM-DD"})
+		return
 	}
 
 	results, err := h.bookingService.FetchSlotsForGantt(c.Request.Context(), dateVal, model.CourtType(courtType))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
+		respondError(c, err)
 		return
 	}
 	results = sanitizeBookings(c, results)

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -94,5 +96,45 @@ func TestLoginThrottlePrune(t *testing.T) {
 	_ = th.Prune(context.Background())
 	if len(store.m) != 0 {
 		t.Fatalf("old failures should be pruned, %d keys left", len(store.m))
+	}
+}
+
+// A burst of simultaneous wrong guesses: each attempt is recorded before
+// its password is checked, so only the first five get a try.
+func TestLoginThrottleBurstOnlyLetsFiveThrough(t *testing.T) {
+	th := newLoginThrottle(newMemAttemptStore())
+	base := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	n := 0
+	th.now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		return base.Add(time.Duration(n) * time.Millisecond)
+	}
+	var wg sync.WaitGroup
+	var allowed int32
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w, done, err := th.Begin(context.Background(), "0845678901", "1.2.3.4")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if w == 0 {
+				atomic.AddInt32(&allowed, 1)
+				_ = done(false)
+			}
+		}()
+	}
+	wg.Wait()
+	if allowed > 5 {
+		t.Fatalf("%d guesses got through, want at most 5", allowed)
+	}
+	// A correct password after the lock is still refused until the window passes.
+	if w, _, _ := th.Begin(context.Background(), "0845678901", "1.2.3.4"); w == 0 {
+		t.Fatal("locked account accepted another attempt")
 	}
 }
