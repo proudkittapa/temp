@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"arena-backend/internal/model"
@@ -13,14 +12,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
-
-var jwtKeySecret = []byte("SUPER_SECRET_COMPLEX_KEY_93281")
-
-func init() {
-	if envSecret := os.Getenv("JWT_SECRET"); envSecret != "" {
-		jwtKeySecret = []byte(envSecret)
-	}
-}
 
 type AuthClaims struct {
 	UserID string `json:"user_id"`
@@ -31,12 +22,22 @@ type AuthClaims struct {
 type AuthService struct {
 	usrRepo   *repository.UserRepository
 	auditRepo *repository.AuditRepository
+	jwtSecret []byte
 }
 
-func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.AuditRepository) *AuthService {
+// NewAuthService takes the JWT signing secret explicitly (see
+// resolveJWTSecret in main.go). It used to be read from JWT_SECRET in a
+// package init(), which runs before main loads .env - so a secret set in
+// .env was silently ignored in favour of a hard-coded, publicly committed
+// default that anyone could use to sign an ADMIN token.
+func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.AuditRepository, jwtSecret []byte) *AuthService {
+	if len(jwtSecret) == 0 {
+		panic("auth: empty JWT secret")
+	}
 	return &AuthService{
 		usrRepo:   usrRepo,
 		auditRepo: auditRepo,
+		jwtSecret: jwtSecret,
 	}
 }
 
@@ -90,11 +91,16 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 
 	err = s.usrRepo.Create(ctx, &newUser)
 	if err != nil {
-		return nil, ErrDuplicateUser
+		// Only a unique-index violation means "already registered" - a lost
+		// connection or another constraint must surface as a server error.
+		if repository.IsUniqueViolation(err) {
+			return nil, ErrDuplicateUser
+		}
+		return nil, err
 	}
 
 	// Dynamic admin trace logger creation for CRM tracking
-	auditID := fmt.Sprintf("log-%d", time.Now().UnixNano())
+	auditID := ids.New("log")
 	_ = s.auditRepo.LogAction(ctx, &model.AuditLog{
 		ID:         auditID,
 		UserID:     "system",
@@ -102,7 +108,7 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 		Action:     "USER_REGISTERED",
 		TargetType: "User",
 		TargetID:   userID,
-		AfterState: fmt.Sprintf(`{"id": %q, "phone": %q}`, userID, phone),
+		AfterState: model.AuditJSON(map[string]string{"id": userID, "phone": phone}),
 		CreatedAt:  time.Now(),
 	})
 
@@ -156,7 +162,7 @@ func (s *AuthService) generateToken(userID string, role string, d time.Duration)
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtKeySecret)
+	return token.SignedString(s.jwtSecret)
 }
 
 // ParseToken validates a bearer token issued by generateToken and returns
@@ -164,7 +170,7 @@ func (s *AuthService) generateToken(userID string, role string, d time.Duration)
 func (s *AuthService) ParseToken(tokenString string) (*AuthClaims, error) {
 	claims := &AuthClaims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
-		return jwtKeySecret, nil
+		return s.jwtSecret, nil
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil || !token.Valid {
 		return nil, errors.New("invalid or expired token")

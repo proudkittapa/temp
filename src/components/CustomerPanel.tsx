@@ -135,24 +135,30 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     let cancelled = false;
     (async () => {
       try {
-        const [apiCourts, dayBookings, mine, me] = await Promise.all([
+        // Check the session first: if it lapsed, fall back to logged-out
+        // and load the public views, instead of letting the logged-in-only
+        // calls fail the whole load.
+        const me = loggedInUserId ? await api.refreshMe('customer') : null;
+        if (cancelled) return;
+        if (loggedInUserId && !me) {
+          setLoggedInUser(null);
+          setAuthError('⏰ เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
+          return; // loggedInUserId changes, so this effect re-runs logged out
+        }
+        if (me) setLoggedInUser(me);
+
+        const [apiCourts, dayBookings, mine] = await Promise.all([
           api.listCourts(),
           api.listBookingsByDate(selectedDate),
-          loggedInUserId ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
-          loggedInUserId ? api.refreshMe('customer') : Promise.resolve(null)
+          me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] })
         ]);
         if (cancelled) return;
         // The customer's own rows carry their details; prefer them over the
-        // anonymized copies in the by-date list.
+        // copies in the by-date list.
         const mineById = new Map(mine.bookings.map(b => [b.id, b]));
         setCourts(apiCourts);
         setBookings([...dayBookings.filter(b => !mineById.has(b.id)), ...mine.bookings]);
         setPayments(mine.payments);
-        if (loggedInUserId && !me) {
-          setLoggedInUser(null); // session expired
-        } else if (me) {
-          setLoggedInUser(me);
-        }
         setApiError(null);
       } catch (err) {
         if (!cancelled) setApiError(err instanceof Error ? err.message : String(err));

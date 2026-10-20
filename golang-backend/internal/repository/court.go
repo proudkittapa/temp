@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -54,30 +53,46 @@ func (r *CourtRepository) CreateDayOff(ctx context.Context, d *model.DayOff) err
 // IsDayOffActive checks whether a specific hour is blocked for this court
 // (FR-1.3): a closure with CourtID = NULL applies to every court, and a
 // non-full-day closure only blocks the [StartHour, EndHour) window.
-func (r *CourtRepository) IsDayOffActive(ctx context.Context, date string, courtID string, hour int) (bool, string, error) {
+// ListDayOffs returns every closure on a date (all-court and per-court),
+// so a multi-slot booking can check them in memory instead of one query
+// per slot.
+func (r *CourtRepository) ListDayOffs(ctx context.Context, date string) ([]model.DayOff, error) {
 	var closures []model.DayOff
-	err := r.db.WithContext(ctx).
-		Where("date = ? AND (court_id IS NULL OR court_id = ?)", date, courtID).
-		Find(&closures).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, "", nil
-		}
-		return false, "", err
+	if err := r.db.WithContext(ctx).Where("date = ?", date).Find(&closures).Error; err != nil {
+		return nil, fmt.Errorf("failed to load closures: %w", err)
 	}
-	for _, do := range closures {
-		if do.IsFullDay || do.StartHour == nil || do.EndHour == nil {
-			return true, do.Reason, nil
-		}
-		if hour >= *do.StartHour && hour < *do.EndHour {
-			return true, do.Reason, nil
-		}
-	}
-	return false, "", nil
+	return closures, nil
 }
 
-// GetPricingConfig loads the single global PricingConfig row (business
-// coefficients like the half-court rate) so services never re-literal it.
+// ClosureFor returns the closure (if any) that blocks courtID at hour.
+func ClosureFor(closures []model.DayOff, courtID string, hour int) *model.DayOff {
+	for i, do := range closures {
+		if do.CourtID != nil && *do.CourtID != courtID {
+			continue
+		}
+		if do.IsFullDay || do.StartHour == nil || do.EndHour == nil {
+			return &closures[i]
+		}
+		if hour >= *do.StartHour && hour < *do.EndHour {
+			return &closures[i]
+		}
+	}
+	return nil
+}
+
+// FetchByIDs loads the given courts (any state), keyed by id.
+func (r *CourtRepository) FetchByIDs(ctx context.Context, courtIDs []string) (map[string]model.Court, error) {
+	var list []model.Court
+	if err := r.db.WithContext(ctx).Where("id IN ?", courtIDs).Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("failed to load courts: %w", err)
+	}
+	out := make(map[string]model.Court, len(list))
+	for _, c := range list {
+		out[c.ID] = c
+	}
+	return out, nil
+}
+
 func (r *CourtRepository) GetPricingConfig(ctx context.Context) (*model.PricingConfig, error) {
 	var cfg model.PricingConfig
 	if err := r.db.WithContext(ctx).First(&cfg, "id = ?", "global").Error; err != nil {

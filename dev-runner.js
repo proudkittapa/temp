@@ -5,7 +5,12 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-console.log('--- Starting Sports Arena Service Orchestrator ---');
+// `npm run dev:api` passes --api: the frontend then talks to the Go backend
+// (VITE_DATA_SOURCE=api, see src/api.ts). Set here rather than as an inline
+// `VAR=value` prefix in package.json so it also works on Windows.
+const apiMode = process.argv.includes('--api');
+
+console.log(`--- Starting Sports Arena Service Orchestrator${apiMode ? ' (API mode)' : ''} ---`);
 
 // 1. Spawn Go Backend
 console.log('[Orchestrator] Starting Go Backend on port 8080...');
@@ -40,6 +45,7 @@ const viteDev = spawn('npx', ['vite', '--port=3000', '--host=0.0.0.0'], {
   shell: true,
   env: {
     ...process.env,
+    ...(apiMode ? { VITE_DATA_SOURCE: 'api' } : {}),
     DISABLE_HMR: 'true'
   }
 });

@@ -53,16 +53,21 @@ database from the Go Backend section below):
 | Customer booking history | `GET /me/bookings` |
 | Slip upload (the real image file) | `POST /bookings/:id/upload-slip` |
 | Staff slip queue, verify (confirms + awards points), reject | `GET /staff/payments`, `POST /staff/payments/:id/verify`, `POST /staff/payments/:id/reject` |
+| Staff walk-in bookings + the staff booking grid | `POST /staff/bookings`, `GET /bookings?date=` |
 
 `dev-runner.js` starts the backend with `SEED_DEMO_USERS=true`, which creates
 the same demo accounts as `DEFAULT_USERS` (all password `123456`): customers
 `0845678901` (member) and `0856789012` (student), staff `0834567890`. The
-Staff POS slip tab asks staff to sign in separately from the customer.
+Staff POS panel asks staff to sign in separately from the customer.
 
-Still `localStorage`-only in API mode (no backend endpoints yet): walk-in
-bookings and the staff booking grid, POS / F&B / rentals, reward redemption,
-password reset, account deletion, and all Admin/Manager settings. So walk-ins
-recorded at the counter don't yet block online bookings, and vice versa.
+Still `localStorage`-only in API mode (no backend endpoints yet): POS / F&B /
+rentals, reward redemption, password reset, account deletion, the day's
+totals report, and all Admin/Manager settings (incl. days off and pricing -
+the backend has its own `day_offs` and `pricing_rules` tables).
+
+Set `JWT_SECRET` in `golang-backend/.env` (`openssl rand -hex 32`);
+otherwise the backend picks a random one per run and everyone is logged out
+when it restarts.
 
 `VITE_API_BASE_URL` overrides the API location (default `/api/v1`, which
 Vite proxies to `localhost:8080`).

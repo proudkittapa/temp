@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -67,8 +68,8 @@ func (r *ProductRepository) ReturnRentalItem(ctx context.Context, orderItemID st
 		}
 
 		// 4. Trace the operation to admin's security dashboard logs
-		logID := fmt.Sprintf("log-%d", time.Now().UnixNano())
-		auditMsg := fmt.Sprintf("Rental stock unit returned successfully: Item ID %s. Incremented back +%d stocks.", orderItemID, item.Qty)
+		logID := ids.New("log")
+		auditMsg := model.AuditJSON(map[string]any{"order_item_id": orderItemID, "returned_qty": item.Qty})
 		auditLog := model.AuditLog{
 			ID:         logID,
 			UserID:     returnedByStaff,

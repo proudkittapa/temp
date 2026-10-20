@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -17,6 +19,13 @@ type UserRepository struct {
 
 func NewUserRepository(db *gorm.DB) *UserRepository {
 	return &UserRepository{db: db}
+}
+
+// IsUniqueViolation reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505), e.g. a duplicate users.phone/email.
+func IsUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // Create inserts a brand new customer or staff member user profile row.
@@ -91,7 +100,7 @@ func (r *UserRepository) AddPointsEntry(
 	}
 
 	entry := model.PointsLedgerEntry{
-		ID:        fmt.Sprintf("ledger-%d", time.Now().UnixNano()),
+		ID:        ids.New("ledger"),
 		UserID:    userID,
 		Type:      entryType,
 		Points:    points,
@@ -123,7 +132,7 @@ func (r *UserRepository) UpdatePoints(ctx context.Context, userID string, delta 
 		beforePoints := newBalance - delta // AddPointsEntry always applies the full delta or errors, never clamps
 
 		// Dynamic admin trace logger creation inside same Postgres atomic transaction
-		logID := fmt.Sprintf("log-%d", time.Now().UnixNano())
+		logID := ids.New("log")
 		auditLog := model.AuditLog{
 			ID:          logID,
 			UserID:      actionStaff,
@@ -131,8 +140,8 @@ func (r *UserRepository) UpdatePoints(ctx context.Context, userID string, delta 
 			Action:      "POINTS_OVERRIDE",
 			TargetType:  "User",
 			TargetID:    userID,
-			BeforeState: fmt.Sprintf(`{"points": %d}`, beforePoints),
-			AfterState:  fmt.Sprintf(`{"points": %d, "delta": %d}`, newBalance, delta),
+			BeforeState: model.AuditJSON(map[string]int{"points": beforePoints}),
+			AfterState:  model.AuditJSON(map[string]int{"points": newBalance, "delta": delta}),
 			CreatedAt:   time.Now(),
 		}
 		if err := tx.Create(&auditLog).Error; err != nil {

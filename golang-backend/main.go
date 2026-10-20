@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+	_ "time/tzdata" // Asia/Bangkok must resolve even on hosts without tzdata
 
 	"arena-backend/internal/handler"
 	"arena-backend/internal/model"
@@ -122,12 +125,12 @@ func main() {
 	courtRepo := repository.NewCourtRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
 
-	authService := service.NewAuthService(usrRepo, auditRepo)
+	authService := service.NewAuthService(usrRepo, auditRepo, resolveJWTSecret())
 	userService := service.NewUserService(usrRepo)
 	auditLogService := service.NewAuditLogService(auditRepo)
 	membershipService := service.NewMembershipService(db, usrRepo)
 	priceEngineService := service.NewPriceEngineService(courtRepo, membershipService)
-	paymentService := service.NewPaymentService(db)
+	paymentService := service.NewPaymentService(os.Getenv("PROMPTPAY_ID"))
 	bookingService := service.NewBookingService(db, bkRepo, usrRepo, courtRepo, priceEngineService, paymentService)
 	posService := service.NewPOSService(db, usrRepo)
 
@@ -169,7 +172,7 @@ func main() {
 
 	// 4. API Endpoints Map layout. Authenticate only parses an optional
 	// bearer token; RequireRole gates each route that needs a login.
-	api := router.Group("/api/v1", handler.Authenticate(authService))
+	api := router.Group("/api/v1", handler.Authenticate(authService, userService))
 	loggedIn := handler.RequireRole()
 	staffOnly := handler.RequireRole(handler.StaffRoles...)
 	managerOnly := handler.RequireRole(handler.ManagerRoles...)
@@ -189,6 +192,9 @@ func main() {
 		api.POST("/bookings/:id/upload-slip", loggedIn, arenaHandler.UploadSlip)
 		api.GET("/me/bookings", loggedIn, arenaHandler.MyBookings)
 
+		// Counter walk-ins, paid on the spot
+		api.POST("/staff/bookings", staffOnly, arenaHandler.CreateWalkInBooking)
+
 		// Staff slip review (FR-3.3)
 		api.GET("/staff/payments", staffOnly, arenaHandler.ListPaymentsForReview)
 		api.POST("/staff/payments/:id/verify", staffOnly, arenaHandler.VerifyPayment)
@@ -200,6 +206,10 @@ func main() {
 		// Admin & CRM managers wallets configuration
 		api.POST("/admin/users/:id/adjust-points", managerOnly, arenaHandler.ModifyPoints)
 	}
+
+	// Cancel online bookings left unpaid past the payment hold, so abandoned
+	// checkouts don't block courts forever.
+	go expireUnpaidBookingsLoop(bookingService)
 
 	// 5. Fire Up listener
 	port := os.Getenv("PORT")
@@ -257,6 +267,23 @@ func seedDefaults(db *gorm.DB) {
 	for _, c := range courts {
 		db.Where(model.Court{ID: c.ID}).FirstOrCreate(&c)
 	}
+	// Databases seeded by an earlier version got English names for these
+	// four courts. Rename them only if they still have that exact seeded
+	// name, so a name someone changed on purpose is left alone.
+	oldSeedNames := map[string]string{
+		"b_full_a": "Basketball Court A (Full)",
+		"b_half_b": "Basketball Court B (Half: Left)",
+		"b_half_c": "Basketball Court C (Half: Right)",
+		"bad-1":    "Badminton Court 1",
+		"bad-2":    "Badminton Court 2",
+		"pick-1":   "Pickleball Court 1",
+		"meet-1":   "Meeting Room 1",
+	}
+	for _, c := range courts {
+		if old, ok := oldSeedNames[c.ID]; ok {
+			db.Model(&model.Court{}).Where("id = ? AND name = ?", c.ID, old).Update("name", c.Name)
+		}
+	}
 
 	pricingRules := []model.PricingRule{
 		{ID: "p-bad-wd-op", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 180, PriceType: "OFFPEAK", Label: "Badminton weekday off-peak", IsActive: true},
@@ -288,6 +315,45 @@ func seedDefaults(db *gorm.DB) {
 
 	if os.Getenv("SEED_DEMO_USERS") == "true" {
 		seedDemoUsers(db)
+	}
+}
+
+// publishedJWTSecret is the example secret committed in .env.example and
+// (formerly) hard-coded here. Anyone can read it, so a server using it would
+// accept forged ADMIN tokens.
+const publishedJWTSecret = "SUPER_SECRET_COMPLEX_KEY_93281"
+
+// resolveJWTSecret returns JWT_SECRET, or - if it is unset or still the
+// published example value - a random per-process secret, with a warning.
+// That keeps local development working (logins just don't survive a
+// restart) without ever signing tokens with a key an attacker knows.
+func resolveJWTSecret() []byte {
+	secret := os.Getenv("JWT_SECRET")
+	if secret != "" && secret != publishedJWTSecret {
+		if len(secret) < 32 {
+			log.Println("WARNING: JWT_SECRET is shorter than 32 characters; use e.g. `openssl rand -hex 32`.")
+		}
+		return []byte(secret)
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("could not generate a JWT secret: %v", err)
+	}
+	log.Println("WARNING: JWT_SECRET is not set (or is the published example value) - using a random secret for this run, " +
+		"so everyone is logged out on restart. Set JWT_SECRET in golang-backend/.env, e.g. `openssl rand -hex 32`.")
+	return b
+}
+
+func expireUnpaidBookingsLoop(bookings *service.BookingService) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for ; ; <-ticker.C {
+		n, err := bookings.ExpireUnpaidBookings(context.Background())
+		if err != nil {
+			log.Printf("Warning: expiring unpaid bookings failed: %v\n", err)
+		} else if n > 0 {
+			log.Printf("Expired %d unpaid booking group(s) past the %v payment hold.\n", n, service.PaymentHoldDuration)
+		}
 	}
 }
 

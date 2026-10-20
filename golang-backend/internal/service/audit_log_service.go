@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"arena-backend/internal/repository"
 )
 
@@ -20,7 +20,7 @@ func NewAuditLogService(auditRepo *repository.AuditRepository) *AuditLogService 
 // LogAdministrativeAction records security-sensitive operations
 func (s *AuditLogService) LogAdministrativeAction(ctx context.Context, userID, userName, action, targetType, targetID, beforeState, afterState string) error {
 	audit := &model.AuditLog{
-		ID:          fmt.Sprintf("log-%d", time.Now().UnixNano()),
+		ID:          ids.New("log"),
 		UserID:      userID,
 		UserName:    userName,
 		Action:      action,

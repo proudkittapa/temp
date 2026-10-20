@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -87,7 +88,7 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 		}
 
 		// 2. Insert main Order record
-		orderID := fmt.Sprintf("ord-%d", time.Now().UnixNano())
+		orderID := ids.New("ord")
 		orderCode = fmt.Sprintf("REC-%05d", time.Now().Unix()%100000)
 
 		ordModel := model.Order{
@@ -111,7 +112,7 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 
 		// 3. Write individual line items (including sizing details, shoe standards, and tension attributes)
 		for _, item := range input.Items {
-			itemID := fmt.Sprintf("itm-%d", time.Now().UnixNano())
+			itemID := ids.New("itm")
 
 			var p model.Product
 			if err := tx.First(&p, "id = ?", item.ProductID).Error; err != nil {

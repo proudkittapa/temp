@@ -4,9 +4,10 @@
 //   VITE_DATA_SOURCE=local (default) - everything lives in localStorage via
 //     StorageService in mockData.ts; no backend needed.
 //   VITE_DATA_SOURCE=api - customer login/registration, court availability,
-//     bookings, slip upload, and the staff slip-review queue go through the
-//     Go API + Postgres. Features the backend doesn't cover yet (POS, admin
-//     settings, rewards, walk-in bookings, ...) still use localStorage.
+//     bookings, slip upload, staff walk-in bookings and the staff
+//     slip-review queue go through the Go API + Postgres. Features the
+//     backend doesn't cover yet (POS, admin settings, rewards, ...) still
+//     use localStorage.
 //
 // VITE_API_BASE_URL defaults to "/api/v1", which Vite's dev server proxies
 // to the backend on :8080 (see vite.config.ts).
@@ -110,6 +111,7 @@ interface ApiCourt {
 }
 interface ApiBooking {
   id: string; booking_code: string; court_id: string; user_id: string; date: string;
+  customer_name?: string; customer_phone?: string;
   start_time: string; end_time: string; is_half_court: boolean; price_type: string;
   total_amount: number; status: string; is_event_block: boolean; event_name?: string;
   notes?: string; created_by: string; cancellation_reason?: string; created_at: string;
@@ -144,13 +146,15 @@ const toCourt = (c: ApiCourt): Court => ({
   createdAt: c.created_at
 });
 
+// Other customers' bookings arrive anonymized (no id/code/user) - enough to
+// mark the slot taken. They get a synthetic id so lists can still key them.
 const toBooking = (b: ApiBooking, user?: { name: string; phone: string }): Booking => ({
-  id: b.id,
+  id: b.id || `taken-${b.court_id}-${b.date.slice(0, 10)}-${b.start_time}`,
   bookingCode: b.booking_code,
   courtId: b.court_id,
   userId: b.user_id,
-  userName: user?.name || '',
-  userPhone: user?.phone || '',
+  userName: user?.name || b.customer_name || '',
+  userPhone: user?.phone || b.customer_phone || '',
   date: b.date.slice(0, 10),
   startTime: b.start_time,
   endTime: b.end_time,
@@ -203,7 +207,9 @@ export async function register(input: { name: string; email: string; phone: stri
 }
 
 // Re-reads the logged-in user (e.g. for a fresh points balance) and updates
-// the stored session. Returns null if not logged in or the token expired.
+// the stored session. Returns null if not logged in, or if the session is
+// no longer valid (expired, suspended, or - for staff - no longer a staff
+// role); request() has already dropped the stored session in that case.
 export async function refreshMe(kind: SessionKind): Promise<User | null> {
   const session = getSession(kind);
   if (!session) return null;
@@ -219,12 +225,16 @@ export async function refreshMe(kind: SessionKind): Promise<User | null> {
 
 // ---- courts & bookings ----
 
+// Sorted by id with numeric awareness (bad-2 before bad-10), matching the
+// order of the local seed data rather than the backend's name order.
 export async function listCourts(): Promise<Court[]> {
-  return (await request<ApiCourt[]>('/courts')).map(c => toCourt(c));
+  return (await request<ApiCourt[]>('/courts'))
+    .map(c => toCourt(c))
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 }
 
-// Every active booking on a date. Other customers' bookings come back
-// without user details - enough to show the slot as taken.
+// Every active booking on a date. For customers, other people's bookings
+// come back anonymized; staff (kind 'staff') see everything incl. names.
 export async function listBookingsByDate(date: string, kind: SessionKind = 'customer'): Promise<Booking[]> {
   return (await request<ApiBooking[]>(`/bookings?date=${encodeURIComponent(date)}`, { session: kind })).map(b => toBooking(b));
 }
@@ -271,6 +281,47 @@ export async function uploadSlip(bookingId: string, file: Blob, filename = 'slip
   const form = new FormData();
   form.append('slip', file, filename);
   await request(`/bookings/${encodeURIComponent(bookingId)}/upload-slip`, { method: 'POST', form, session: 'customer' });
+}
+
+// ---- staff walk-ins ----
+
+export interface WalkInInput {
+  date: string;
+  slots: { courtId: string; startTime: string }[];
+  customerName: string;
+  customerPhone: string;
+  paymentMethod: PaymentMethod;
+  // Staff confirmed booking through a day-off/maintenance block.
+  overrideClosure?: boolean;
+}
+
+// Books a counter walk-in, paid on the spot (confirmed immediately). Goes
+// through the same availability checks as online bookings, and is credited
+// to the registered customer with that phone, if any.
+export async function createWalkInBooking(input: WalkInInput): Promise<CreatedBookingGroup & { pointsAwarded: number }> {
+  const data = await request<{
+    booking_code: string; total_amount: number; promptpay_payload: string; points_awarded: number;
+    bookings: ApiBooking[]; payment: ApiPayment;
+  }>('/staff/bookings', {
+    method: 'POST',
+    session: 'staff',
+    body: {
+      date: input.date,
+      slots: input.slots.map(s => ({ court_id: s.courtId, start_time: s.startTime })),
+      customer_name: input.customerName,
+      customer_phone: input.customerPhone,
+      payment_method: input.paymentMethod,
+      override_closure: !!input.overrideClosure
+    }
+  });
+  return {
+    bookingCode: data.booking_code,
+    totalAmount: data.total_amount,
+    promptPayPayload: data.promptpay_payload,
+    pointsAwarded: data.points_awarded,
+    bookings: data.bookings.map(b => toBooking(b)),
+    payment: toPayment(data.payment)
+  };
 }
 
 // ---- staff slip review (FR-3.3) ----

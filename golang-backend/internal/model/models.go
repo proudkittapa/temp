@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/gorm"
@@ -207,13 +208,19 @@ type DayOff struct {
 
 // 5. Booking / Reservation Entry
 type Booking struct {
-	ID          string `json:"id" db:"id" gorm:"primaryKey;column:id"`
-	BookingCode string `json:"booking_code" db:"booking_code" gorm:"column:booking_code"`
+	ID string `json:"id" db:"id" gorm:"primaryKey;column:id"`
+	// Shared by every row of one booking group and unique per group (checked
+	// at insert - see BookingService.uniqueBookingCode).
+	BookingCode string `json:"booking_code" db:"booking_code" gorm:"column:booking_code;index"`
 	CourtID     string `json:"court_id" db:"court_id" gorm:"column:court_id"`
-	UserID      string `json:"user_id" db:"user_id" gorm:"column:user_id"`
-	Date        string `json:"date" db:"date" gorm:"column:date;type:date"`                         // "YYYY-MM-DD"
-	StartTime   string `json:"start_time" db:"start_time" gorm:"column:start_time;type:varchar(5)"` // "HH:MM"
-	EndTime     string `json:"end_time" db:"end_time" gorm:"column:end_time;type:varchar(5)"`       // "HH:MM", always StartTime+1h - one row per booked hour (see BookingRepository doc)
+	UserID      string `json:"user_id" db:"user_id" gorm:"column:user_id"` // WalkInUserID for counter customers without an account
+	// Who the booking is for, as shown to staff: copied from the user at
+	// booking time, or typed in by staff for a walk-in without an account.
+	CustomerName  *string `json:"customer_name,omitempty" db:"customer_name" gorm:"column:customer_name"`
+	CustomerPhone *string `json:"customer_phone,omitempty" db:"customer_phone" gorm:"column:customer_phone"`
+	Date          string  `json:"date" db:"date" gorm:"column:date;type:date"`                         // "YYYY-MM-DD"
+	StartTime     string  `json:"start_time" db:"start_time" gorm:"column:start_time;type:varchar(5)"` // "HH:MM"
+	EndTime       string  `json:"end_time" db:"end_time" gorm:"column:end_time;type:varchar(5)"`       // "HH:MM", always StartTime+1h - one row per booked hour (see BookingRepository doc)
 	// Snapshot of (court.ShareOfGroup < 1) at booking time, kept for
 	// historical/receipt display even if the court's configuration later
 	// changes. Availability and pricing must read the live Court via CourtID,
@@ -231,6 +238,10 @@ type Booking struct {
 	CreatedAt          time.Time     `json:"created_at" db:"created_at" gorm:"column:created_at"`
 	UpdatedAt          time.Time     `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
 }
+
+// WalkInUserID is Booking.UserID for counter bookings by someone without an
+// account; their name/phone live in CustomerName/CustomerPhone.
+const WalkInUserID = "walk-in"
 
 // 6. Linked Payment Slip Information
 type Payment struct {
@@ -325,17 +336,36 @@ type AuditLog struct {
 	CreatedAt time.Time `json:"created_at" db:"created_at" gorm:"column:created_at"`
 }
 
-// BeforeCreate keeps empty Before/AfterState valid for their jsonb columns -
-// Postgres rejects ” as JSON, which silently dropped every audit row written
-// without an explicit before/after (callers mostly ignore LogAction errors).
+// BeforeCreate guarantees Before/AfterState are valid JSON for their jsonb
+// columns. Postgres rejects an empty string or free text there, and since
+// most callers ignore LogAction errors (or, worse, abort their whole
+// transaction on it - e.g. rental returns), an invalid state used to drop the
+// audit row silently or break the operation being audited. Empty becomes
+// JSON null; other non-JSON text is stored as a JSON string.
 func (a *AuditLog) BeforeCreate(_ *gorm.DB) error {
-	if a.BeforeState == "" {
-		a.BeforeState = "null"
-	}
-	if a.AfterState == "" {
-		a.AfterState = "null"
-	}
+	a.BeforeState = normalizeAuditJSON(a.BeforeState)
+	a.AfterState = normalizeAuditJSON(a.AfterState)
 	return nil
+}
+
+func normalizeAuditJSON(s string) string {
+	if s == "" {
+		return "null"
+	}
+	if json.Valid([]byte(s)) {
+		return s
+	}
+	return AuditJSON(s)
+}
+
+// AuditJSON marshals v for AuditLog.Before/AfterState. Use it instead of
+// hand-formatting JSON with fmt (%q is Go quoting, not JSON escaping).
+func AuditJSON(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "null"
+	}
+	return string(b)
 }
 
 // LedgerEntryType mirrors the frontend's LedgerEntryType enum.

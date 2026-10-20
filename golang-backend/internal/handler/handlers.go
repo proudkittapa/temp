@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -65,7 +67,11 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 
 	result, err := h.authService.Register(c.Request.Context(), input.Name, input.Email, input.Phone, input.Password)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+		if errors.Is(err, service.ErrDuplicateUser) {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "registration failed, please try again"})
+		}
 		return
 	}
 
@@ -120,6 +126,7 @@ func (h *ArenaHandler) GetSlots(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
 		return
 	}
+	results = sanitizeBookings(c, results)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -166,16 +173,16 @@ func (h *ArenaHandler) CreateBooking(c *gin.Context) {
 }
 
 // 5. Submit Payment Attachment Receipt (POST /api/v1/bookings/:id/upload-slip)
+// :id may be any booking row in the group. Ownership and payment state are
+// checked before anything touches the disk, so a refused upload never
+// leaves a publicly served file behind; a replaced slip's old file is
+// deleted once the new one is recorded.
 func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	bookingID := c.Param("id")
 
-	owner, err := h.bookingService.BookingOwner(c.Request.Context(), bookingID)
+	payment, err := h.bookingService.CheckSlipUpload(c.Request.Context(), bookingID, currentUserID(c), isStaff(currentRole(c)))
 	if err != nil {
 		respondError(c, err)
-		return
-	}
-	if owner != currentUserID(c) && !isStaff(currentRole(c)) {
-		respondError(c, service.ErrForbidden)
 		return
 	}
 
@@ -204,36 +211,46 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		return
 	}
 
-	fileName := "slip_" + bookingID + "_" + time.Now().Format("20060102150405") + "." + ext
-	filePath := "./uploads/slips/" + fileName
-
-	// Save the physical file directly onto the local server filesystem storage
+	// Named by payment (server-generated id), never by client input.
+	fileName := "slip_" + payment.ID + "_" + time.Now().Format("20060102150405") + "." + ext
+	filePath := filepath.Join(slipDir, fileName)
 	if err := c.SaveUploadedFile(file, filePath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   "failed to write attachment to disk: " + err.Error(),
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "failed to store slip image"})
 		return
 	}
+	servedURL := slipURLPrefix + fileName
 
-	// Generate client-accessible relative static path
-	servedURL := "/uploads/slips/" + fileName
-
-	// Update the database records atomically inside our dedicated payment service
-	result, err := h.paymentService.SaveSlipUploadedTransaction(c.Request.Context(), bookingID, servedURL)
+	previous, err := h.bookingService.SaveSlip(c.Request.Context(), payment.ID, servedURL)
 	if err != nil {
+		_ = os.Remove(filePath) // state changed since the check - don't keep the file
 		respondError(c, err)
 		return
 	}
+	removeSlipFile(previous)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Payment receipt uploaded successfully. Our cashier matching engine has queued verification.",
 		"data": gin.H{
-			"slip_url": result.SlipURL,
-			"status":   result.Status,
+			"slip_url": servedURL,
+			"status":   model.PaymentSlipUploaded,
 		},
 	})
+}
+
+const (
+	slipDir       = "./uploads/slips"
+	slipURLPrefix = "/uploads/slips/"
+)
+
+// removeSlipFile deletes a previously stored slip by its served URL. Only
+// names inside slipDir are touched.
+func removeSlipFile(servedURL string) {
+	name, ok := strings.CutPrefix(servedURL, slipURLPrefix)
+	if !ok || name == "" || strings.ContainsAny(name, `/\`) {
+		return
+	}
+	_ = os.Remove(filepath.Join(slipDir, name))
 }
 
 // 6. POS Order Dispatcher (POST /api/v1/pos/order)
@@ -244,7 +261,7 @@ func (h *ArenaHandler) ProcessPOSCheckout(c *gin.Context) {
 		return
 	}
 
-	input.CreatedBy = currentUserID(c)
+	input.CreatedBy, _ = actor(c)
 
 	result, err := h.posService.ProcessCheckout(c.Request.Context(), input)
 	if err != nil {

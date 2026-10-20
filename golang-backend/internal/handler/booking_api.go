@@ -30,6 +30,8 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusConflict
 	case errors.Is(err, service.ErrInvalidBooking):
 		status = http.StatusBadRequest
+	case errors.Is(err, service.ErrTooManyUnpaid):
+		status = http.StatusTooManyRequests
 	}
 	c.JSON(status, gin.H{"success": false, "error": err.Error()})
 }
@@ -60,7 +62,7 @@ func (h *ArenaHandler) ListCourts(c *gin.Context) {
 
 // GET /api/v1/bookings?date=YYYY-MM-DD - every active booking on a date, for
 // the availability grid. Anyone may see that a slot is taken; only staff and
-// the booking's owner see whose it is.
+// the booking's owner see the rest (see sanitizeBookings).
 func (h *ArenaHandler) ListBookings(c *gin.Context) {
 	date := c.Query("date")
 	if _, err := time.Parse("2006-01-02", date); err != nil {
@@ -72,17 +74,89 @@ func (h *ArenaHandler) ListBookings(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	if !isStaff(currentRole(c)) {
-		me := currentUserID(c)
-		for i := range list {
-			if me == "" || list[i].UserID != me {
-				list[i].UserID = ""
-				list[i].CreatedBy = ""
-				list[i].Notes = nil
-			}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": sanitizeBookings(c, list)})
+}
+
+// sanitizeBookings reduces other people's bookings to what an availability
+// view needs - court, date, time, status - for anyone but staff. Booking
+// ids and codes are withheld too: the code is what customers quote at the
+// counter, so leaking it would let a stranger claim someone's reservation.
+func sanitizeBookings(c *gin.Context, list []model.Booking) []model.Booking {
+	if isStaff(currentRole(c)) {
+		return list
+	}
+	me := currentUserID(c)
+	out := make([]model.Booking, len(list))
+	for i, b := range list {
+		if me != "" && b.UserID == me {
+			out[i] = b
+			continue
+		}
+		out[i] = model.Booking{
+			CourtID:      b.CourtID,
+			Date:         b.Date,
+			StartTime:    b.StartTime,
+			EndTime:      b.EndTime,
+			IsHalfCourt:  b.IsHalfCourt,
+			Status:       b.Status,
+			IsEventBlock: b.IsEventBlock,
+			EventName:    b.EventName,
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
+	return out
+}
+
+// POST /api/v1/staff/bookings - a counter walk-in, paid on the spot: booked
+// CONFIRMED through the same availability/pricing checks as online bookings
+// (so walk-ins and online bookings can never double-book each other), and
+// credited to the registered customer with that phone, if there is one.
+func (h *ArenaHandler) CreateWalkInBooking(c *gin.Context) {
+	var input struct {
+		Date            string                `json:"date" binding:"required"`
+		Slots           []service.SlotRequest `json:"slots" binding:"required"`
+		CustomerName    string                `json:"customer_name" binding:"required"`
+		CustomerPhone   string                `json:"customer_phone" binding:"required"`
+		PaymentMethod   model.PaymentMethod   `json:"payment_method"`
+		OverrideClosure bool                  `json:"override_closure"`
+		Notes           string                `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	if input.PaymentMethod != "" && input.PaymentMethod != model.PaymentCash && input.PaymentMethod != model.PaymentPromptPay {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "payment_method must be CASH or PROMPTPAY"})
+		return
+	}
+	customer, err := h.bookingService.FindCustomerByPhone(c.Request.Context(), input.CustomerPhone)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	userID := ""
+	if customer != nil {
+		userID = customer.ID
+	}
+	staffID, staffName := actor(c)
+	result, err := h.bookingService.CreateBookings(c.Request.Context(), service.CreateBookingInput{
+		Date:   input.Date,
+		Slots:  input.Slots,
+		Notes:  input.Notes,
+		UserID: userID,
+		WalkIn: &service.WalkInDetails{
+			StaffID:         staffID,
+			StaffName:       staffName,
+			CustomerName:    input.CustomerName,
+			CustomerPhone:   input.CustomerPhone,
+			PaymentMethod:   input.PaymentMethod,
+			OverrideClosure: input.OverrideClosure,
+		},
+	})
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": result})
 }
 
 // GET /api/v1/me/bookings - the caller's own bookings with payments.
@@ -109,7 +183,7 @@ func (h *ArenaHandler) ListPaymentsForReview(c *gin.Context) {
 // POST /api/v1/staff/payments/:id/verify - FR-3.3 slip approval: confirms
 // the booking group and awards loyalty points.
 func (h *ArenaHandler) VerifyPayment(c *gin.Context) {
-	staffID, staffName := h.actor(c)
+	staffID, staffName := actor(c)
 	res, err := h.bookingService.VerifyPayment(c.Request.Context(), c.Param("id"), staffID, staffName)
 	if err != nil {
 		respondError(c, err)
@@ -128,20 +202,11 @@ func (h *ArenaHandler) RejectPayment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "a rejection reason is required"})
 		return
 	}
-	staffID, staffName := h.actor(c)
+	staffID, staffName := actor(c)
 	res, err := h.bookingService.RejectPayment(c.Request.Context(), c.Param("id"), input.Reason, staffID, staffName)
 	if err != nil {
 		respondError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": res})
-}
-
-// actor returns the caller's id and display name for audit logs.
-func (h *ArenaHandler) actor(c *gin.Context) (string, string) {
-	id := currentUserID(c)
-	if u, err := h.userService.GetUserProfile(c.Request.Context(), id); err == nil && u != nil {
-		return id, u.Name
-	}
-	return id, id
 }

@@ -94,7 +94,8 @@ user/password, edit it to match:
 cat .env
 # DATABASE_URL=postgres://arena_user:ArenaSecurePass99@localhost:5432/arena_db?sslmode=disable
 # PORT=8080
-# JWT_SECRET=SUPER_SECRET_COMPLEX_KEY_93281
+# JWT_SECRET=<output of: openssl rand -hex 32>   # unset = random per run (logins reset on restart)
+# PROMPTPAY_ID=0105561008012                      # merchant PromptPay ID for customer QR codes
 # SEED_DEMO_USERS=true   # local dev only: demo accounts, password 123456
 ```
 
@@ -144,9 +145,13 @@ curl "http://localhost:8080/api/v1/bookings?date=2026-06-20"
 Other customers' bookings come back without user details.
 
 ### 3. Book Slots & Get the PromptPay Payload
-Books one or more one-hour slots as a single group (one booking code, one
-payment for the total). All-or-nothing: if any slot is taken, closed, or a
-half-court side at a peak hour (FR-1.2), nothing is booked and you get a 409.
+Books up to 3 one-hour slots as a single group (one booking code, one
+payment for the total). All-or-nothing: if any slot is taken, closed,
+outside opening hours (no pricing rule covers it), already over, or a
+half-court side at a peak hour (FR-1.2), nothing is booked (409/400). An
+unpaid booking holds its slots for 30 minutes: if no slip is uploaded by
+then it is cancelled automatically. A customer can hold at most 3 unpaid
+booking groups at once (429).
 Price, member discount and half-court rate are all computed server-side:
 ```bash
 curl -X POST http://localhost:8080/api/v1/bookings \
@@ -183,7 +188,18 @@ curl -X POST http://localhost:8080/api/v1/staff/payments/<payment_id>/reject \
   -d '{"reason": "amount mismatch"}'
 ```
 
-### 6. Admin Points Modification & Audit Recording
+### 6. Staff Walk-in Booking
+Paid at the counter, so it is created CONFIRMED with a VERIFIED payment.
+It goes through the same availability checks as online bookings, and is
+credited (with loyalty points) to the registered customer with that phone:
+```bash
+curl -X POST http://localhost:8080/api/v1/staff/bookings \
+  -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"date": "2026-06-20", "slots": [{"court_id": "bad-3", "start_time": "19:00"}],
+       "customer_name": "Somchai", "customer_phone": "0811111111", "payment_method": "CASH"}'
+```
+
+### 7. Admin Points Modification & Audit Recording
 ```bash
 curl -X POST http://localhost:8080/api/v1/admin/users/<user_id>/adjust-points \
   -H "Authorization: Bearer <Manager_Token>" \

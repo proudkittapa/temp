@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 )
@@ -66,7 +67,7 @@ func (s *MembershipService) UpgradeMembership(ctx context.Context, userID string
 		}
 
 		// Create dynamic administrative audit trail
-		auditID := fmt.Sprintf("log-%d", time.Now().UnixNano())
+		auditID := ids.New("log")
 		audit := model.AuditLog{
 			ID:          auditID,
 			UserID:      adminStaff,
@@ -74,8 +75,8 @@ func (s *MembershipService) UpgradeMembership(ctx context.Context, userID string
 			Action:      "MEMBERSHIP_UPGRADE",
 			TargetType:  "User",
 			TargetID:    userID,
-			BeforeState: fmt.Sprintf(`{"member_type": "%s"}`, oldTier),
-			AfterState:  fmt.Sprintf(`{"member_type": "%s"}`, newTier),
+			BeforeState: model.AuditJSON(map[string]model.MemberType{"member_type": oldTier}),
+			AfterState:  model.AuditJSON(map[string]model.MemberType{"member_type": newTier}),
 			CreatedAt:   time.Now(),
 		}
 

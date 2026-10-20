@@ -89,6 +89,33 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     return () => { cancelled = true; };
   }, [triggerRefresh, staffUser]);
 
+  // API mode: the walk-in grid shows the backend's bookings for the chosen
+  // date (online + walk-in), so the counter can't sell a slot that was
+  // already booked online. Also re-validates the staff session.
+  useEffect(() => {
+    if (!api.USE_BACKEND || !staffUser || !walkinDate) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await api.refreshMe('staff');
+        if (cancelled) return;
+        if (!me || me.role === UserRole.CUSTOMER) {
+          api.logout('staff');
+          setStaffUser(null);
+          setStaffApiError('เซสชันพนักงานหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
+          return;
+        }
+        const [apiCourts, dayBookings] = await Promise.all([api.listCourts(), api.listBookingsByDate(walkinDate, 'staff')]);
+        if (cancelled) return;
+        setCourts(apiCourts);
+        setBookings(dayBookings);
+      } catch (err) {
+        if (!cancelled) setStaffApiError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [triggerRefresh, staffUser, walkinDate]);
+
   const handleStaffLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setStaffApiError(null);
@@ -122,8 +149,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const rawDaysOff = StorageService.get<DayOff[]>('days_off', []);
     const rawUsers = StorageService.get<User[]>('users', []);
 
-    setCourts(rawCourts.filter(c => c.isActive));
-    setBookings(rawBookings);
+    // In API mode courts/bookings come from the backend (effect above).
+    if (!api.USE_BACKEND) {
+      setCourts(rawCourts.filter(c => c.isActive));
+      setBookings(rawBookings);
+    }
     setPayments(rawPayments);
     setProducts(rawProducts.filter(p => p.isActive));
     setOrders(rawOrders);
@@ -202,6 +232,37 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       if (!window.confirm(`⚠️ คำเตือนสต๊าฟ: วันที่ทำรายการนี้ถูกบล็อกปิดหยุดพิเศษ ("${blockedReason}")\nคุณต้องการบันทึกจองกรณีพิเศษ (Override Code) ใช่หรือไม่?`)) {
         return;
       }
+    }
+
+    if (api.USE_BACKEND) {
+      // The server re-checks availability against every booking (online
+      // and walk-in), prices the slot, and credits a registered customer
+      // with this phone - the checks above are just early feedback.
+      api.createWalkInBooking({
+        date: walkinDate,
+        slots: [{ courtId: walkinCourtId, startTime: walkinSlot }],
+        customerName: walkinName,
+        customerPhone: walkinPhone,
+        paymentMethod: walkinPayMethod,
+        overrideClosure: !!blockedReason
+      })
+        .then(group => {
+          const b = group.bookings[0];
+          const courtName = courts.find(c => c.id === b.courtId)?.name || '';
+          const ptsNote = group.pointsAwarded > 0 ? `\n🎁 ได้รับแต้มสะสมเพิ่ม: +${group.pointsAwarded} แต้ม` : '';
+          pushLineMessage(walkinPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${group.bookingCode} | สนาม ${courtName}\n📅 ${b.date} ${b.startTime}-${b.endTime}\nพบกันที่สนาม! (Walk-in ชำระหน้าเคาน์เตอร์สำเร็จ)${ptsNote}`, "CONFIRMED");
+          onAddAuditLog('WALKIN_BOOKING_CREATED_BY_STAFF', 'Booking', b.id, null, b);
+          setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${group.bookingCode} สำเร็จแล้ว! ยอด ${group.totalAmount} บาท ${group.pointsAwarded > 0 ? `(🎁 มอบแต้มสะสมสมาชิก +${group.pointsAwarded} แต้มสำเร็จ!)` : ''}`);
+          setWalkinSlot('');
+          setWalkinName('');
+          setWalkinPhone('');
+          onRefreshAll();
+        })
+        .catch(err => {
+          alert(`จองไม่สำเร็จ: ${err.message}`);
+          onRefreshAll();
+        });
+      return;
     }
 
     const courtObj = courts.find(c => c.id === walkinCourtId);
@@ -302,10 +363,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       api.verifyPayment(paymentId)
         .then(res => {
           if (entry) {
-            const first = entry.bookings[0];
-            const courtName = courts.find(c => c.id === first?.courtId)?.name || 'สนามกีฬาทั่วไป';
+            // One line per booked hour: a group can span courts and
+            // non-adjacent hours, so a single "first start - last end"
+            // range would misreport it.
+            const lines = entry.bookings.map(b => {
+              const courtName = courts.find(c => c.id === b.courtId)?.name || 'สนามกีฬาทั่วไป';
+              return `- ${courtName} ${b.date} ${b.startTime}–${b.endTime}`;
+            }).join('\n');
             const ptsNote = res.pointsAwarded > 0 ? `\n🎁 และได้รับแต้มสะสมเพิ่ม: +${res.pointsAwarded} แต้ม!` : '';
-            pushLineMessage(first?.userPhone || '', `🎉 ยืนยันการจองแล้ว!\n📋 ${res.bookingCode} | สนาม ${courtName}\n📅 ${first?.date} ${first?.startTime}–${entry.bookings[entry.bookings.length - 1]?.endTime}\nพบกันที่สนาม!${ptsNote}`, "CONFIRMED");
+            pushLineMessage(entry.bookings[0]?.userPhone || '', `🎉 ยืนยันการจองแล้ว!\n📋 ${res.bookingCode}\n${lines}\nพบกันที่สนาม!${ptsNote}`, "CONFIRMED");
           }
           onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.VERIFIED });
           onRefreshAll();
@@ -724,6 +790,24 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Bookings the slip queue can resolve payments against.
   const slipQueueBookings = api.USE_BACKEND ? reviewQueue.flatMap(r => r.bookings) : bookings;
 
+  // API mode: everything on this panel acts as a staff member, so sign in
+  // first (separately from any customer login in the same browser).
+  if (api.USE_BACKEND && !staffUser) {
+    return (
+      <div className="max-w-sm mx-auto my-10 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        <form onSubmit={handleStaffLogin} className="space-y-3 text-xs">
+          <p className="text-sm font-bold text-slate-800">เข้าสู่ระบบพนักงาน (Staff POS)</p>
+          {staffApiError && (
+            <p className="text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠️ {staffApiError}</p>
+          )}
+          <input value={staffIdentity} onChange={e => setStaffIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลพนักงาน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
+          <input type="password" value={staffPassword} onChange={e => setStaffPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
+          <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
+        </form>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       
@@ -916,7 +1000,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         <p className="text-[9px] text-slate-400">รหัสจอง: <span className="font-mono">{b.bookingCode}</span> | ยอด: {b.totalAmount} บ.</p>
                       </div>
                       <div className="flex flex-col gap-1 items-end">
-                        <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded-md">ยืนยันแล้ว</span>
+                        {b.status === BookingStatus.PENDING_PAYMENT ? (
+                          <span className="text-[9px] bg-amber-100 text-amber-800 font-extrabold px-1.5 py-0.5 rounded-md">รอชำระเงิน</span>
+                        ) : (
+                          <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded-md">ยืนยันแล้ว</span>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
@@ -1154,14 +1242,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠️ {staffApiError}</p>
             )}
 
-            {api.USE_BACKEND && !staffUser ? (
-              <form onSubmit={handleStaffLogin} className="max-w-sm space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs">
-                <p className="font-bold text-slate-700">เข้าสู่ระบบพนักงานเพื่อตรวจสลิป</p>
-                <input value={staffIdentity} onChange={e => setStaffIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลพนักงาน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
-                <input type="password" value={staffPassword} onChange={e => setStaffPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
-                <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
-              </form>
-            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {api.USE_BACKEND && staffUser && (
                 <p className="md:col-span-2 text-[11px] text-slate-500">
@@ -1285,7 +1365,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 )}
               </div>
             </div>
-            )}
           </div>
         )}
         {activePosTab === 'fb' && (
