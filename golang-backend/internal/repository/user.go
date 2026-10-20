@@ -8,6 +8,7 @@ import (
 
 	"arena-backend/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type UserRepository struct {
@@ -71,7 +72,7 @@ func (r *UserRepository) AddPointsEntry(
 	note *string,
 ) (int, error) {
 	var u model.User
-	if err := tx.WithContext(ctx).Set("gorm:query_option", "FOR UPDATE").First(&u, "id = ?", userID).Error; err != nil {
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&u, "id = ?", userID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return 0, errors.New("user not found")
 		}

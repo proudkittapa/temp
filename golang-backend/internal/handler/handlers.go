@@ -1,8 +1,9 @@
 package handler
 
 import (
-	"context"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"arena-backend/internal/model"
@@ -57,7 +58,12 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 		return
 	}
 
-	result, err := h.authService.Register(context.Background(), input.Name, input.Email, input.Phone, input.Password)
+	if len(input.Password) < 6 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "password must be at least 6 characters"})
+		return
+	}
+
+	result, err := h.authService.Register(c.Request.Context(), input.Name, input.Email, input.Phone, input.Password)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
 		return
@@ -68,14 +74,7 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 		"message": "User registered successfully",
 		"data": gin.H{
 			"token": result.Token,
-			"user": gin.H{
-				"id":          result.User.ID,
-				"name":        result.User.Name,
-				"phone":       result.User.Phone,
-				"role":        result.User.Role,
-				"member_type": result.User.MemberType,
-				"points":      result.User.Points,
-			},
+			"user":  result.User,
 		},
 	})
 }
@@ -92,7 +91,7 @@ func (h *ArenaHandler) Login(c *gin.Context) {
 		return
 	}
 
-	result, err := h.authService.Login(context.Background(), input.Identity, input.Password)
+	result, err := h.authService.Login(c.Request.Context(), input.Identity, input.Password)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": err.Error()})
 		return
@@ -102,14 +101,7 @@ func (h *ArenaHandler) Login(c *gin.Context) {
 		"success": true,
 		"data": gin.H{
 			"token": result.Token,
-			"user": gin.H{
-				"id":          result.User.ID,
-				"name":        result.User.Name,
-				"phone":       result.User.Phone,
-				"role":        result.User.Role,
-				"member_type": result.User.MemberType,
-				"points":      result.User.Points,
-			},
+			"user":  result.User,
 		},
 	})
 }
@@ -123,7 +115,7 @@ func (h *ArenaHandler) GetSlots(c *gin.Context) {
 		dateVal = time.Now().Format("2006-01-02")
 	}
 
-	results, err := h.bookingService.FetchSlotsForGantt(context.Background(), dateVal, model.CourtType(courtType))
+	results, err := h.bookingService.FetchSlotsForGantt(c.Request.Context(), dateVal, model.CourtType(courtType))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
 		return
@@ -138,14 +130,13 @@ func (h *ArenaHandler) GetSlots(c *gin.Context) {
 	})
 }
 
-// 4. Create Reservation (POST /api/v1/bookings)
+// 4. Create Reservation (POST /api/v1/bookings) - requires login. Books one
+// or more one-hour slots on a date as a single group with one payment.
 func (h *ArenaHandler) CreateBooking(c *gin.Context) {
 	var input struct {
-		CourtID   string `json:"court_id" binding:"required"`
-		Date      string `json:"date" binding:"required"`       // YYYY-MM-DD
-		StartTime string `json:"start_time" binding:"required"` // HH:MM
-		EndTime   string `json:"end_time" binding:"required"`   // HH:MM
-		Notes     string `json:"notes"`
+		Date  string                `json:"date" binding:"required"` // YYYY-MM-DD
+		Slots []service.SlotRequest `json:"slots" binding:"required"`
+		Notes string                `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -153,45 +144,40 @@ func (h *ArenaHandler) CreateBooking(c *gin.Context) {
 		return
 	}
 
-	// Standard placeholder user session context
-	userID := "u-guest"
-	if u, exists := c.Get("user_id"); exists {
-		userID = u.(string)
-	}
-
-	// is_half_court/half_court_side are no longer accepted from the client:
-	// CreateNewBooking derives half-court status from Court.ShareOfGroup so a
-	// caller can't request the wrong rate by lying about the flag.
-	bookingInput := service.CreateBookingInput{
-		CourtID:   input.CourtID,
-		Date:      input.Date,
-		StartTime: input.StartTime,
-		EndTime:   input.EndTime,
-		Notes:     input.Notes,
-		UserID:    userID,
-	}
-
-	result, err := h.bookingService.CreateNewBooking(context.Background(), bookingInput)
+	// The booking always belongs to the authenticated caller; member
+	// discount and half-court status are resolved server-side, never taken
+	// from the request.
+	result, err := h.bookingService.CreateBookings(c.Request.Context(), service.CreateBookingInput{
+		Date:   input.Date,
+		Slots:  input.Slots,
+		Notes:  input.Notes,
+		UserID: currentUserID(c),
+	})
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+		respondError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"message": "Court reservation schedule holding",
-		"data": gin.H{
-			"booking_id":        result.BookingID,
-			"booking_code":      result.BookingCode,
-			"total_amount":      result.TotalAmount,
-			"promptpay_payload": result.PromptPayPayload,
-		},
+		"data":    result,
 	})
 }
 
 // 5. Submit Payment Attachment Receipt (POST /api/v1/bookings/:id/upload-slip)
 func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	bookingID := c.Param("id")
+
+	owner, err := h.bookingService.BookingOwner(c.Request.Context(), bookingID)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	if owner != currentUserID(c) && !isStaff(currentRole(c)) {
+		respondError(c, service.ErrForbidden)
+		return
+	}
 
 	// Parse incoming file from the form data field "slip" (or fallback to "image")
 	file, err := c.FormFile("slip")
@@ -206,16 +192,16 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		}
 	}
 
-	// Generate a secure, unique local file path to prevent collision overrides
-	ext := "png" // Default fallback extension
-	if file.Filename != "" {
-		// Quick extraction of actual extension (e.g. filename.jpg -> jpg)
-		for i := len(file.Filename) - 1; i >= 0; i-- {
-			if file.Filename[i] == '.' {
-				ext = file.Filename[i+1:]
-				break
-			}
-		}
+	// Only image extensions are kept: /uploads is served statically, so an
+	// uploaded .html/.svg would otherwise be served back as active content.
+	ext, ok := allowedSlipExt[strings.ToLower(strings.TrimPrefix(filepath.Ext(file.Filename), "."))]
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "slip must be a JPG, PNG or WEBP image"})
+		return
+	}
+	if file.Size > maxSlipBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "slip image must be 5 MB or smaller"})
+		return
 	}
 
 	fileName := "slip_" + bookingID + "_" + time.Now().Format("20060102150405") + "." + ext
@@ -234,12 +220,9 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	servedURL := "/uploads/slips/" + fileName
 
 	// Update the database records atomically inside our dedicated payment service
-	result, err := h.paymentService.SaveSlipUploadedTransaction(context.Background(), bookingID, servedURL)
+	result, err := h.paymentService.SaveSlipUploadedTransaction(c.Request.Context(), bookingID, servedURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   "file registered but failed to commit status update changes in db: " + err.Error(),
-		})
+		respondError(c, err)
 		return
 	}
 
@@ -261,10 +244,9 @@ func (h *ArenaHandler) ProcessPOSCheckout(c *gin.Context) {
 		return
 	}
 
-	// Extract active cashier session
-	input.CreatedBy = "staff-session"
+	input.CreatedBy = currentUserID(c)
 
-	result, err := h.posService.ProcessCheckout(context.Background(), input)
+	result, err := h.posService.ProcessCheckout(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
 		return
@@ -289,7 +271,7 @@ func (h *ArenaHandler) ModifyPoints(c *gin.Context) {
 		return
 	}
 
-	newBalance, err := h.userService.AdjustUserPoints(context.Background(), usrParamID, input.PointsDelta, "staff-session")
+	newBalance, err := h.userService.AdjustUserPoints(c.Request.Context(), usrParamID, input.PointsDelta, currentUserID(c))
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
 		return

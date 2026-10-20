@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"arena-backend/internal/handler"
 	"arena-backend/internal/model"
 	"arena-backend/internal/repository"
 	"arena-backend/internal/service"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -76,7 +78,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to retrieve generic sql.DB engine: %v\n", err)
 	}
-	
+
 	if err := sqlDB.Ping(); err != nil {
 		log.Fatalf("Database is unreachable: %v\n", err)
 	}
@@ -107,6 +109,7 @@ func main() {
 		log.Fatalf("Database initial migration failed: %v\n", err)
 	}
 	log.Println("Database schemas verified and migrated successfully!")
+	ensureUserUniqueIndexes(db)
 
 	// 1c. Seed the config rows the pricing engine needs to not error on a
 	// fresh database - AutoMigrate only creates schema, not data. FirstOrCreate
@@ -164,28 +167,41 @@ func main() {
 		c.Next()
 	})
 
-	// 4. API Endpoints Map layout
-	api := router.Group("/api/v1")
+	// 4. API Endpoints Map layout. Authenticate only parses an optional
+	// bearer token; RequireRole gates each route that needs a login.
+	api := router.Group("/api/v1", handler.Authenticate(authService))
+	loggedIn := handler.RequireRole()
+	staffOnly := handler.RequireRole(handler.StaffRoles...)
+	managerOnly := handler.RequireRole(handler.ManagerRoles...)
 	{
 		// Authentication Ports
 		api.POST("/auth/register", arenaHandler.Register)
 		api.POST("/auth/login", arenaHandler.Login)
+		api.GET("/auth/me", loggedIn, arenaHandler.Me)
 
-		// Public slots checker
+		// Public availability
+		api.GET("/courts", arenaHandler.ListCourts)
 		api.GET("/courts/slots", arenaHandler.GetSlots)
+		api.GET("/bookings", arenaHandler.ListBookings)
 
 		// Booking flows
-		api.POST("/bookings", arenaHandler.CreateBooking)
-		api.POST("/bookings/:id/upload-slip", arenaHandler.UploadSlip)
+		api.POST("/bookings", loggedIn, arenaHandler.CreateBooking)
+		api.POST("/bookings/:id/upload-slip", loggedIn, arenaHandler.UploadSlip)
+		api.GET("/me/bookings", loggedIn, arenaHandler.MyBookings)
+
+		// Staff slip review (FR-3.3)
+		api.GET("/staff/payments", staffOnly, arenaHandler.ListPaymentsForReview)
+		api.POST("/staff/payments/:id/verify", staffOnly, arenaHandler.VerifyPayment)
+		api.POST("/staff/payments/:id/reject", staffOnly, arenaHandler.RejectPayment)
 
 		// POS systems
-		api.POST("/pos/order", arenaHandler.ProcessPOSCheckout)
+		api.POST("/pos/order", staffOnly, arenaHandler.ProcessPOSCheckout)
 
 		// Admin & CRM managers wallets configuration
-		api.POST("/admin/users/:id/adjust-points", arenaHandler.ModifyPoints)
+		api.POST("/admin/users/:id/adjust-points", managerOnly, arenaHandler.ModifyPoints)
 	}
 
-	// 5. Fire Up listener 
+	// 5. Fire Up listener
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -227,13 +243,16 @@ func seedDefaults(db *gorm.DB) {
 	// actually exercising the API locally instead of just seeing it boot.
 	bballGroup := "bball-court-1"
 	courts := []model.Court{
-		{ID: "b_full_a", Name: "Basketball Court A (Full)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 1, IsActive: true},
-		{ID: "b_half_b", Name: "Basketball Court B (Half: Left)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "b_half_c", Name: "Basketball Court C (Half: Right)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "bad-1", Name: "Badminton Court 1", Type: model.CourtBadminton, ShareOfGroup: 1, IsActive: true},
-		{ID: "bad-2", Name: "Badminton Court 2", Type: model.CourtBadminton, ShareOfGroup: 1, IsActive: true},
-		{ID: "pick-1", Name: "Pickleball Court 1", Type: model.CourtPickleball, ShareOfGroup: 1, IsActive: true},
-		{ID: "meet-1", Name: "Meeting Room 1", Type: model.CourtMeetingRoom, ShareOfGroup: 1, IsActive: true},
+		{ID: "b_full_a", Name: "สนามบาสเกตบอล A (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 1, IsActive: true},
+		{ID: "b_half_b", Name: "สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "b_half_c", Name: "สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "meet-1", Name: "ห้องประชุมเอนกประสงค์ 1", Type: model.CourtMeetingRoom, ShareOfGroup: 1, IsActive: true},
+	}
+	for i := 1; i <= 12; i++ {
+		courts = append(courts, model.Court{ID: fmt.Sprintf("bad-%d", i), Name: fmt.Sprintf("สนามแบดมินตัน %d", i), Type: model.CourtBadminton, ShareOfGroup: 1, IsActive: true})
+	}
+	for i := 1; i <= 3; i++ {
+		courts = append(courts, model.Court{ID: fmt.Sprintf("pick-%d", i), Name: fmt.Sprintf("สนามพิคเคิลบอล %d", i), Type: model.CourtPickleball, ShareOfGroup: 1, IsActive: true})
 	}
 	for _, c := range courts {
 		db.Where(model.Court{ID: c.ID}).FirstOrCreate(&c)
@@ -266,4 +285,51 @@ func seedDefaults(db *gorm.DB) {
 	}
 
 	log.Println("Default pricing_config/member_discounts/courts/pricing_rules rows verified.")
+
+	if os.Getenv("SEED_DEMO_USERS") == "true" {
+		seedDemoUsers(db)
+	}
+}
+
+// ensureUserUniqueIndexes makes phone and email unique, so Register can't
+// create two accounts that log in with the same identity. Done outside
+// AutoMigrate on purpose: a database that already holds duplicates (the
+// constraint used to be missing) would make AutoMigrate - and so startup -
+// fail outright, whereas this only warns until the duplicates are cleaned up.
+func ensureUserUniqueIndexes(db *gorm.DB) {
+	for _, col := range []string{"phone", "email"} {
+		stmt := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_%s ON users (%s)", col, col)
+		if err := db.Exec(stmt).Error; err != nil {
+			log.Printf("WARNING: users.%s has duplicate values, so it is not unique-indexed yet and duplicate sign-ups are still possible. "+
+				"Find them with: SELECT %s, count(*) FROM users GROUP BY %s HAVING count(*) > 1; then restart. (%v)\n", col, col, col, err)
+		}
+	}
+}
+
+// seedDemoUsers creates the same demo accounts as mockData.ts's DEFAULT_USERS
+// (password "123456") so the role switcher has someone to log in as. Opt-in
+// via SEED_DEMO_USERS=true - dev-runner.js sets it - because these are
+// well-known credentials that must never exist in a real deployment.
+func seedDemoUsers(db *gorm.DB) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("Warning: could not hash demo password: %v\n", err)
+		return
+	}
+	email := func(s string) *string { return &s }
+	users := []model.User{
+		{ID: "u-admin", Name: "สมชาย ผู้บริหาร", Email: email("admin@sportscomplex.com"), Phone: "0812345678", Role: model.RoleAdmin, MemberType: model.MemberNormal},
+		{ID: "u-mgr-1", Name: "วิชัย ผู้จัดการ", Email: email("manager@sportscomplex.com"), Phone: "0823456789", Role: model.RoleManager, MemberType: model.MemberNormal},
+		{ID: "u-staff-1", Name: "กิตติ สตาฟเวรเช้า", Email: email("staff1@sportscomplex.com"), Phone: "0834567890", Role: model.RoleStaff, MemberType: model.MemberNormal},
+		{ID: "u-cust-mbr", Name: "ประเสริฐ รักกีฬา (สมาชิกร้าน)", Email: email("prasert@gmail.com"), Phone: "0845678901", Role: model.RoleCustomer, MemberType: model.MemberClub},
+		{ID: "u-cust-std", Name: "น้องพีเดอร์ นักเรียน", Email: email("student@school.ac.th"), Phone: "0856789012", Role: model.RoleCustomer, MemberType: model.MemberStudent},
+	}
+	now := time.Now()
+	for _, u := range users {
+		u.IsActive = true
+		u.PasswordHash = string(hash)
+		u.CreatedAt, u.UpdatedAt = now, now
+		db.Where(model.User{ID: u.ID}).FirstOrCreate(&u)
+	}
+	log.Println("SEED_DEMO_USERS=true: demo accounts verified (password 123456).")
 }

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node dev-runner.js",
+    "dev:api": "VITE_DATA_SOURCE=api node dev-runner.js",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

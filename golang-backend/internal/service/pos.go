@@ -9,6 +9,7 @@ import (
 	"arena-backend/internal/model"
 	"arena-backend/internal/repository"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type POSOrderItemInput struct {
@@ -20,13 +21,13 @@ type POSOrderItemInput struct {
 }
 
 type CheckoutInput struct {
-	UserID       *string              `json:"user_id,omitempty"` // populated if registered member
-	CustomerName string               `json:"customer_name"`
-	CourtID      *string              `json:"court_id,omitempty"` // populated if linking snacks to physical courts
-	Type         model.OrderType      `json:"type"`              // "FB", "EQUIPMENT_RENT", "EQUIPMENT_SALE"
-	PaymentMeth  model.PaymentMethod  `json:"payment_method"`
+	UserID       *string             `json:"user_id,omitempty"` // populated if registered member
+	CustomerName string              `json:"customer_name"`
+	CourtID      *string             `json:"court_id,omitempty"` // populated if linking snacks to physical courts
+	Type         model.OrderType     `json:"type"`               // "FB", "EQUIPMENT_RENT", "EQUIPMENT_SALE"
+	PaymentMeth  model.PaymentMethod `json:"payment_method"`
 	Items        []POSOrderItemInput `json:"items"`
-	CreatedBy    string               `json:"created_by"` // Cashier staff member ID
+	CreatedBy    string              `json:"created_by"` // Cashier staff member ID
 }
 
 type CheckoutResult struct {
@@ -59,7 +60,7 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 		for _, item := range input.Items {
 			var p model.Product
 			// SELECT FOR UPDATE
-			err := tx.Set("gorm:query_option", "FOR UPDATE").First(&p, "id = ?", item.ProductID).Error
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "id = ?", item.ProductID).Error
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return fmt.Errorf("transaction abort: product %s does not exist", item.ProductID)

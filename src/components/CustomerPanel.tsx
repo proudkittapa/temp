@@ -5,6 +5,7 @@ import {
   User, UserRole
 } from '../types';
 import { StorageService, calculatePrice, generatePromptPayPayload, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
+import * as api from '../api';
 import { Calendar, Clock, CreditCard, CheckCircle, AlertTriangle, MessageSquare, ToggleLeft, ToggleRight, Trash2, Shield, Phone, FileImage, Sparkles, UserCheck } from 'lucide-react';
 
 interface CustomerPanelProps {
@@ -89,8 +90,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     const rawDaysOff = StorageService.get<DayOff[]>('days_off', []);
     const rawRedemptions = StorageService.get<Redemption[]>('redemptions', []);
     
-    // Load current logged in customer
-    const currentCust = StorageService.get<User | null>('current_logged_in_customer', null);
+    // Load current logged in customer (API mode keeps it in the API session)
+    const currentCust = api.USE_BACKEND
+      ? api.getSession('customer')?.user ?? null
+      : StorageService.get<User | null>('current_logged_in_customer', null);
     if (currentCust) {
       setLoggedInUser(currentCust);
       setMemberName(currentCust.name);
@@ -105,9 +108,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       setOrgName('');
     }
 
-    setCourts(rawCourts.filter(c => c.isActive));
-    setBookings(rawBookings);
-    setPayments(rawPayments);
+    // In API mode courts/bookings/payments are fetched by the effect below.
+    if (!api.USE_BACKEND) {
+      setCourts(rawCourts.filter(c => c.isActive));
+      setBookings(rawBookings);
+      setPayments(rawPayments);
+    }
     setLineMessages(rawLine);
     setDaysOff(rawDaysOff);
     setRedemptions(rawRedemptions);
@@ -120,11 +126,64 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setSelectedDate(todayStr);
   }, [triggerRefresh]);
 
+  // API mode: load courts, the selected date's bookings (for availability)
+  // and the customer's own bookings+payments (for history) from the backend.
+  const [apiError, setApiError] = useState<string | null>(null);
+  const loggedInUserId = loggedInUser?.id;
+  useEffect(() => {
+    if (!api.USE_BACKEND || !selectedDate) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [apiCourts, dayBookings, mine, me] = await Promise.all([
+          api.listCourts(),
+          api.listBookingsByDate(selectedDate),
+          loggedInUserId ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
+          loggedInUserId ? api.refreshMe('customer') : Promise.resolve(null)
+        ]);
+        if (cancelled) return;
+        // The customer's own rows carry their details; prefer them over the
+        // anonymized copies in the by-date list.
+        const mineById = new Map(mine.bookings.map(b => [b.id, b]));
+        setCourts(apiCourts);
+        setBookings([...dayBookings.filter(b => !mineById.has(b.id)), ...mine.bookings]);
+        setPayments(mine.payments);
+        if (loggedInUserId && !me) {
+          setLoggedInUser(null); // session expired
+        } else if (me) {
+          setLoggedInUser(me);
+        }
+        setApiError(null);
+      } catch (err) {
+        if (!cancelled) setApiError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [triggerRefresh, selectedDate, loggedInUserId]);
+
   // Customer Auth Function Handlers
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
     setForgotResult(null);
+
+    if (api.USE_BACKEND) {
+      api.login('customer', authEmail, authPassword)
+        .then(user => {
+          if (user.role !== UserRole.CUSTOMER) {
+            api.logout('customer');
+            setAuthError('❌ บัญชีนี้เป็นบัญชีพนักงาน กรุณาเข้าสู่ระบบที่หน้า Staff POS');
+            return;
+          }
+          setLoggedInUser(user);
+          onAddAuditLog('CUSTOMER_LOGIN_SUCCESS', 'User', user.id, null, { name: user.name, role: user.role });
+          setAuthEmail('');
+          setAuthPassword('');
+          onRefreshAll();
+        })
+        .catch(err => setAuthError(`❌ ${err.message}`));
+      return;
+    }
 
     const allUsers = StorageService.get<User[]>('users', []);
     const foundUser = allUsers.find(
@@ -164,6 +223,21 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
     if (!authName || !authPhone || !authEmail || !authPassword) {
       setAuthError('❌ กรุณากรอกข้อมูลสำคัญให้ครบถ้วนทุกช่องเพื่อความปลอดภัย');
+      return;
+    }
+
+    if (api.USE_BACKEND) {
+      api.register({ name: authName, email: authEmail, phone: authPhone, password: authPassword })
+        .then(user => {
+          setLoggedInUser(user);
+          setAuthEmail('');
+          setAuthPassword('');
+          setAuthName('');
+          setAuthPhone('');
+          onRefreshAll();
+          alert('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
+        })
+        .catch(err => setAuthError(`❌ ${err.message}`));
       return;
     }
 
@@ -222,6 +296,13 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       return;
     }
 
+    // The backend only stores password hashes, so there is nothing to look
+    // up - and revealing a password on screen was only ever a demo shortcut.
+    if (api.USE_BACKEND) {
+      setForgotResult('ℹ️ ระบบไม่สามารถแสดงรหัสผ่านเดิมได้ กรุณาติดต่อเจ้าหน้าที่ที่เคาน์เตอร์เพื่อรีเซ็ตรหัสผ่านค่ะ');
+      return;
+    }
+
     const allUsers = StorageService.get<User[]>('users', []);
     const foundUser = allUsers.find(
       u => (u.email?.toLowerCase() === authEmail.toLowerCase() || u.phone === authEmail) && u.role === UserRole.CUSTOMER
@@ -240,6 +321,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const handleLogout = () => {
     onAddAuditLog('CUSTOMER_LOGOUT', 'User', loggedInUser?.id || '', null, null);
     localStorage.removeItem('sports_complex_current_logged_in_customer');
+    api.logout('customer');
     setLoggedInUser(null);
     setActiveStep(1);
     onRefreshAll();
@@ -247,6 +329,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
   const handleDeleteAccount = () => {
     if (!loggedInUser) return;
+    if (api.USE_BACKEND) {
+      alert('การลบบัญชีผ่านระบบยังไม่เปิดให้บริการ กรุณาติดต่อเจ้าหน้าที่ค่ะ');
+      return;
+    }
     const confirm1 = window.confirm(`⚠️ คำเตือนความปลอดภัยสูงสุด: \nคุณแน่ใจหรือไม่ว่าต้องการ "ลบบัญชีผู้ใช้" ของคุณออกจากสยามคอมเพล็กซ์อย่างถาวร? \n\n* ข้อมูลสิทธิ์ส่วนลดและประวัติประวัติส่วนตัวทั้งหมดของคุณจะถูกทำลายทิ้งทันที!`);
     if (!confirm1) return;
 
@@ -466,6 +552,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       alert('กรุณาเข้าสู่ระบบก่อนทำการแลกรางวัลค่ะ!');
       return;
     }
+    // Points live in the backend's ledger in API mode; redeeming here would
+    // only change a local copy. Needs a redemption endpoint first.
+    if (api.USE_BACKEND) {
+      alert('การแลกรางวัลออนไลน์ยังไม่เปิดให้บริการ กรุณาแลกที่เคาน์เตอร์ค่ะ');
+      return;
+    }
 
     const currentPoints = loggedInUser.points || 0;
     if (currentPoints < reward.cost) {
@@ -600,6 +692,33 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       return;
     }
 
+    if (api.USE_BACKEND) {
+      // The server prices every slot itself (member discount, half-court
+      // rate) and books them all-or-nothing, so the shown total is only a
+      // preview - the response's amounts are what get stored and paid.
+      api.createBookings(selectedDate, selectedSlots)
+        .then(group => {
+          setCurrentBooking(group.bookings[0]);
+          setQrCodePayload(group.promptPayPayload);
+          setActiveStep(3);
+          const breakdown = group.bookings.map(b => {
+            const cName = courts.find(c => c.id === b.courtId)?.name || 'สนาม';
+            return `- ${cName} เวลา ${b.startTime}-${b.endTime} (${b.totalAmount} บาท)`;
+          }).join('\n');
+          triggerLineNotification(
+            `✅ รับคำขอจองแล้ว (${group.bookings.length} รายการ)\n📋 รหัสจองกลุ่ม: ${group.bookingCode}\n📅 วันที่: ${selectedDate}\nรายละเอียด:\n${breakdown}\n💰 ยอดที่ต้องชำระทั้งหมด: ${group.totalAmount} บาท\n\nกรุณาชำระและอัปโหลด slip ภายใน 30 นาที หากไม่ชำระระบบจะยกเลิกออโต้`,
+            (loggedInUser.phone || '').replace(/[^0-9]/g, ''), memberName, "CREATED"
+          );
+          setBookingSuccessAlert(`สร้างรายการจองรวม ${group.bookings.length} รายการสำเร็จ รหัสกลุ่มคือ ${group.bookingCode} แล้ว! กรุณาชำระเงินและอัพโหลดสลิป`);
+          onRefreshAll();
+        })
+        .catch(err => {
+          alert(`ขออภัยค่ะ จองไม่สำเร็จ: ${err.message}`);
+          onRefreshAll(); // reload availability - someone may have taken the slot
+        });
+      return;
+    }
+
     const priceInfo = currentPriceDetails();
     const cleanPhone = (loggedInUser.phone || '').replace(/[^0-9]/g, '');
     const mainBookingId = 'bk-' + Date.now();
@@ -676,9 +795,31 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   };
 
   // Simulating Slip uploading
-  const handleSlipUploadSimulation = (mockImgUrl: string) => {
+  const handleSlipUploadSimulation = (mockImgUrl: string, realFile?: File) => {
     if (!currentBooking) return;
-    
+
+    if (api.USE_BACKEND) {
+      // Upload the chosen file; for the sample buttons, fetch the sample
+      // image so the backend still receives a real file.
+      const getFile: Promise<Blob> = realFile
+        ? Promise.resolve(realFile)
+        : fetch(mockImgUrl).then(r => {
+            if (!r.ok) throw new Error('could not load sample slip image');
+            return r.blob();
+          });
+      getFile
+        .then(file => api.uploadSlip(currentBooking.id, file, realFile?.name || 'sample-slip.jpg'))
+        .then(() => {
+          setSlipFile(realFile ? URL.createObjectURL(realFile) : mockImgUrl);
+          setBookingSuccessAlert("อัพโหลดสลิปเรียบร้อยแล้ว! สตาฟกำลังทำการตรวจสอบสลิปภายใน 5 นาที");
+          setActiveStep(1);
+          setSelectedSlots([]);
+          onRefreshAll();
+        })
+        .catch(err => alert(`อัพโหลดสลิปไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
     setSlipFile(mockImgUrl);
 
     // Update system states
@@ -714,6 +855,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-20">
+      {apiError && (
+        <div className="lg:col-span-12 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>โหลดข้อมูลจากเซิร์ฟเวอร์ไม่สำเร็จ: {apiError}</span>
+        </div>
+      )}
       
       {/* Dynamic Line Notification Simulator Button */}
       <button 
@@ -1649,8 +1796,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         accept="image/*" 
                         onChange={(e) => {
                           if (e.target.files && e.target.files[0]) {
-                            // Mock native upload by setting random unsplash image link to bypass security rules
-                            handleSlipUploadSimulation("https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=300&q=80");
+                            // localStorage mode can't keep a real file, so it
+                            // records a placeholder image; API mode uploads
+                            // the actual file.
+                            handleSlipUploadSimulation("https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=300&q=80", e.target.files[0]);
                           }
                         }}
                         className="hidden" 

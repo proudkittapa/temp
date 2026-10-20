@@ -14,6 +14,9 @@ const goBackend = spawn('go', ['run', 'main.go'], {
   env: {
     ...process.env,
     PORT: '8080',
+    // Local dev only: seed the demo accounts (password 123456) that match
+    // mockData.ts, so the frontend's API mode has users to log in as.
+    SEED_DEMO_USERS: process.env.SEED_DEMO_USERS || 'true',
     // Fallback URL if env is not already set
     DATABASE_URL: process.env.DATABASE_URL || 'postgres://arena_user:ArenaSecurePass99@localhost:5432/arena_db?sslmode=disable'
   }

@@ -95,6 +95,7 @@ cat .env
 # DATABASE_URL=postgres://arena_user:ArenaSecurePass99@localhost:5432/arena_db?sslmode=disable
 # PORT=8080
 # JWT_SECRET=SUPER_SECRET_COMPLEX_KEY_93281
+# SEED_DEMO_USERS=true   # local dev only: demo accounts, password 123456
 ```
 
 ### 6. Launch Server
@@ -115,6 +116,12 @@ Sports Arena Go Backend server launching on Port 8080...
 
 ## 🧪 Testing Core REST API Endpoints
 
+Routes that need a login take `Authorization: Bearer <token>` from the
+register/login response. Staff routes (`/staff/*`, `/pos/*`) need a STAFF,
+MANAGER or ADMIN token; `/admin/*` needs MANAGER or ADMIN. Start the server
+with `SEED_DEMO_USERS=true` to get demo accounts (password `123456`) - e.g.
+customer `0856789012`, staff `0834567890`. Never set it in production.
+
 ### 1. Register User Profile
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/register \
@@ -126,34 +133,60 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
     "password": "Password99"
   }'
 ```
+Phone and email must be unique. Log in later with
+`POST /api/v1/auth/login` and `{"identity": "<phone or email>", "password": "..."}`.
 
-### 2. Check Slots on Court
+### 2. Check Availability
 ```bash
-curl -X GET "http://localhost:8080/api/v1/courts/slots?date=2026-06-20"
+curl "http://localhost:8080/api/v1/courts"
+curl "http://localhost:8080/api/v1/bookings?date=2026-06-20"
 ```
+Other customers' bookings come back without user details.
 
-### 3. Hold Court & Get Dynamic PromptPay Payload
-Include the token returned from the registration call as a Bearer Header.
-Note: `is_half_court` is NOT part of the request - it's derived server-side
-from the booked court's own `share_of_group` (see `courts.mutex_group_id` in
-the DDL), so pass a half-court's own id (e.g. a court with `share_of_group =
-0.5`) to book it at the half-court rate:
+### 3. Book Slots & Get the PromptPay Payload
+Books one or more one-hour slots as a single group (one booking code, one
+payment for the total). All-or-nothing: if any slot is taken, closed, or a
+half-court side at a peak hour (FR-1.2), nothing is booked and you get a 409.
+Price, member discount and half-court rate are all computed server-side:
 ```bash
 curl -X POST http://localhost:8080/api/v1/bookings \
   -H "Authorization: Bearer <Your_Token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "court_id": "b_half_b",
     "date": "2026-06-20",
-    "start_time": "14:00",
-    "end_time": "16:00",
-    "notes": "Bring half court balls"
+    "slots": [
+      {"court_id": "b_half_b", "start_time": "14:00"},
+      {"court_id": "b_half_b", "start_time": "15:00"}
+    ]
   }'
 ```
 
-### 4. Admin Points Modification & Audit Recording
+### 4. Upload a Payment Slip
+Only the booking's owner (or staff) may upload; JPG/PNG/WEBP up to 5 MB.
+`<booking_id>` is the first booking id from step 3:
 ```bash
-curl -X POST http://localhost:8080/api/v1/admin/users/tanawat/adjust-points \
+curl -X POST http://localhost:8080/api/v1/bookings/<booking_id>/upload-slip \
+  -H "Authorization: Bearer <Your_Token>" \
+  -F slip=@slip.jpg
+```
+
+### 5. Staff Slip Review (FR-3.3)
+```bash
+# Queue of uploaded slips with their booking groups
+curl http://localhost:8080/api/v1/staff/payments -H "Authorization: Bearer <Staff_Token>"
+# Approve: payment VERIFIED, every booking in the group CONFIRMED,
+# 1 loyalty point per booked hour written to the points ledger
+curl -X POST http://localhost:8080/api/v1/staff/payments/<payment_id>/verify -H "Authorization: Bearer <Staff_Token>"
+# Reject: payment REJECTED, bookings CANCELLED so the slots free up
+curl -X POST http://localhost:8080/api/v1/staff/payments/<payment_id>/reject \
+  -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"reason": "amount mismatch"}'
+```
+
+### 6. Admin Points Modification & Audit Recording
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/users/<user_id>/adjust-points \
+  -H "Authorization: Bearer <Manager_Token>" \
   -H "Content-Type: application/json" \
   -d '{
     "points_delta": 5

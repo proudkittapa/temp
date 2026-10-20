@@ -7,6 +7,7 @@ import (
 
 	"arena-backend/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ProductRepository struct {
@@ -43,7 +44,7 @@ func (r *ProductRepository) ReturnRentalItem(ctx context.Context, orderItemID st
 		// 1. Identify product reference inside order items
 		var item model.OrderItem
 		// SELECT FOR UPDATE
-		err := tx.Set("gorm:query_option", "FOR UPDATE").First(&item, "id = ?", orderItemID).Error
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ?", orderItemID).Error
 		if err != nil {
 			return fmt.Errorf("order item not found or unavailable: %w", err)
 		}

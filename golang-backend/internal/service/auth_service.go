@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"arena-backend/internal/repository"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -39,6 +40,11 @@ func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.Au
 	}
 }
 
+var (
+	ErrInvalidCredentials = errors.New("invalid login credentials")
+	ErrDuplicateUser      = errors.New("this phone number or email is already registered")
+)
+
 type AuthResult struct {
 	Token string      `json:"token"`
 	User  *model.User `json:"user"`
@@ -46,12 +52,23 @@ type AuthResult struct {
 
 // Register verifies credentials duplicate and inserts a secured password payload
 func (s *AuthService) Register(ctx context.Context, name, email, phone, password string) (*AuthResult, error) {
+	// The unique indexes on users.phone/email are the real guarantee; this
+	// pre-check just gives a clear message in the common case.
+	for _, identity := range []string{phone, email} {
+		if identity == "" {
+			continue
+		}
+		if existing, _, err := s.usrRepo.GetByIdentity(ctx, identity); err == nil && existing != nil {
+			return nil, ErrDuplicateUser
+		}
+	}
+
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	userID := "u-" + time.Now().Format("02150405")
+	userID := ids.New("u")
 	var emailVal *string
 	if email != "" {
 		emailVal = &email
@@ -73,7 +90,7 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 
 	err = s.usrRepo.Create(ctx, &newUser)
 	if err != nil {
-		return nil, errors.New("user configuration collision (phone/email duplicate)")
+		return nil, ErrDuplicateUser
 	}
 
 	// Dynamic admin trace logger creation for CRM tracking
@@ -85,7 +102,7 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 		Action:     "USER_REGISTERED",
 		TargetType: "User",
 		TargetID:   userID,
-		AfterState: fmt.Sprintf("Registered new customer user: ID %s, Phone %s", userID, phone),
+		AfterState: fmt.Sprintf(`{"id": %q, "phone": %q}`, userID, phone),
 		CreatedAt:  time.Now(),
 	})
 
@@ -104,11 +121,17 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 func (s *AuthService) Login(ctx context.Context, identity, password string) (*AuthResult, error) {
 	user, pHash, err := s.usrRepo.GetByIdentity(ctx, identity)
 	if err != nil || user == nil {
-		return nil, errors.New("invalid login credentials")
+		return nil, ErrInvalidCredentials
 	}
 
+	// Same error for unknown user and wrong password so the response
+	// doesn't reveal which phone numbers/emails are registered.
 	if err := bcrypt.CompareHashAndPassword([]byte(pHash), []byte(password)); err != nil {
-		return nil, errors.New("invalid password verification match")
+		return nil, ErrInvalidCredentials
+	}
+
+	if !user.IsActive {
+		return nil, errors.New("account is suspended - please contact staff")
 	}
 
 	tokenString, err := s.generateToken(user.ID, string(user.Role), 48*time.Hour)
@@ -134,4 +157,17 @@ func (s *AuthService) generateToken(userID string, role string, d time.Duration)
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtKeySecret)
+}
+
+// ParseToken validates a bearer token issued by generateToken and returns
+// its claims. Only HS256 is accepted so a token can't downgrade to "none".
+func (s *AuthService) ParseToken(tokenString string) (*AuthClaims, error) {
+	claims := &AuthClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+		return jwtKeySecret, nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	if err != nil || !token.Valid {
+		return nil, errors.New("invalid or expired token")
+	}
+	return claims, nil
 }

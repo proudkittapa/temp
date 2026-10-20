@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/promptpay"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PaymentService struct {
@@ -36,8 +39,22 @@ func (s *PaymentService) SaveSlipUploadedTransaction(ctx context.Context, bookin
 		now := time.Now()
 		slipStatus := model.PaymentSlipUploaded
 
+		// Re-uploading is fine while the slip is still awaiting review, but
+		// not once staff verified or rejected it - that would put a settled
+		// payment back in the queue.
+		var p model.Payment
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "booking_id = ?", bookingID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if p.Status != model.PaymentPending && p.Status != model.PaymentSlipUploaded {
+			return fmt.Errorf("%w: payment is already %s", ErrInvalidState, p.Status)
+		}
+
 		// Update payment attributes
-		err := tx.Model(&model.Payment{}).Where("booking_id = ?", bookingID).Updates(map[string]interface{}{
+		err := tx.Model(&p).Updates(map[string]interface{}{
 			"status":           slipStatus,
 			"slip_url":         &servedURL,
 			"slip_uploaded_at": &now,
@@ -47,8 +64,7 @@ func (s *PaymentService) SaveSlipUploadedTransaction(ctx context.Context, bookin
 			return err
 		}
 
-		// Update booking status
-		return tx.Model(&model.Booking{}).Where("id = ?", bookingID).Update("status", model.BookingPendingPayment).Error
+		return nil
 	})
 
 	if err != nil {

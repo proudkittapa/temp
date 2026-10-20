@@ -4,6 +4,7 @@ import {
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType
 } from '../types';
 import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
+import * as api from '../api';
 import { Check, X, ShoppingCart, Activity, RefreshCw, AlertTriangle, Coffee, ShieldCheck, Dumbbell, Receipt, Plus, Minus, CheckCircle2, UserCheck, AlertOctagon } from 'lucide-react';
 
 interface StaffPOSProps {
@@ -63,6 +64,53 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Reject slip state
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<string>('');
+
+  // API mode: slip review queue comes from the backend and needs a staff login
+  const [staffUser, setStaffUser] = useState<User | null>(() => api.USE_BACKEND ? api.getSession('staff')?.user ?? null : null);
+  const [staffIdentity, setStaffIdentity] = useState<string>('');
+  const [staffPassword, setStaffPassword] = useState<string>('');
+  const [staffApiError, setStaffApiError] = useState<string | null>(null);
+  const [reviewQueue, setReviewQueue] = useState<api.PaymentForReview[]>([]);
+
+  useEffect(() => {
+    if (!api.USE_BACKEND || !staffUser) return;
+    let cancelled = false;
+    api.listPaymentsForReview()
+      .then(queue => {
+        if (cancelled) return;
+        setReviewQueue(queue);
+        setStaffApiError(null);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        if (err instanceof api.ApiError && err.status === 401) setStaffUser(null);
+        setStaffApiError(err.message);
+      });
+    return () => { cancelled = true; };
+  }, [triggerRefresh, staffUser]);
+
+  const handleStaffLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setStaffApiError(null);
+    api.login('staff', staffIdentity, staffPassword)
+      .then(user => {
+        if (user.role === UserRole.CUSTOMER) {
+          api.logout('staff');
+          setStaffApiError('บัญชีลูกค้าไม่มีสิทธิ์ตรวจสลิป');
+          return;
+        }
+        setStaffUser(user);
+        setStaffIdentity('');
+        setStaffPassword('');
+      })
+      .catch(err => setStaffApiError(err.message));
+  };
+
+  const handleStaffLogout = () => {
+    api.logout('staff');
+    setStaffUser(null);
+    setReviewQueue([]);
+  };
 
   // Load everything
   useEffect(() => {
@@ -249,6 +297,27 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Phase 1 CORE: Approve Bank Slips (Slip Verification)
   const handleVerifySlip = (paymentId: string) => {
+    if (api.USE_BACKEND) {
+      const entry = reviewQueue.find(r => r.payment.id === paymentId);
+      api.verifyPayment(paymentId)
+        .then(res => {
+          if (entry) {
+            const first = entry.bookings[0];
+            const courtName = courts.find(c => c.id === first?.courtId)?.name || 'สนามกีฬาทั่วไป';
+            const ptsNote = res.pointsAwarded > 0 ? `\n🎁 และได้รับแต้มสะสมเพิ่ม: +${res.pointsAwarded} แต้ม!` : '';
+            pushLineMessage(first?.userPhone || '', `🎉 ยืนยันการจองแล้ว!\n📋 ${res.bookingCode} | สนาม ${courtName}\n📅 ${first?.date} ${first?.startTime}–${entry.bookings[entry.bookings.length - 1]?.endTime}\nพบกันที่สนาม!${ptsNote}`, "CONFIRMED");
+          }
+          onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.VERIFIED });
+          onRefreshAll();
+          alert(`ยืนยันเรียบร้อยแล้ว! อนุมัติ ${res.bookingsCount} สล็อต ${res.pointsAwarded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${res.pointsAwarded} แต้ม)` : ''}`);
+        })
+        .catch(err => {
+          alert(`อนุมัติไม่สำเร็จ: ${err.message}`);
+          onRefreshAll();
+        });
+      return;
+    }
+
     const allPayments = StorageService.get<Payment[]>('payments', []);
     const allBookings = StorageService.get<Booking[]>('bookings', []);
 
@@ -302,6 +371,23 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const handleRejectSlip = (paymentId: string) => {
     if (!rejectReason) {
       alert('กรุณากรอกสาเหตุการปฎิเสธสลิปด้วยค่ะ');
+      return;
+    }
+
+    if (api.USE_BACKEND) {
+      const entry = reviewQueue.find(r => r.payment.id === paymentId);
+      api.rejectPayment(paymentId, rejectReason)
+        .then(res => {
+          if (entry) {
+            pushLineMessage(entry.bookings[0]?.userPhone || '', `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${res.bookingCode}\nเหตุผล: ${rejectReason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`, "CANCELLED");
+          }
+          onAddAuditLog('SLIP_REJECTED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.REJECTED, reason: rejectReason });
+          setRejectId(null);
+          setRejectReason('');
+          onRefreshAll();
+          alert('ปฏิเสธสลิปแล้ว ระบบยกเลิกเวลาและแจ้งลูกค้าแล้ว');
+        })
+        .catch(err => alert(`ปฏิเสธไม่สำเร็จ: ${err.message}`));
       return;
     }
 
@@ -632,7 +718,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   };
 
   // Slips verification target list
-  const pendingSlipPayments = payments.filter(p => p.status === PaymentStatus.SLIP_UPLOADED);
+  const pendingSlipPayments = api.USE_BACKEND
+    ? reviewQueue.map(r => r.payment)
+    : payments.filter(p => p.status === PaymentStatus.SLIP_UPLOADED);
+  // Bookings the slip queue can resolve payments against.
+  const slipQueueBookings = api.USE_BACKEND ? reviewQueue.flatMap(r => r.bookings) : bookings;
 
   return (
     <div className="space-y-6">
@@ -1060,16 +1150,35 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               <p className="text-xs text-slate-500">กรุณากดตรวจเช็กรายละเอียด รูปสลิปผู้เข้าใช้บริการก่อนการยืนยันจอง ป้องกันความคลาดเคลื่อนและสลิปปลอมแปลง</p>
             </div>
 
+            {api.USE_BACKEND && staffApiError && (
+              <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠️ {staffApiError}</p>
+            )}
+
+            {api.USE_BACKEND && !staffUser ? (
+              <form onSubmit={handleStaffLogin} className="max-w-sm space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs">
+                <p className="font-bold text-slate-700">เข้าสู่ระบบพนักงานเพื่อตรวจสลิป</p>
+                <input value={staffIdentity} onChange={e => setStaffIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลพนักงาน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
+                <input type="password" value={staffPassword} onChange={e => setStaffPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
+                <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
+              </form>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
+              {api.USE_BACKEND && staffUser && (
+                <p className="md:col-span-2 text-[11px] text-slate-500">
+                  ตรวจสลิปในนาม <span className="font-bold text-slate-700">{staffUser.name}</span>
+                  <button type="button" onClick={handleStaffLogout} className="ml-2 underline text-slate-500 hover:text-slate-700">ออกจากระบบ</button>
+                </p>
+              )}
+
               {/* Slip list queue */}
               <div className="space-y-3">
                 <span className="text-xs font-bold text-slate-700 block">สลิปที่รอสต๊าฟเวอริฟายเดลิเวอร์รี ({pendingSlipPayments.length} รายการ):</span>
                 
                 <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
                   {pendingSlipPayments.map((pay) => {
-                    const bookingObj = bookings.find(b => b.id === pay.bookingId);
+                    const bookingObj = slipQueueBookings.find(b => b.id === pay.bookingId);
                     if (!bookingObj) return null;
+                    const groupHours = slipQueueBookings.filter(b => b.bookingCode === bookingObj.bookingCode).length;
                     const courtName = courts.find(c => c.id === bookingObj.courtId)?.name || 'สนาม';
 
                     return (
@@ -1079,7 +1188,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                             <span className="text-[10px] bg-[#1e293b] text-white px-2 py-0.5 rounded font-mono font-bold">{bookingObj.bookingCode}</span>
                             <p className="font-black text-slate-800 mt-1.5">{courtName}</p>
                             <p className="text-[10px] text-slate-500">ผู้จอง: <span className="text-slate-800 font-semibold">{bookingObj.userName}</span> | โทร: {bookingObj.userPhone}</p>
-                            <p className="text-[10px] text-slate-500">จองเล่นวันที่: {bookingObj.date} | เวลา: {bookingObj.startTime} - {bookingObj.endTime} น.</p>
+                            <p className="text-[10px] text-slate-500">จองเล่นวันที่: {bookingObj.date} | เวลา: {bookingObj.startTime} - {bookingObj.endTime} น.{groupHours > 1 ? ` (+${groupHours - 1} ชั่วโมงในกลุ่มเดียวกัน)` : ''}</p>
                           </div>
                           
                           <div className="text-right">
@@ -1176,6 +1285,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 )}
               </div>
             </div>
+            )}
           </div>
         )}
         {activePosTab === 'fb' && (

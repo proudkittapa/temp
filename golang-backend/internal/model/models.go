@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // Custom Types mirroring our Frontend Enums
 type UserRole string
@@ -86,8 +90,8 @@ const (
 type User struct {
 	ID         string     `json:"id" db:"id" gorm:"primaryKey;column:id"`
 	Name       string     `json:"name" db:"name" gorm:"column:name"`
-	Email      *string    `json:"email,omitempty" db:"email" gorm:"column:email"`
-	Phone      string     `json:"phone" db:"phone" gorm:"column:phone"`
+	Email      *string    `json:"email,omitempty" db:"email" gorm:"column:email"` // unique - see ensureUserUniqueIndexes in main.go
+	Phone      string     `json:"phone" db:"phone" gorm:"column:phone"`           // unique - see ensureUserUniqueIndexes in main.go
 	LineUserID *string    `json:"line_user_id,omitempty" db:"line_user_id" gorm:"column:line_user_id"`
 	Role       UserRole   `json:"role" db:"role" gorm:"column:role"`
 	MemberType MemberType `json:"member_type" db:"member_type" gorm:"column:member_type"`
@@ -207,7 +211,7 @@ type Booking struct {
 	BookingCode string `json:"booking_code" db:"booking_code" gorm:"column:booking_code"`
 	CourtID     string `json:"court_id" db:"court_id" gorm:"column:court_id"`
 	UserID      string `json:"user_id" db:"user_id" gorm:"column:user_id"`
-	Date        string `json:"date" db:"date" gorm:"column:date;type:date"`                   // "YYYY-MM-DD"
+	Date        string `json:"date" db:"date" gorm:"column:date;type:date"`                         // "YYYY-MM-DD"
 	StartTime   string `json:"start_time" db:"start_time" gorm:"column:start_time;type:varchar(5)"` // "HH:MM"
 	EndTime     string `json:"end_time" db:"end_time" gorm:"column:end_time;type:varchar(5)"`       // "HH:MM", always StartTime+1h - one row per booked hour (see BookingRepository doc)
 	// Snapshot of (court.ShareOfGroup < 1) at booking time, kept for
@@ -319,6 +323,19 @@ type AuditLog struct {
 	// adjustments and price/schedule overrides.
 	Reason    *string   `json:"reason,omitempty" db:"reason" gorm:"column:reason"`
 	CreatedAt time.Time `json:"created_at" db:"created_at" gorm:"column:created_at"`
+}
+
+// BeforeCreate keeps empty Before/AfterState valid for their jsonb columns -
+// Postgres rejects ” as JSON, which silently dropped every audit row written
+// without an explicit before/after (callers mostly ignore LogAction errors).
+func (a *AuditLog) BeforeCreate(_ *gorm.DB) error {
+	if a.BeforeState == "" {
+		a.BeforeState = "null"
+	}
+	if a.AfterState == "" {
+		a.AfterState = "null"
+	}
+	return nil
 }
 
 // LedgerEntryType mirrors the frontend's LedgerEntryType enum.
