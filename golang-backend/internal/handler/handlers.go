@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +26,7 @@ type ArenaHandler struct {
 	bookingService     *service.BookingService
 	auditLogService    *service.AuditLogService
 	posService         *service.POSService
+	slips              *SlipSigner
 }
 
 func NewArenaHandler(
@@ -33,6 +38,7 @@ func NewArenaHandler(
 	bookingService *service.BookingService,
 	auditLogService *service.AuditLogService,
 	posService *service.POSService,
+	slips *SlipSigner,
 ) *ArenaHandler {
 	return &ArenaHandler{
 		authService:        authService,
@@ -43,6 +49,7 @@ func NewArenaHandler(
 		bookingService:     bookingService,
 		auditLogService:    auditLogService,
 		posService:         posService,
+		slips:              slips,
 	}
 }
 
@@ -99,9 +106,18 @@ func (h *ArenaHandler) Login(c *gin.Context) {
 		return
 	}
 
-	result, err := h.authService.Login(c.Request.Context(), input.Identity, input.Password)
+	result, err := h.authService.Login(c.Request.Context(), input.Identity, input.Password, c.ClientIP())
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": err.Error()})
+		var tooMany *service.TooManyAttemptsError
+		switch {
+		case errors.As(err, &tooMany):
+			c.Header("Retry-After", strconv.Itoa(int(tooMany.RetryAfter.Seconds())+1))
+			c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "error": err.Error()})
+		case errors.Is(err, service.ErrInvalidCredentials), errors.Is(err, service.ErrAccountSuspended):
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "login failed, please try again"})
+		}
 		return
 	}
 
@@ -213,6 +229,22 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		return
 	}
 
+	// Fingerprint the file so the same slip can't be attached to two
+	// bookings (see BookingService.SaveSlip).
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "could not read the slip image"})
+		return
+	}
+	hasher := sha256.New()
+	_, err = io.Copy(hasher, src)
+	src.Close()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "could not read the slip image"})
+		return
+	}
+	slipHash := hex.EncodeToString(hasher.Sum(nil))
+
 	// Named by payment (server-generated id), never by client input.
 	fileName := "slip_" + payment.ID + "_" + time.Now().Format("20060102150405") + "." + ext
 	filePath := filepath.Join(slipDir, fileName)
@@ -222,7 +254,7 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	}
 	servedURL := slipURLPrefix + fileName
 
-	previous, err := h.bookingService.SaveSlip(c.Request.Context(), payment.ID, servedURL)
+	previous, err := h.bookingService.SaveSlip(c.Request.Context(), payment.ID, servedURL, slipHash)
 	if err != nil {
 		_ = os.Remove(filePath) // state changed since the check - don't keep the file
 		respondError(c, err)
@@ -234,7 +266,7 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		"success": true,
 		"message": "Payment receipt uploaded successfully. Our cashier matching engine has queued verification.",
 		"data": gin.H{
-			"slip_url": servedURL,
+			"slip_url": h.slips.Sign(servedURL),
 			"status":   model.PaymentSlipUploaded,
 		},
 	})
@@ -278,11 +310,13 @@ func (h *ArenaHandler) ProcessPOSCheckout(c *gin.Context) {
 	})
 }
 
-// 7. Manual Member Points Modifiers (POST /api/v1/admin/users/:id/adjust-points)
+// 7. Manual points change (POST /api/v1/admin/users/:id/adjust-points)
+// {"points_delta": 5, "reason": "..."} - manager/admin only.
 func (h *ArenaHandler) ModifyPoints(c *gin.Context) {
 	usrParamID := c.Param("id")
 	var input struct {
-		PointsDelta int `json:"points_delta" binding:"required"`
+		PointsDelta int    `json:"points_delta" binding:"required"`
+		Reason      string `json:"reason"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -290,9 +324,10 @@ func (h *ArenaHandler) ModifyPoints(c *gin.Context) {
 		return
 	}
 
-	newBalance, err := h.userService.AdjustUserPoints(c.Request.Context(), usrParamID, input.PointsDelta, currentUserID(c))
+	actorID, actorName := actor(c)
+	newBalance, err := h.userService.AdjustUserPoints(c.Request.Context(), usrParamID, input.PointsDelta, actorID, actorName, input.Reason)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+		respondError(c, err)
 		return
 	}
 
@@ -304,4 +339,35 @@ func (h *ArenaHandler) ModifyPoints(c *gin.Context) {
 			"new_balance": newBalance,
 		},
 	})
+}
+
+// GET /api/v1/admin/users?role=CUSTOMER - manager/admin: accounts for the
+// Admin panel's user list (password hashes are never serialized).
+func (h *ArenaHandler) ListUsers(c *gin.Context) {
+	users, err := h.userService.FetchAllUsers(c.Request.Context(), c.Query("role"))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": users})
+}
+
+// PUT /api/v1/admin/users/:id/member-type {"member_type": "STUDENT"} -
+// manager/admin: sets the tier the server prices this customer's bookings
+// with (FR-2.3).
+func (h *ArenaHandler) SetMemberType(c *gin.Context) {
+	var input struct {
+		MemberType model.MemberType `json:"member_type" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	actorID, actorName := actor(c)
+	u, err := h.membershipService.SetMemberType(c.Request.Context(), c.Param("id"), input.MemberType, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": u})
 }

@@ -90,7 +90,7 @@ The **Sports Complex Management System** is a mission-critical management platfo
 | Open / Close Register Shift Float | ❌ | ✅ (Current Shift) | ✅ (All Shifts) | ✅ (All Shifts) |
 | Approve Cancellations & Process Refunds | ❌ | ❌ | ✅ | ✅ |
 | Configure Court Pricing & Peak Hours | ❌ | ❌ | ❌ | ✅ |
-| Schedule Maintenance / Day-Off Block | ❌ | ❌ | ❌ | ✅ |
+| Schedule Maintenance / Day-Off Block | ❌ | ❌ | ✅ | ✅ |
 | View System Financial Reports & Charts | ❌ | ❌ | ✅ (Limited) | ✅ (Full) |
 | Inspect Anti-Fraud Audit Trail | ❌ | ❌ | ❌ | ✅ |
 | Export Data to Excel (.xlsx) | ❌ | ❌ | ✅ | ✅ |
@@ -110,7 +110,7 @@ The **Sports Complex Management System** is a mission-critical management platfo
   - Reserving Half Court B or C shall automatically block Full Court A for that slot.
   - Half-court reservations shall only be bookable during **Off-Peak hours** to maximize peak court utilization.
 - **FR-1.3 Maintenance & Day-Off Engine (`DayOff`)**:
-  - Administrators shall have the capability to schedule temporary closures for a specific court or across all courts.
+  - Managers and administrators shall have the capability to schedule temporary closures for a specific court or across all courts.
   - The closure can be configured as **Full Day** or restricted to a **Specific Time Window** (e.g., 08:00 to 12:00).
   - Customers attempting to book a blocked slot shall receive an immediate advisory dialog citing the closure reason.
   - All blocked slots must be visually color-coded as unavailable in the customer and staff calendars.

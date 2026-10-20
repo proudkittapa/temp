@@ -14,6 +14,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ErrInsufficientPoints: a points change would take the balance below zero.
+var ErrInsufficientPoints = errors.New("insufficient points: balance cannot drop below zero")
+
 type UserRepository struct {
 	db *gorm.DB
 }
@@ -50,9 +53,11 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, e
 	return &u, nil
 }
 
-// NormalizePhone keeps only the digits of a phone number, so "081-234-5678",
-// "081 234 5678" and "0812345678" are the same number. Phones are stored
-// this way (see AuthService.Register) and compared this way.
+// NormalizePhone reduces a phone number to one canonical form: digits only,
+// with the Thai country code rewritten as the domestic leading 0. So
+// "081-234-5678", "081 234 5678", "+66 81 234 5678" and "0066812345678" are
+// all "0812345678". Phones are stored this way (see AuthService.Register)
+// and compared this way.
 func NormalizePhone(p string) string {
 	var b strings.Builder
 	for _, r := range p {
@@ -60,48 +65,73 @@ func NormalizePhone(p string) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	d := b.String()
+	// Domestic numbers always start with 0, so a leading 66 (or 0066) is
+	// the country code: 66 + 9 digits for a mobile, 66 + 8 for a landline.
+	switch {
+	case (len(d) == 10 || len(d) == 11) && strings.HasPrefix(d, "66"):
+		return "0" + d[2:]
+	case (len(d) == 12 || len(d) == 13) && strings.HasPrefix(d, "0066"):
+		return "0" + d[4:]
+	}
+	return d
 }
 
-// phoneDigitsMatch compares users.phone by digits only, so accounts
-// registered before phones were normalized (stored as typed, e.g. with
-// dashes) are still found.
-const phoneDigitsMatch = "regexp_replace(phone, '[^0-9]', '', 'g') = ?"
+// canonicalPhoneSQL is NormalizePhone in SQL, applied to users.phone, so
+// accounts stored before phones were normalized (with dashes, or as
+// +66...) still match.
+const canonicalPhoneSQL = `(CASE
+	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^66[0-9]{8,9}$' THEN '0' || substr(regexp_replace(phone, '[^0-9]', '', 'g'), 3)
+	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^0066[0-9]{8,9}$' THEN '0' || substr(regexp_replace(phone, '[^0-9]', '', 'g'), 5)
+	ELSE regexp_replace(phone, '[^0-9]', '', 'g') END)`
 
-// GetByIdentity finds a user by email, or - when identity has no "@" - by
-// phone number compared digits-only. Used by login and the register
-// duplicate check.
-func (r *UserRepository) GetByIdentity(ctx context.Context, identity string) (*model.User, string, error) {
+// FindByIdentity returns every user whose email is identity or - when
+// identity has no "@" - whose phone is the same number, oldest first.
+// Usually that is zero or one user, but before phones were normalized the
+// same number could be registered twice (e.g. "081-555-0000" and
+// "0815550000"), so callers must not assume a single match.
+func (r *UserRepository) FindByIdentity(ctx context.Context, identity string) ([]model.User, error) {
 	q := r.db.WithContext(ctx).Where("email = ?", identity)
 	if !strings.Contains(identity, "@") {
-		if digits := NormalizePhone(identity); digits != "" {
-			q = q.Or(phoneDigitsMatch, digits)
+		if phone := NormalizePhone(identity); phone != "" {
+			q = q.Or(canonicalPhoneSQL+" = ?", phone)
 		}
 	}
-	var u model.User
-	if err := q.Order("created_at").First(&u).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, "", nil
-		}
-		return nil, "", fmt.Errorf("failed to retrieve user by email/phone check: %w", err)
+	var users []model.User
+	if err := q.Order("created_at, id").Find(&users).Error; err != nil {
+		return nil, fmt.Errorf("failed to retrieve user by email/phone check: %w", err)
 	}
-	return &u, u.PasswordHash, nil
+	return users, nil
 }
 
-// GetByPhone finds a user by phone number, compared digits-only.
+// GetByPhone finds the oldest user with this phone number (compared in
+// canonical form), or nil.
 func (r *UserRepository) GetByPhone(ctx context.Context, phone string) (*model.User, error) {
-	digits := NormalizePhone(phone)
-	if digits == "" {
+	phone = NormalizePhone(phone)
+	if phone == "" {
 		return nil, nil
 	}
 	var u model.User
-	if err := r.db.WithContext(ctx).Where(phoneDigitsMatch, digits).Order("created_at").First(&u).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where(canonicalPhoneSQL+" = ?", phone).Order("created_at, id").First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to retrieve user by phone: %w", err)
 	}
 	return &u, nil
+}
+
+// DuplicatePhones returns canonical phone numbers that more than one
+// account uses - left over from before phones were normalized. Such
+// accounts should be merged by hand; until then login tries each one.
+func (r *UserRepository) DuplicatePhones(ctx context.Context) ([]string, error) {
+	var phones []string
+	err := r.db.WithContext(ctx).Model(&model.User{}).
+		Select(canonicalPhoneSQL+" AS p").
+		Where("phone <> ''").
+		Group("p").Having("count(*) > 1").
+		Pluck("p", &phones).Error
+	return phones, err
 }
 
 // AddPointsEntry applies a signed point delta to a user atomically within an
@@ -132,7 +162,7 @@ func (r *UserRepository) AddPointsEntry(
 
 	newBalance := u.Points + points
 	if newBalance < 0 {
-		return 0, errors.New("insufficient points: balance cannot drop below zero")
+		return 0, ErrInsufficientPoints
 	}
 
 	u.Points = newBalance
@@ -159,31 +189,30 @@ func (r *UserRepository) AddPointsEntry(
 	return newBalance, nil
 }
 
-// UpdatePoints handles a manual admin points adjustment. Safely locks rows
-// inside a database session block of ACID via AddPointsEntry, which also
-// records the change to points_ledger (LedgerAdjustManual) in addition to the
-// before/after audit log kept here for parity with other admin actions.
-func (r *UserRepository) UpdatePoints(ctx context.Context, userID string, delta int, actionStaff string) (int, error) {
+// UpdatePoints handles a manual points adjustment by a manager/admin.
+// AddPointsEntry records it in points_ledger (LedgerAdjustManual, with the
+// reason as the note) and the audit log keeps before/after, the actor's
+// name and the reason, as FR-7.3 requires for manual point changes.
+func (r *UserRepository) UpdatePoints(ctx context.Context, userID string, delta int, actorID, actorName, reason string) (int, error) {
 	var newBalance int
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		newBalance, err = r.AddPointsEntry(ctx, tx, userID, model.LedgerAdjustManual, delta, actionStaff, nil, nil, nil)
+		newBalance, err = r.AddPointsEntry(ctx, tx, userID, model.LedgerAdjustManual, delta, actorID, nil, nil, &reason)
 		if err != nil {
 			return err
 		}
 		beforePoints := newBalance - delta // AddPointsEntry always applies the full delta or errors, never clamps
 
-		// Dynamic admin trace logger creation inside same Postgres atomic transaction
-		logID := ids.New("log")
 		auditLog := model.AuditLog{
-			ID:          logID,
-			UserID:      actionStaff,
-			UserName:    actionStaff,
+			ID:          ids.New("log"),
+			UserID:      actorID,
+			UserName:    actorName,
 			Action:      "POINTS_OVERRIDE",
 			TargetType:  "User",
 			TargetID:    userID,
 			BeforeState: model.AuditJSON(map[string]int{"points": beforePoints}),
 			AfterState:  model.AuditJSON(map[string]int{"points": newBalance, "delta": delta}),
+			Reason:      &reason,
 			CreatedAt:   time.Now(),
 		}
 		if err := tx.Create(&auditLog).Error; err != nil {

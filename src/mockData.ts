@@ -483,6 +483,49 @@ export function isCourtSlotAvailable(
   return !findConflictingBooking(courtId, date, hour, bookings, courts);
 }
 
+// Phone numbers in one canonical form: digits only, with the Thai country
+// code (66 / 0066) rewritten as the domestic leading 0, so "081-234-5678"
+// and "+66 81 234 5678" are the same number. Mirrors the backend's
+// repository.NormalizePhone.
+export function normalizePhone(phone: string | undefined): string {
+  const d = (phone || '').replace(/[^0-9]/g, '');
+  if ((d.length === 10 || d.length === 11) && d.startsWith('66')) return '0' + d.slice(2);
+  if ((d.length === 12 || d.length === 13) && d.startsWith('0066')) return '0' + d.slice(4);
+  return d;
+}
+
+// The current date and hour at the venue (Asia/Bangkok), whatever the
+// browser's own time zone.
+export function bangkokNow(): { date: string; hour: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find(p => p.type === t)?.value || '';
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, hour: parseInt(get('hour'), 10) };
+}
+
+// Whether the hour starting at `startTime` on `date` has already started
+// (online bookings must start in the future) or ended (nobody can book it),
+// in Bangkok time - the same rule as the backend's checkNotPast.
+export function slotTiming(date: string, startTime: string): { started: boolean; ended: boolean } {
+  const now = bangkokNow();
+  const hour = parseInt(startTime.split(':')[0], 10);
+  if (date !== now.date) {
+    const past = date < now.date;
+    return { started: past, ended: past };
+  }
+  return { started: hour <= now.hour, ended: hour + 1 <= now.hour };
+}
+
+// "สิทธิ์นักเรียน... (ส่วนลด 15%)" for a member tier, from the configured
+// discounts rather than a hard-coded percentage.
+export function memberTierLabel(memberType: MemberType | undefined): string {
+  const tiers = StorageService.get<MemberDiscountRule[]>('member_discounts', DEFAULT_MEMBER_DISCOUNTS);
+  const tier = tiers.find(t => t.id === (memberType || MemberType.NORMAL));
+  if (!tier) return memberType || MemberType.NORMAL;
+  return `${tier.name} (ส่วนลด ${tier.isActive ? tier.discountPercent : 0}%)`;
+}
+
 // Every booking row of root's group: one checkout's hours share its code,
 // owner and date and are paid by one payment (attached to the first row).
 // Same rule as the backend's bookingGroup, which also matches owner and date
@@ -496,8 +539,7 @@ export function calculatePrice(
   dateStr: string,
   startHourStr: string, // e.g., "09:00"
   memberType: MemberType = MemberType.NORMAL,
-  isHalfCourt: boolean = false,
-  courtId?: string
+  court?: Pick<Court, 'shareOfGroup'>
 ): { total: number; original: number; priceType: PriceType; discountMessage?: string; isOpen: boolean } {
   const pricingRules = StorageService.get<PricingRule[]>('pricing_rules', DEFAULT_PRICING_RULES);
   const dayType = getDayType(dateStr);
@@ -522,14 +564,14 @@ export function calculatePrice(
   const original = basePrice;
   const priceType = rule.priceType;
 
-  // 2. Adjust for half-court (FR-2.4). `shareOfGroup` on the Court record is
-  // the only source of truth for "is this a half-court", as on the server -
-  // the isHalfCourt argument is only used for a court we don't know. (A
-  // caller-supplied flag used to halve the full court's price too.) The
-  // rate comes from the configurable PricingConfig.
-  const courts = StorageService.get<Court[]>('courts', DEFAULT_COURTS);
-  const court = courts.find(c => c.id === courtId);
-  const isReallyHalf = court ? court.shareOfGroup < 1 : isHalfCourt;
+  // 2. Adjust for half-court (FR-2.4). The court's own `shareOfGroup` is
+  // the only source of truth for "is this a half-court", as on the server.
+  // Callers pass the court they display (in API mode that's the server's
+  // court list) rather than a flag or an id looked up in localStorage: a
+  // separate flag once halved the full court's price, and an id lookup
+  // missed courts that only exist on the server. The rate comes from the
+  // configurable PricingConfig.
+  const isReallyHalf = court ? court.shareOfGroup < 1 : false;
   if (isReallyHalf) {
     const pricingConfig = StorageService.get<PricingConfig>('pricing_config', DEFAULT_PRICING_CONFIG);
     basePrice = basePrice * (pricingConfig.halfCourtRatePercent / 100);
@@ -555,6 +597,16 @@ export function calculatePrice(
     isOpen: true
   };
 }
+
+// Bookable hours: the first slot starts at 07:00, the last ends at 23:00
+// (REQUIREMENTS.md FR-2.2; the backend's OpeningHour/ClosingHour). Pricing
+// rules must stay inside them.
+export const OPENING_HOUR = 7;
+export const CLOSING_HOUR = 23;
+
+// The merchant PromptPay ID QR codes pay to in browser-only mode (the Go
+// backend's DefaultPromptPayID).
+export const LOCAL_PROMPTPAY_ID = '0105561008012';
 
 // CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF), the checksum EMVCo QR
 // codes end with. Mirrors golang-backend/internal/pkg/promptpay.

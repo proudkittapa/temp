@@ -122,6 +122,8 @@ func main() {
 	}
 	log.Println("Database schemas verified and migrated successfully!")
 	ensureUserUniqueIndexes(db)
+	ensurePaymentSlipIndex(db)
+	warnDuplicatePhones(db)
 
 	// 1c. Seed the config rows the pricing engine needs to not error on a
 	// fresh database - AutoMigrate only creates schema, not data. FirstOrCreate
@@ -134,7 +136,9 @@ func main() {
 	courtRepo := repository.NewCourtRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
 
-	authService := service.NewAuthService(usrRepo, auditRepo, resolveJWTSecret())
+	serverSecret := resolveJWTSecret()
+	authService := service.NewAuthService(usrRepo, auditRepo, serverSecret)
+	slipSigner := handler.NewSlipSigner(serverSecret)
 	userService := service.NewUserService(usrRepo)
 	auditLogService := service.NewAuditLogService(auditRepo)
 	membershipService := service.NewMembershipService(db, usrRepo)
@@ -157,18 +161,27 @@ func main() {
 		bookingService,
 		auditLogService,
 		posService,
+		slipSigner,
 	)
 
 	// 3. Launch Gin Web Engine Router
 	router := gin.Default()
+	// c.ClientIP() feeds the login throttle, so X-Forwarded-For is only
+	// believed from proxies listed in TRUSTED_PROXIES (comma-separated IPs
+	// or CIDRs, e.g. your reverse proxy). Otherwise anyone could send a
+	// fake header to dodge the per-IP limit.
+	if err := router.SetTrustedProxies(trustedProxies()); err != nil {
+		log.Fatalf("TRUSTED_PROXIES is invalid: %v\n", err)
+	}
 
 	// Ensure local uploads directory exists to avoid filesystem write errors
 	if err := os.MkdirAll("./uploads/slips", 0755); err != nil {
 		log.Printf("Warning: failed to create uploads directory: %v\n", err)
 	}
 
-	// Serve the static uploads directory to allow clients to download/view physical receipt slips
-	router.Static("/uploads", "./uploads")
+	// Slips are NOT served as a public static directory: they show bank
+	// details. They are fetched through signed, expiring links handed only
+	// to the booking's owner and staff - see handler.SlipSigner.
 
 	// Apply standard robust CORS handler rules to authorize our React Frontend Origins
 	router.Use(func(c *gin.Context) {
@@ -208,6 +221,7 @@ func main() {
 		api.POST("/bookings", loggedIn, arenaHandler.CreateBooking)
 		api.POST("/bookings/:id/upload-slip", loggedIn, arenaHandler.UploadSlip)
 		api.GET("/me/bookings", loggedIn, arenaHandler.MyBookings)
+		api.GET("/slips/:name", slipSigner.Serve) // signed link; see handler.SlipSigner
 
 		// Counter walk-ins, paid on the spot
 		api.POST("/staff/bookings", staffOnly, arenaHandler.CreateWalkInBooking)
@@ -222,8 +236,11 @@ func main() {
 
 		// Admin & CRM managers wallets configuration
 		api.POST("/admin/users/:id/adjust-points", managerOnly, arenaHandler.ModifyPoints)
+		api.GET("/admin/users", managerOnly, arenaHandler.ListUsers)
+		api.PUT("/admin/users/:id/member-type", managerOnly, arenaHandler.SetMemberType)
 
-		// Court closures (FR-1.3) - enforced by booking creation
+		// Court closures (FR-1.3) - managers and admins (REQUIREMENTS.md
+		// section 3); enforced by booking creation
 		api.POST("/admin/days-off", managerOnly, dayOffHandler.Create)
 		api.DELETE("/admin/days-off/:id", managerOnly, dayOffHandler.Delete)
 
@@ -468,4 +485,44 @@ func seedDemoUsers(db *gorm.DB) {
 		db.Where(model.User{ID: u.ID}).FirstOrCreate(&u)
 	}
 	log.Println("SEED_DEMO_USERS=true: demo accounts verified (password 123456).")
+}
+
+// trustedProxies reads TRUSTED_PROXIES; unset means trust no proxy headers.
+func trustedProxies() []string {
+	var out []string
+	for _, p := range strings.Split(os.Getenv("TRUSTED_PROXIES"), ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ensurePaymentSlipIndex stops one slip file (by SHA-256) being attached to
+// two live payments; a REJECTED payment's slip may be reused, e.g. for a new
+// booking after the first expired while the transfer was on its way.
+// BookingService.SaveSlip checks this too and gives a clear error; the
+// index catches two uploads racing past that check.
+func ensurePaymentSlipIndex(db *gorm.DB) {
+	stmt := "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_slip_hash_live ON payments (slip_hash) " +
+		"WHERE slip_hash IS NOT NULL AND status <> 'REJECTED'"
+	if err := db.Exec(stmt).Error; err != nil {
+		log.Printf("WARNING: could not create the payments.slip_hash index (%v); duplicate slips are still refused by the upload check.\n", err)
+	}
+}
+
+// warnDuplicatePhones lists phone numbers held by more than one account -
+// possible from before phones were stored in one canonical form. Login
+// still works for each (it tries every match), but walk-in points go to
+// the oldest, so these should be merged by hand.
+func warnDuplicatePhones(db *gorm.DB) {
+	phones, err := repository.NewUserRepository(db).DuplicatePhones(context.Background())
+	if err != nil {
+		log.Printf("WARNING: could not check for duplicate phone numbers: %v\n", err)
+		return
+	}
+	if len(phones) > 0 {
+		log.Printf("WARNING: %d phone number(s) belong to more than one account (%s); merge them so walk-in points go to the right account.\n",
+			len(phones), strings.Join(phones, ", "))
+	}
 }

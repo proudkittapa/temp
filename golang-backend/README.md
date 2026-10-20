@@ -153,10 +153,13 @@ Other customers' bookings come back without user details.
 Books up to 3 one-hour slots as a single group (one booking code, one
 payment for the total). All-or-nothing: if any slot is taken, closed,
 outside opening hours (no pricing rule covers it), already over, or a
-half-court side at a peak hour (FR-1.2), nothing is booked (409/400). An
-unpaid booking holds its slots for 30 minutes: if no slip is uploaded by
-then it is cancelled automatically. A customer can hold at most 3 unpaid
-booking groups at once (429).
+half-court side at a peak hour (FR-1.2), nothing is booked (409/400).
+Bookable hours are 07:00-23:00, and online a slot must not have started
+yet (the counter can still sell an hour in progress). An unpaid booking
+holds its slots for 30 minutes: if no slip is uploaded by then it is
+cancelled automatically. A customer can hold at most 3 booking groups that
+staff haven't approved yet - awaiting a slip *or* awaiting slip review -
+at once (429).
 Price, member discount and half-court rate are all computed server-side:
 ```bash
 curl -X POST http://localhost:8080/api/v1/bookings \
@@ -173,7 +176,11 @@ curl -X POST http://localhost:8080/api/v1/bookings \
 
 ### 4. Upload a Payment Slip
 Only the booking's owner (or staff) may upload; JPG/PNG/WEBP up to 5 MB.
-`<booking_id>` is the first booking id from step 3:
+The same file can't be attached to two live payments (409). Slip images are
+not public: `slip_url` in responses is a signed link
+(`/api/v1/slips/<file>?exp=..&sig=..`) valid for 1-2 hours, handed only to
+the booking's owner and staff. `<booking_id>` is the first booking id from
+step 3:
 ```bash
 curl -X POST http://localhost:8080/api/v1/bookings/<booking_id>/upload-slip \
   -H "Authorization: Bearer <Your_Token>" \
@@ -185,18 +192,27 @@ curl -X POST http://localhost:8080/api/v1/bookings/<booking_id>/upload-slip \
 # Queue of uploaded slips with their booking groups
 curl http://localhost:8080/api/v1/staff/payments -H "Authorization: Bearer <Staff_Token>"
 # Approve: payment VERIFIED, every booking in the group CONFIRMED,
-# 1 loyalty point per booked hour written to the points ledger
-curl -X POST http://localhost:8080/api/v1/staff/payments/<payment_id>/verify -H "Authorization: Bearer <Staff_Token>"
+# 1 loyalty point per booked hour written to the points ledger.
+# expected_slip_uploaded_at is the payment's slip_uploaded_at from the
+# queue: if the customer has replaced the slip since, the call fails (409)
+# so nobody approves an image they didn't see. Required when there is a slip.
+curl -X POST http://localhost:8080/api/v1/staff/payments/<payment_id>/verify \
+  -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"expected_slip_uploaded_at": "2026-06-19T10:15:02.123456Z"}'
 # Reject: payment REJECTED, bookings CANCELLED so the slots free up
 curl -X POST http://localhost:8080/api/v1/staff/payments/<payment_id>/reject \
   -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
-  -d '{"reason": "amount mismatch"}'
+  -d '{"reason": "amount mismatch", "expected_slip_uploaded_at": "2026-06-19T10:15:02.123456Z"}'
 ```
 
 ### 6. Staff Walk-in Booking
-Paid at the counter, so it is created CONFIRMED with a VERIFIED payment.
-It goes through the same availability checks as online bookings, and is
-credited (with loyalty points) to the registered customer with that phone:
+Goes through the same availability checks and pricing as online bookings,
+and is credited to the registered customer with that phone (member price,
+loyalty points). `CASH` is created CONFIRMED with a VERIFIED payment.
+`PROMPTPAY` is created PENDING_PAYMENT with the QR payload in the response;
+staff confirm it with `POST /staff/payments/:id/verify` once the transfer
+has arrived (that also awards the points) or cancel it with `/reject`, and
+it expires after 30 minutes like an online booking:
 ```bash
 curl -X POST http://localhost:8080/api/v1/staff/bookings \
   -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
@@ -246,6 +262,26 @@ curl -X POST http://localhost:8080/api/v1/admin/users/<user_id>/adjust-points \
   -H "Authorization: Bearer <Manager_Token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "points_delta": 5
+    "points_delta": 5,
+    "reason": "Compensation for court 3 lights failing"
   }'
 ```
+A reason is required and audit-logged; points are only for customers, and
+nobody can change their own balance.
+
+### 10. Users and Membership Tiers (manager/admin)
+```bash
+curl "http://localhost:8080/api/v1/admin/users?role=CUSTOMER" -H "Authorization: Bearer <Manager_Token>"
+# The tier the server prices this customer's bookings with (FR-2.3)
+curl -X PUT http://localhost:8080/api/v1/admin/users/<user_id>/member-type \
+  -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \
+  -d '{"member_type": "STUDENT"}'
+```
+
+### Login limits
+Five wrong passwords for one account within 15 minutes lock that account's
+login for the rest of the window (429, `Retry-After`); 50 failures from one
+IP do the same for that IP. Limits are kept in memory per server process.
+Behind a reverse proxy, set `TRUSTED_PROXIES` so the real client IP is used.
+Phone numbers are stored in one form (`0812345678`); `081-234-5678` and
+`+66 81 234 5678` log in to the same account.

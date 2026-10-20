@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"arena-backend/internal/model"
@@ -24,7 +26,7 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, service.ErrForbidden):
 		status = http.StatusForbidden
-	case errors.Is(err, repository.ErrSlotTaken), errors.Is(err, service.ErrSlotUnavailable):
+	case errors.Is(err, repository.ErrSlotTaken), errors.Is(err, service.ErrSlotUnavailable), errors.Is(err, repository.ErrInsufficientPoints):
 		status = http.StatusConflict
 	case errors.Is(err, service.ErrInvalidState):
 		status = http.StatusConflict
@@ -32,6 +34,8 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, service.ErrTooManyUnpaid):
 		status = http.StatusTooManyRequests
+	case errors.Is(err, service.ErrDuplicateSlip), errors.Is(err, service.ErrSlipChanged):
+		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"success": false, "error": err.Error()})
 }
@@ -166,6 +170,12 @@ func (h *ArenaHandler) MyBookings(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
+	for i := range list {
+		if list[i].Payment != nil {
+			signed := h.slips.SignPayment(*list[i].Payment)
+			list[i].Payment = &signed
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
 }
 
@@ -177,14 +187,30 @@ func (h *ArenaHandler) ListPaymentsForReview(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
+	for i := range list {
+		list[i].Payment = h.slips.SignPayment(list[i].Payment)
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
 }
 
-// POST /api/v1/staff/payments/:id/verify - FR-3.3 slip approval: confirms
-// the booking group and awards loyalty points.
+// reviewInput is the body of verify/reject. ExpectedSlipUploadedAt is the
+// slip_uploaded_at of the slip the staff member looked at; the server
+// refuses the decision if the customer has since replaced the slip.
+type reviewInput struct {
+	ExpectedSlipUploadedAt *time.Time `json:"expected_slip_uploaded_at"`
+	Reason                 string     `json:"reason"`
+}
+
+// POST /api/v1/staff/payments/:id/verify {"expected_slip_uploaded_at": "..."}
+// - FR-3.3 slip approval: confirms the booking group and awards loyalty points.
 func (h *ArenaHandler) VerifyPayment(c *gin.Context) {
+	var input reviewInput
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
 	staffID, staffName := actor(c)
-	res, err := h.bookingService.VerifyPayment(c.Request.Context(), c.Param("id"), staffID, staffName)
+	res, err := h.bookingService.VerifyPayment(c.Request.Context(), c.Param("id"), input.ExpectedSlipUploadedAt, staffID, staffName)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -192,18 +218,16 @@ func (h *ArenaHandler) VerifyPayment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": res})
 }
 
-// POST /api/v1/staff/payments/:id/reject {"reason": "..."} - cancels the
-// booking group and frees its slots.
+// POST /api/v1/staff/payments/:id/reject {"reason": "...", "expected_slip_uploaded_at": "..."}
+// - cancels the booking group and frees its slots.
 func (h *ArenaHandler) RejectPayment(c *gin.Context) {
-	var input struct {
-		Reason string `json:"reason" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
+	var input reviewInput
+	if err := c.ShouldBindJSON(&input); err != nil || strings.TrimSpace(input.Reason) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "a rejection reason is required"})
 		return
 	}
 	staffID, staffName := actor(c)
-	res, err := h.bookingService.RejectPayment(c.Request.Context(), c.Param("id"), input.Reason, staffID, staffName)
+	res, err := h.bookingService.RejectPayment(c.Request.Context(), c.Param("id"), input.ExpectedSlipUploadedAt, input.Reason, staffID, staffName)
 	if err != nil {
 		respondError(c, err)
 		return

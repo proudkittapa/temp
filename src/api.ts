@@ -90,8 +90,9 @@ async function request<T>(
   return json.data as T;
 }
 
-// Resolves a server-relative path like "/uploads/slips/x.png" against the
-// API's origin, so slip images load whether or not the Vite proxy is used.
+// Resolves a server-relative path like "/api/v1/slips/x.png?exp=..&sig=.."
+// (a signed slip link) against the API's origin, so slip images load
+// whether or not the Vite proxy is used.
 export function assetUrl(path?: string): string | undefined {
   if (!path || /^https?:/.test(path)) return path;
   try {
@@ -474,18 +475,46 @@ export interface ReviewResult {
   pointsAwarded: number;
 }
 
-export async function verifyPayment(paymentId: string): Promise<ReviewResult> {
+// slipUploadedAt is the payment's slip_uploaded_at as the staff member saw
+// it: the server refuses the decision if the customer has replaced the slip
+// since (so nobody approves an image they never looked at).
+export async function verifyPayment(paymentId: string, slipUploadedAt?: string): Promise<ReviewResult> {
   const r = await request<{ booking_code: string; bookings_count: number; points_awarded: number }>(
     `/staff/payments/${encodeURIComponent(paymentId)}/verify`,
-    { method: 'POST', session: 'staff' }
+    { method: 'POST', session: 'staff', body: { expected_slip_uploaded_at: slipUploadedAt ?? null } }
   );
   return { bookingCode: r.booking_code, bookingsCount: r.bookings_count, pointsAwarded: r.points_awarded };
 }
 
-export async function rejectPayment(paymentId: string, reason: string): Promise<ReviewResult> {
+export async function rejectPayment(paymentId: string, reason: string, slipUploadedAt?: string): Promise<ReviewResult> {
   const r = await request<{ booking_code: string; bookings_count: number; points_awarded: number }>(
     `/staff/payments/${encodeURIComponent(paymentId)}/reject`,
-    { method: 'POST', session: 'staff', body: { reason } }
+    { method: 'POST', session: 'staff', body: { reason, expected_slip_uploaded_at: slipUploadedAt ?? null } }
   );
   return { bookingCode: r.booking_code, bookingsCount: r.bookings_count, pointsAwarded: r.points_awarded };
+}
+
+// ---- users (Admin panel; manager/admin) ----
+
+export async function listUsers(): Promise<User[]> {
+  return (await request<ApiUser[]>('/admin/users', { session: 'admin' })).map(toUser);
+}
+
+// Sets the membership tier the server prices this customer's bookings with.
+export async function setMemberType(userId: string, memberType: MemberType): Promise<User> {
+  return toUser(await request<ApiUser>(`/admin/users/${encodeURIComponent(userId)}/member-type`, {
+    method: 'PUT',
+    session: 'admin',
+    body: { member_type: memberType }
+  }));
+}
+
+// Manual loyalty points change; the reason is required and audit-logged.
+export async function adjustPoints(userId: string, delta: number, reason: string): Promise<number> {
+  const r = await request<{ new_balance: number }>(`/admin/users/${encodeURIComponent(userId)}/adjust-points`, {
+    method: 'POST',
+    session: 'admin',
+    body: { points_delta: delta, reason }
+  });
+  return r.new_balance;
 }

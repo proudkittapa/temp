@@ -54,9 +54,10 @@ database from the Go Backend section below):
 | Customer booking history | `GET /me/bookings` |
 | Slip upload (the real image file) | `POST /bookings/:id/upload-slip` |
 | Staff slip queue, verify (confirms + awards points), reject | `GET /staff/payments`, `POST /staff/payments/:id/verify`, `POST /staff/payments/:id/reject` |
-| Staff walk-in bookings + the staff booking grid | `POST /staff/bookings`, `GET /bookings?date=` |
+| Staff walk-in bookings (PromptPay ones wait for staff to confirm the transfer) + the staff booking grid | `POST /staff/bookings`, `GET /bookings?date=` |
 | Court closures / days off (Admin panel; enforced on every booking) | `GET /days-off`, `POST /admin/days-off`, `DELETE /admin/days-off/:id` |
 | Pricing rules + member-tier discounts (Admin panel; what every booking is charged) | `GET /pricing`, `POST`/`PUT`/`DELETE /admin/pricing-rules`, `PUT /admin/member-discounts/:type` |
+| Users list, a customer's membership tier, manual points (Admin panel → users) | `GET /admin/users`, `PUT /admin/users/:id/member-type`, `POST /admin/users/:id/adjust-points` |
 
 `dev-runner.js` starts the backend with `SEED_DEMO_USERS=true`, which creates
 the same demo accounts as `DEFAULT_USERS` (all password `123456`) on every
@@ -73,7 +74,8 @@ the server charges.
 Still `localStorage`-only in API mode (no backend endpoints yet): POS / F&B /
 rentals, reward redemption, password reset, account deletion, the day's
 totals report, and the other Admin/Manager settings (courts, products,
-users/roles, operating hours - the backend has its own `courts` table,
+staff roles and suspending/deleting users - in API mode the users tab only
+changes membership tiers and points -, operating hours - the backend has its own `courts` table,
 seeded to match, so a court added only in the Admin panel doesn't exist
 there yet).
 

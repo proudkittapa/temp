@@ -65,10 +65,15 @@ func validateRule(r *model.PricingRule) error {
 		return fmt.Errorf("%w: day_type must be WEEKDAY or WEEKEND", ErrInvalidBooking)
 	case !validPriceTypes[r.PriceType]:
 		return fmt.Errorf("%w: price_type must be PEAK, OFFPEAK or NORMAL", ErrInvalidBooking)
-	case r.StartHour < 0 || r.EndHour > 24 || r.StartHour >= r.EndHour:
-		return fmt.Errorf("%w: start_hour must be before end_hour, within 0-24", ErrInvalidBooking)
-	case r.PricePerHour < 0:
-		return fmt.Errorf("%w: price_per_hour cannot be negative", ErrInvalidBooking)
+	// Rules double as opening hours, so they must lie inside the hours that
+	// can be booked at all - a 23:00-24:00 rule used to save fine but could
+	// never be booked.
+	case r.StartHour < OpeningHour || r.EndHour > ClosingHour || r.StartHour >= r.EndHour:
+		return fmt.Errorf("%w: start_hour must be before end_hour, within %02d:00-%02d:00", ErrInvalidBooking, OpeningHour, ClosingHour)
+	// A free hour would produce a 0.00 THB PromptPay QR, which banking
+	// apps reject.
+	case r.PricePerHour <= 0:
+		return fmt.Errorf("%w: price_per_hour must be more than 0", ErrInvalidBooking)
 	}
 	if r.Label == "" {
 		r.Label = fmt.Sprintf("%s %s (%s)", r.CourtType, r.DayType, r.PriceType)
@@ -157,8 +162,10 @@ func (s *PricingAdminService) UpdateMemberDiscount(ctx context.Context, d model.
 	if d.Name == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrInvalidBooking)
 	}
-	if d.DiscountPercent < 0 || d.DiscountPercent > 100 {
-		return nil, fmt.Errorf("%w: discount_percent must be 0-100", ErrInvalidBooking)
+	// Below 100: a free booking would need a 0.00 THB QR, which banking
+	// apps reject.
+	if d.DiscountPercent < 0 || d.DiscountPercent >= 100 {
+		return nil, fmt.Errorf("%w: discount_percent must be at least 0 and below 100", ErrInvalidBooking)
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing model.MemberDiscount

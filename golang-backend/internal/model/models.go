@@ -255,14 +255,18 @@ type Payment struct {
 	Status         PaymentStatus `json:"status" db:"status" gorm:"column:status"`
 	SlipURL        *string       `json:"slip_url,omitempty" db:"slip_url" gorm:"column:slip_url"`
 	SlipUploadedAt *time.Time    `json:"slip_uploaded_at,omitempty" db:"slip_uploaded_at" gorm:"column:slip_uploaded_at"`
-	VerifiedAt     *time.Time    `json:"verified_at,omitempty" db:"verified_at" gorm:"column:verified_at"`
-	VerifiedBy     *string       `json:"verified_by,omitempty" db:"verified_by" gorm:"column:verified_by"`
-	RefundedAt     *time.Time    `json:"refunded_at,omitempty" db:"refunded_at" gorm:"column:refunded_at"`
-	RefundedBy     *string       `json:"refunded_by,omitempty" db:"refunded_by" gorm:"column:refunded_by"`
-	RefundReason   *string       `json:"refund_reason,omitempty" db:"refund_reason" gorm:"column:refund_reason"`
-	QrPayload      *string       `json:"qr_payload,omitempty" db:"qr_payload" gorm:"column:qr_payload"`
-	CreatedAt      time.Time     `json:"created_at" db:"created_at" gorm:"column:created_at"`
-	UpdatedAt      time.Time     `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
+	// SHA-256 of the uploaded slip file. A partial unique index (see
+	// ensurePaymentSlipIndex in main.go) stops the same file being used for
+	// two payments that are still live, i.e. not REJECTED.
+	SlipHash     *string    `json:"-" db:"slip_hash" gorm:"column:slip_hash"`
+	VerifiedAt   *time.Time `json:"verified_at,omitempty" db:"verified_at" gorm:"column:verified_at"`
+	VerifiedBy   *string    `json:"verified_by,omitempty" db:"verified_by" gorm:"column:verified_by"`
+	RefundedAt   *time.Time `json:"refunded_at,omitempty" db:"refunded_at" gorm:"column:refunded_at"`
+	RefundedBy   *string    `json:"refunded_by,omitempty" db:"refunded_by" gorm:"column:refunded_by"`
+	RefundReason *string    `json:"refund_reason,omitempty" db:"refund_reason" gorm:"column:refund_reason"`
+	QrPayload    *string    `json:"qr_payload,omitempty" db:"qr_payload" gorm:"column:qr_payload"`
+	CreatedAt    time.Time  `json:"created_at" db:"created_at" gorm:"column:created_at"`
+	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
 }
 
 // 7. Inventory Items (Drinks, sales, rental shoes/rackets)

@@ -4,7 +4,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
   User, UserRole
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
+import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, OPENING_HOUR, CLOSING_HOUR, getDayType, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
 import { QRCodeSVG } from 'qrcode.react';
@@ -218,7 +218,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
     const allUsers = StorageService.get<User[]>('users', []);
     const foundUser = allUsers.find(
-      u => (u.email?.toLowerCase() === identity.toLowerCase() || u.phone === identity) && u.role === UserRole.CUSTOMER
+      u => (u.email?.toLowerCase() === identity.toLowerCase() || (!identity.includes('@') && normalizePhone(u.phone) === normalizePhone(identity))) && u.role === UserRole.CUSTOMER
     );
 
     if (!foundUser) {
@@ -274,7 +274,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
     const allUsers = StorageService.get<User[]>('users', []);
     const emailExists = allUsers.some(u => u.email?.toLowerCase() === authEmail.toLowerCase());
-    const phoneExists = allUsers.some(u => u.phone === authPhone);
+    const phoneExists = allUsers.some(u => normalizePhone(u.phone) === normalizePhone(authPhone));
 
     if (emailExists) {
       setAuthError('❌ อีเมลนี้มีอยู่ในระบบแล้ว กรุณาเข้าสู่ระบบแทน');
@@ -405,7 +405,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   // Generate operating hours slots (e.g. 07:00 to 23:00)
   const getAvailableSlots = () => {
     const hours = [];
-    for (let h = 7; h < 23; h++) {
+    for (let h = OPENING_HOUR; h < CLOSING_HOUR; h++) {
       const start = h.toString().padStart(2, '0') + ':00';
       const end = (h + 1).toString().padStart(2, '0') + ':00';
       hours.push({ start, end, hourNum: h });
@@ -446,7 +446,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     let original = 0;
     const currentEffectiveMemberType = loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL;
     selectedSlots.forEach(s => {
-      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, false, s.courtId);
+      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, courts.find(c => c.id === s.courtId));
       total += detail.total;
       original += detail.original;
     });
@@ -557,8 +557,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         return;
       }
 
+      // Already started: online bookings must start in the future (server rule)
+      if (slotTiming(selectedDate, startTime).started) {
+        alert('ขออภัยค่ะ ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ กรุณาติดต่อเคาน์เตอร์');
+        return;
+      }
+
       // Outside opening hours (no pricing rule covers it) - the server refuses these
-      if (targetCourt && !calculatePrice(targetCourt.type, selectedDate, startTime, MemberType.NORMAL, false, courtId).isOpen) {
+      if (targetCourt && !calculatePrice(targetCourt.type, selectedDate, startTime, MemberType.NORMAL, targetCourt).isOpen) {
         alert('ขออภัยค่ะ ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ');
         return;
       }
@@ -759,10 +765,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     const bkCode = `BK${selectedDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newBookings: Booking[] = selectedSlots.map((slotItem, index) => {
-      const singlePrice = calculatePrice(selectedType, selectedDate, slotItem.startTime, loggedInUser.memberType || MemberType.NORMAL, false, slotItem.courtId);
       // Half-court status comes from the court itself (B/C are half-shares),
       // as on the server.
       const bookedCourt = courts.find(c => c.id === slotItem.courtId);
+      const singlePrice = calculatePrice(selectedType, selectedDate, slotItem.startTime, loggedInUser.memberType || MemberType.NORMAL, bookedCourt);
       const isActuallyHalf = bookedCourt ? bookedCourt.shareOfGroup < 1 : false;
 
       return {
@@ -786,7 +792,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     });
 
     // Create PromptPay QR Payload based on total
-    const qrPayload = generatePromptPayPayload('0105561008012', priceInfo.total);
+    const qrPayload = generatePromptPayPayload(LOCAL_PROMPTPAY_ID, priceInfo.total);
 
     const newPayment: Payment = {
       id: 'pay-' + Date.now(),
@@ -983,10 +989,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 <div className="space-y-1 font-sans">
                   <span className="text-[10px] text-slate-400 font-bold block">ระดับสิทธิ์แสตมป์ส่วนลดประจำตัว:</span>
                   <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px] leading-tight">
-                    🌟 {loggedInUser.memberType === MemberType.NORMAL && 'ลูกค้าทั่วไป (ไม่มีส่วนลด)'}
-                    🌟 {loggedInUser.memberType === MemberType.MEMBER && 'สมาชิกร้านสากล (ส่วนลด 10%)'}
-                    🌟 {loggedInUser.memberType === MemberType.STUDENT && 'สิทธิ์นักเรียนนักศึกษา (ส่วนลด 20%)'}
-                    🌟 {loggedInUser.memberType === MemberType.CORPORATE && `สิทธิ์องค์กรแคมปัส [${loggedInUser.orgName || 'ไม่ระบุ'}] (ส่วนลด 15%)`}
+                    🌟 {memberTierLabel(loggedInUser.memberType)}
+                    {loggedInUser.memberType === MemberType.CORPORATE && loggedInUser.orgName ? ` [${loggedInUser.orgName}]` : ''}
                   </span>
                 </div>
                 <div className="space-y-1 font-sans">
@@ -1481,6 +1485,21 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                 );
                               }
 
+                              // Online, an hour can only be booked before it starts (the
+                              // server refuses it after - the counter can still sell it).
+                              if (slotTiming(selectedDate, time).started) {
+                                return (
+                                  <td 
+                                    key={time} 
+                                    className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center cursor-not-allowed select-none min-h-[44px]"
+                                    title="เลยเวลาจองออนไลน์แล้ว ติดต่อเคาน์เตอร์ได้"
+                                  >
+                                    <span className="block text-[8px] font-black text-slate-500">⌛ หมดเวลาจอง</span>
+                                    <span className="text-[7px] block leading-tight text-slate-400">ติดต่อเคาน์เตอร์</span>
+                                  </td>
+                                );
+                              }
+
                               if (isRestrictedPeakBasketball) {
                                 return (
                                   <td 
@@ -1500,8 +1519,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                                 selectedDate, 
                                 time, 
                                 loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL,
-                                court.shareOfGroup < 1,
-                                court.id
+                                court
                               );
 
                               // No pricing rule covers this hour: the server treats it
@@ -1676,10 +1694,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   <div className="flex justify-between items-center font-bold">
                     <span className="text-slate-700">สิทธิ์ส่วนลดปัจจุบัน:</span>
                     <span className="text-emerald-700 text-sm">
-                      {loggedInUser?.memberType === MemberType.NORMAL && 'ลูกค้าทั่วไป (ส่วนลด 0%)'}
-                      {loggedInUser?.memberType === MemberType.MEMBER && 'สัญญาสมาชิกร้านสากล (ส่วนลด 10%)'}
-                      {loggedInUser?.memberType === MemberType.STUDENT && 'สิทธิ์นักเรียนนักศึกษา (ส่วนลด 20%)'}
-                      {loggedInUser?.memberType === MemberType.CORPORATE && `สิทธิ์องค์กรแคมปัส MOU [${loggedInUser.orgName || 'ไม่ระบุ'}] (ส่วนลด 15%)`}
+                      {memberTierLabel(loggedInUser?.memberType)}
+                      {loggedInUser?.memberType === MemberType.CORPORATE && loggedInUser.orgName ? ` [${loggedInUser.orgName}]` : ''}
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-400 mt-2 leading-normal">
@@ -1709,7 +1725,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     <p className="font-bold text-slate-800 text-[11px]">รายการสล็อตเวลาที่ทำจอง ({selectedSlots.length} สล็อต):</p>
                     {selectedSlots.map((s, idx) => {
                       const cName = courts.find(c => c.id === s.courtId)?.name || 'สนาม';
-                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, memberType, false, s.courtId);
+                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, memberType, courts.find(c => c.id === s.courtId));
                       return (
                         <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 font-medium font-sans">
                           <span>{idx + 1}. {cName} - เวลา {s.startTime} น.</span>

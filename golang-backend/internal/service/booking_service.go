@@ -28,6 +28,12 @@ var (
 	// ErrTooManyUnpaid: the customer already holds the maximum number of
 	// unpaid booking groups.
 	ErrTooManyUnpaid = errors.New("too many unpaid bookings")
+	// ErrDuplicateSlip: the uploaded file is byte-for-byte a slip already
+	// attached to another live payment.
+	ErrDuplicateSlip = errors.New("this slip image was already used for another booking")
+	// ErrSlipChanged: the customer replaced the slip after the staff member
+	// opened it, so their verify/reject decision was about a different image.
+	ErrSlipChanged = errors.New("the customer replaced this slip after you opened it - please review the new slip")
 )
 
 const (
@@ -38,9 +44,16 @@ const (
 	// MaxSlotsPerBooking mirrors the customer UI's limit of 3 one-hour slots
 	// per checkout.
 	MaxSlotsPerBooking = 3
-	// MaxUnpaidGroupsPerUser caps how many unpaid booking groups one customer
-	// can hold at once, so nobody can block courts by booking and never paying.
+	// MaxUnpaidGroupsPerUser caps how many booking groups one customer can
+	// hold before staff have approved a payment - awaiting a slip or awaiting
+	// review - so nobody can block courts by booking and never paying.
 	MaxUnpaidGroupsPerUser = 3
+	// OpeningHour/ClosingHour bound bookable slots: the first slot starts at
+	// 07:00 and the last ends at 23:00 (REQUIREMENTS.md FR-2.2). Pricing
+	// rules must stay inside these hours too, so the UI grid, the rules and
+	// what can be booked all agree.
+	OpeningHour = 7
+	ClosingHour = 23
 )
 
 // Bangkok is the complex's local time zone; "today" and "has this slot
@@ -149,7 +162,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 	if len(input.Slots) > MaxSlotsPerBooking {
 		return nil, fmt.Errorf("%w: at most %d slots per booking", ErrInvalidBooking, MaxSlotsPerBooking)
 	}
-	if err := s.checkNotPast(input.Date, input.Slots); err != nil {
+	if err := s.checkNotPast(input.Date, input.Slots, input.WalkIn != nil); err != nil {
 		return nil, err
 	}
 
@@ -176,7 +189,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			return nil, err
 		}
 		if unpaid >= MaxUnpaidGroupsPerUser {
-			return nil, fmt.Errorf("%w: please pay for or wait out your %d pending bookings first", ErrTooManyUnpaid, unpaid)
+			return nil, fmt.Errorf("%w: you already have %d bookings awaiting payment or slip review - please wait for them to be confirmed", ErrTooManyUnpaid, unpaid)
 		}
 	}
 
@@ -200,9 +213,16 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			userID = model.WalkInUserID
 		}
 		createdBy = input.WalkIn.StaffID
-		status, payStatus = model.BookingConfirmed, model.PaymentVerified
 		if input.WalkIn.PaymentMethod != "" {
 			payMethod = input.WalkIn.PaymentMethod
+		}
+		// Cash is in the drawer, so the booking is confirmed at once. A
+		// PromptPay walk-in waits like an online booking until staff see
+		// the transfer and confirm it (POST /staff/payments/:id/verify,
+		// which also awards the points) - it used to be confirmed and
+		// earn points before any money had arrived.
+		if payMethod == model.PaymentCash {
+			status, payStatus = model.BookingConfirmed, model.PaymentVerified
 		}
 	}
 
@@ -267,6 +287,9 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
+		if total <= 0 {
+			return fmt.Errorf("%w: the total must be more than 0 THB", ErrInvalidBooking)
+		}
 		if payMethod == model.PaymentPromptPay {
 			qrString, err := s.paymentService.CreatePromptPayPayload(total)
 			if err != nil {
@@ -275,7 +298,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 			pay.QrPayload = &qrString
 			result.PromptPayPayload = qrString
 		}
-		if input.WalkIn != nil {
+		if payStatus == model.PaymentVerified {
 			pay.VerifiedAt, pay.VerifiedBy = &now, &input.WalkIn.StaffID
 		}
 		if err := tx.Create(&pay).Error; err != nil {
@@ -285,9 +308,10 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		result.TotalAmount = total
 
 		if input.WalkIn != nil {
-			// Paid at the counter, so loyalty points (FR-4.1: 1 per hour)
-			// are earned now rather than on slip verification.
-			if bookingUser != nil {
+			// Paid in cash at the counter, so loyalty points (FR-4.1: 1 per
+			// hour) are earned now; a PromptPay walk-in earns them when
+			// staff confirm the transfer.
+			if bookingUser != nil && payStatus == model.PaymentVerified {
 				refType, note := "Booking", fmt.Sprintf("%dh walk-in booking %s", len(result.Bookings), code)
 				if _, err := s.usrRepo.AddPointsEntry(ctx, tx, bookingUser.ID, model.LedgerEarnBooking, len(result.Bookings), "system", &refType, &result.Bookings[0].ID, &note); err != nil {
 					return fmt.Errorf("failed to award booking points: %w", err)
@@ -388,10 +412,12 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 	return planned, nil
 }
 
-// checkNotPast rejects dates before today and slots that have already
-// ended, judged in Bangkok time. A slot already in progress is still
-// bookable (a walk-in at 18:20 can take the 18:00 hour).
-func (s *BookingService) checkNotPast(date string, slots []SlotRequest) error {
+// checkNotPast rejects dates before today and slots that are over, judged
+// in Bangkok time. At the counter a slot already in progress is still
+// bookable (a walk-in at 18:20 can take the 18:00 hour, staff can see the
+// court is free); online it must not have started yet - otherwise a
+// customer could pay for a full hour at 18:55.
+func (s *BookingService) checkNotPast(date string, slots []SlotRequest, walkIn bool) error {
 	day, err := time.ParseInLocation("2006-01-02", date, Bangkok)
 	if err != nil {
 		return fmt.Errorf("%w: date must be YYYY-MM-DD", ErrInvalidBooking)
@@ -404,6 +430,9 @@ func (s *BookingService) checkNotPast(date string, slots []SlotRequest) error {
 		}
 		if !day.Add(time.Duration(hour+1) * time.Hour).After(now) {
 			return fmt.Errorf("%w: %s %s has already passed", ErrInvalidBooking, date, sl.StartTime)
+		}
+		if !walkIn && !day.Add(time.Duration(hour)*time.Hour).After(now) {
+			return fmt.Errorf("%w: %s %s has already started - book it at the counter", ErrInvalidBooking, date, sl.StartTime)
 		}
 	}
 	return nil
@@ -459,19 +488,23 @@ func hourSlotEnd(start string) (string, int, error) {
 		return "", 0, fmt.Errorf("%w: start_time must be on the hour (HH:00), got %q", ErrInvalidBooking, start)
 	}
 	h, err := strconv.Atoi(parts[0])
-	if err != nil || h < 0 || h > 22 {
-		return "", 0, fmt.Errorf("%w: invalid start hour %q", ErrInvalidBooking, start)
+	if err != nil || h < OpeningHour || h >= ClosingHour {
+		return "", 0, fmt.Errorf("%w: start hour %q is outside opening hours (%02d:00-%02d:00)", ErrInvalidBooking, start, OpeningHour, ClosingHour)
 	}
 	return fmt.Sprintf("%02d:00", h+1), h, nil
 }
 
-// countUnpaidGroups counts the user's booking groups still waiting for a
-// slip (payment PENDING).
+// countUnpaidGroups counts the user's booking groups whose payment staff
+// haven't approved yet: still waiting for a slip (PENDING) or with a slip
+// waiting for review (SLIP_UPLOADED). Counting only PENDING let a customer
+// upload any image to escape the cap - and the 30-minute expiry, which only
+// applies to PENDING - and hold any number of courts.
 func (s *BookingService) countUnpaidGroups(ctx context.Context, userID string) (int, error) {
 	var n int64
 	err := s.db.WithContext(ctx).Model(&model.Payment{}).
 		Joins("JOIN bookings ON bookings.id = payments.booking_id").
-		Where("bookings.user_id = ? AND payments.status = ?", userID, model.PaymentPending).
+		Where("bookings.user_id = ? AND payments.status IN ?", userID,
+			[]model.PaymentStatus{model.PaymentPending, model.PaymentSlipUploaded}).
 		Count(&n).Error
 	return int(n), err
 }
@@ -485,12 +518,16 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 	var stale []model.Payment
 	if err := s.db.WithContext(ctx).
 		Where("status = ? AND method = ? AND created_at < ?", model.PaymentPending, model.PaymentPromptPay, cutoff).
-		Limit(500).Find(&stale).Error; err != nil {
+		Order("created_at").Limit(500).Find(&stale).Error; err != nil {
 		return 0, err
 	}
+	// One payment that can't be expired (e.g. its booking rows are gone)
+	// must not stop the rest: errors are collected and the loop goes on.
+	var errs []error
 	expired := 0
 	reason := fmt.Sprintf("Expired: no payment slip within %d minutes", int(PaymentHoldDuration.Minutes()))
 	for _, p := range stale {
+		cancelled := false
 		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			locked, err := lockPayment(tx, p.ID)
 			if err != nil {
@@ -512,7 +549,7 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 			if _, err := cancelPending(tx, group, reason, now); err != nil {
 				return err
 			}
-			expired++
+			cancelled = true
 			return tx.Create(&model.AuditLog{
 				ID:          ids.New("log"),
 				UserID:      "system",
@@ -526,11 +563,14 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 				CreatedAt:   now,
 			}).Error
 		})
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return expired, err
+		switch {
+		case err == nil && cancelled:
+			expired++ // counted only once the transaction has committed
+		case err != nil && !errors.Is(err, ErrNotFound):
+			errs = append(errs, fmt.Errorf("payment %s: %w", p.ID, err))
 		}
 	}
-	return expired, nil
+	return expired, errors.Join(errs...)
 }
 
 // ListByDate returns every non-cancelled booking on a date - what the
@@ -764,9 +804,14 @@ func slipAcceptable(p *model.Payment) error {
 }
 
 // SaveSlip records an uploaded slip on a payment, re-checking its state
-// under a row lock (it may have changed since CheckSlipUpload). Returns the
-// slip URL it replaced, if any, so the caller can delete the old file.
-func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL string) (string, error) {
+// under a row lock (it may have changed since CheckSlipUpload). slipHash is
+// the file's SHA-256: the same file already attached to another payment
+// that is still live (anything but REJECTED) is refused, so one transfer
+// can't be presented as payment for several bookings. Only byte-identical
+// files are caught - a re-screenshot of the same slip still needs staff
+// to compare transfer references. Returns the slip URL it replaced, if
+// any, so the caller can delete the old file.
+func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash string) (string, error) {
 	var previous string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		p, err := lockPayment(tx, paymentID)
@@ -776,6 +821,15 @@ func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL stri
 		if err := slipAcceptable(p); err != nil {
 			return err
 		}
+		var reused int64
+		if err := tx.Model(&model.Payment{}).
+			Where("slip_hash = ? AND id <> ? AND status <> ?", slipHash, p.ID, model.PaymentRejected).
+			Count(&reused).Error; err != nil {
+			return err
+		}
+		if reused > 0 {
+			return ErrDuplicateSlip
+		}
 		if p.SlipURL != nil {
 			previous = *p.SlipURL
 		}
@@ -783,11 +837,34 @@ func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL stri
 		return tx.Model(p).Updates(map[string]interface{}{
 			"status":           model.PaymentSlipUploaded,
 			"slip_url":         servedURL,
+			"slip_hash":        slipHash,
 			"slip_uploaded_at": now,
 			"updated_at":       now,
 		}).Error
 	})
+	// Two uploads of one file racing past the check above meet the unique
+	// index instead.
+	if repository.IsUniqueViolation(err) {
+		return "", ErrDuplicateSlip
+	}
 	return previous, err
+}
+
+// checkSlipVersion makes sure the slip staff reviewed is still the one on
+// the payment: seenSlipAt is the slip_uploaded_at they were shown. A
+// payment without a slip (e.g. a walk-in confirmed at the counter) has
+// nothing to compare.
+func checkSlipVersion(p *model.Payment, seenSlipAt *time.Time) error {
+	if p.SlipUploadedAt == nil {
+		return nil
+	}
+	if seenSlipAt == nil {
+		return fmt.Errorf("%w: expected_slip_uploaded_at is required for a payment with a slip", ErrInvalidBooking)
+	}
+	if !p.SlipUploadedAt.Equal(*seenSlipAt) {
+		return ErrSlipChanged
+	}
+	return nil
 }
 
 type ReviewResult struct {
@@ -803,7 +880,7 @@ type ReviewResult struct {
 // at 1 point per booked hour (FR-4.1) through the points ledger - all in
 // one transaction, so a confirmed booking always has its points and a
 // retried click can't award them twice.
-func (s *BookingService) VerifyPayment(ctx context.Context, paymentID, staffID, staffName string) (*ReviewResult, error) {
+func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, seenSlipAt *time.Time, staffID, staffName string) (*ReviewResult, error) {
 	var res *ReviewResult
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		p, err := lockPayment(tx, paymentID)
@@ -812,6 +889,9 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID, staffID, 
 		}
 		if p.Status != model.PaymentSlipUploaded && p.Status != model.PaymentPending {
 			return fmt.Errorf("%w: payment is %s", ErrInvalidState, p.Status)
+		}
+		if err := checkSlipVersion(p, seenSlipAt); err != nil {
+			return err
 		}
 
 		group, root, err := s.bookingGroup(tx, p.BookingID)
@@ -867,7 +947,7 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID, staffID, 
 
 // RejectPayment is the staff "slip not OK" action: marks the payment
 // REJECTED and cancels every booking in the group so the slots free up.
-func (s *BookingService) RejectPayment(ctx context.Context, paymentID, reason, staffID, staffName string) (*ReviewResult, error) {
+func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, seenSlipAt *time.Time, reason, staffID, staffName string) (*ReviewResult, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return nil, fmt.Errorf("%w: a rejection reason is required", ErrInvalidBooking)
@@ -880,6 +960,9 @@ func (s *BookingService) RejectPayment(ctx context.Context, paymentID, reason, s
 		}
 		if p.Status != model.PaymentSlipUploaded && p.Status != model.PaymentPending {
 			return fmt.Errorf("%w: payment is %s", ErrInvalidState, p.Status)
+		}
+		if err := checkSlipVersion(p, seenSlipAt); err != nil {
+			return err
 		}
 		group, root, err := s.bookingGroup(tx, p.BookingID)
 		if err != nil {

@@ -5,7 +5,7 @@ import {
   OperatingHours, User, UserRole, MemberType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
@@ -100,7 +100,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       
       let processedVal = value;
       if (field === 'discountPercent') {
-        processedVal = Math.min(100, Math.max(0, parseInt(value, 10) || 0));
+        // Below 100%: a free booking would need a 0.00 THB PromptPay QR,
+        // which banking apps reject (the server enforces the same limit).
+        processedVal = Math.min(99, Math.max(0, parseInt(value, 10) || 0));
       }
       
       return {
@@ -181,7 +183,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     if (!api.USE_BACKEND) setPricingRules(StorageService.get<PricingRule[]>('pricing_rules', []));
     setOperatingHours(StorageService.get<OperatingHours[]>('operating_hours', []));
     setProducts(StorageService.get<Product[]>('products', []));
-    setUsers(StorageService.get<User[]>('users', []));
+    // In API mode the user list comes from the backend (see the effect below).
+    if (!api.USE_BACKEND) setUsers(StorageService.get<User[]>('users', []));
     setBookings(StorageService.get<Booking[]>('bookings', []));
     setPayments(StorageService.get<Payment[]>('payments', []));
     setOrders(StorageService.get<Order[]>('orders', []));
@@ -296,6 +299,17 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   // Pricing CRUD functions
   const handleSavePricingRule = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Same limits as the server: rules are also the opening hours, which
+    // run 07:00-23:00, and a free hour can't be paid by PromptPay.
+    if (ruleStartHour < OPENING_HOUR || ruleEndHour > CLOSING_HOUR || ruleStartHour >= ruleEndHour) {
+      alert(`ช่วงเวลาต้องอยู่ระหว่าง ${OPENING_HOUR}:00 - ${CLOSING_HOUR}:00 และเวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด`);
+      return;
+    }
+    if (!(Number(rulePrice) > 0)) {
+      alert('ราคาต่อชั่วโมงต้องมากกว่า 0 บาท');
+      return;
+    }
 
     const ruleId = editingRuleId || 'rule-' + Date.now();
     
@@ -458,9 +472,10 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setAdminApiError('เซสชันผู้จัดการหมดอายุหรือไม่มีสิทธิ์ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
-        const [closures, pricing] = await Promise.all([api.listDaysOff(getTodayDateStr()), api.syncPricingCache()]);
+        const [closures, pricing, apiUsers] = await Promise.all([api.listDaysOff(getTodayDateStr()), api.syncPricingCache(), api.listUsers()]);
         if (cancelled) return;
         setDaysOff(closures);
+        setUsers(apiUsers);
         setPricingRules(pricing.rules);
         setMemberDiscounts(pricing.memberDiscounts);
       } catch (err) {
@@ -654,6 +669,32 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     const target = userPendingChanges[id];
     if (!target) return;
 
+    if (api.USE_BACKEND) {
+      // The server prices bookings with the tier stored there, so it must
+      // be changed there. Roles can't be changed from the panel yet.
+      const before = users.find(u => u.id === id);
+      if (!before) return;
+      if (target.role !== before.role) {
+        alert('การเปลี่ยนบทบาท (Role) ยังทำได้เฉพาะในฐานข้อมูลในโหมด API');
+        return;
+      }
+      api.setMemberType(id, target.memberType)
+        .then(updated => {
+          setUsers(prev => prev.map(u => (u.id === id ? updated : u)));
+          onAddAuditLog('USER_MEMBER_TYPE_SAVED_BY_ADMIN', 'User', id,
+            { name: before.name, memberType: before.memberType }, { name: updated.name, memberType: updated.memberType });
+          setUserPendingChanges(prev => {
+            const copy = { ...prev };
+            delete copy[id];
+            return copy;
+          });
+          onRefreshAll();
+          alert(`💾 บันทึกระดับสมาชิกของ "${updated.name}" เป็น ${memberTierLabel(updated.memberType)} แล้ว`);
+        })
+        .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
     const currentUsers = StorageService.get<User[]>('users', []);
     const foundIdx = currentUsers.findIndex(u => u.id === id);
     if (foundIdx === -1) {
@@ -722,6 +763,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   };
 
   const handleAdjustPoints = (userId: string, diff: number) => {
+    if (api.USE_BACKEND) {
+      // Points live in the backend's ledger; a manual change needs a reason
+      // (it is audit-logged with it).
+      const reason = window.prompt(`เหตุผลในการ${diff > 0 ? 'เพิ่ม' : 'ลด'}แต้ม ${Math.abs(diff)} แต้ม (จำเป็น):`)?.trim();
+      if (!reason) return;
+      api.adjustPoints(userId, diff, reason)
+        .then(balance => {
+          setUsers(prev => prev.map(u => (u.id === userId ? { ...u, points: balance } : u)));
+          onAddAuditLog('USER_POINTS_ADJUSTED_BY_ADMIN', 'User', userId, null, { diff, reason });
+          onRefreshAll();
+        })
+        .catch(err => alert(`ปรับแต้มไม่สำเร็จ: ${err.message}`));
+      return;
+    }
     const currentUsers = StorageService.get<User[]>('users', []);
     const updated = currentUsers.map(u => {
       if (u.id === userId) {
@@ -1451,20 +1506,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-slate-700 font-semibold mb-1.5">4. ช่วงชั่วโมงเวลา เริ่ม (0-23)</label>
+                      <label className="block text-slate-700 font-semibold mb-1.5">4. ช่วงชั่วโมงเวลา เริ่ม ({OPENING_HOUR}-{CLOSING_HOUR - 1})</label>
                       <input 
                         type="number"
-                        min={0} max={23}
+                        min={OPENING_HOUR} max={CLOSING_HOUR - 1}
                         value={ruleStartHour}
                         onChange={(e) => setRuleStartHour(Number(e.target.value))}
                         className="w-full bg-white border border-slate-200 py-1.5 px-3 rounded-lg"
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-700 font-semibold mb-1.5">5. ชั่วโมง สิ้นสุด (0-23)</label>
+                      <label className="block text-slate-700 font-semibold mb-1.5">5. ชั่วโมง สิ้นสุด ({OPENING_HOUR + 1}-{CLOSING_HOUR})</label>
                       <input 
                         type="number"
-                        min={0} max={24}
+                        min={OPENING_HOUR + 1} max={CLOSING_HOUR}
                         value={ruleEndHour}
                         onChange={(e) => setRuleEndHour(Number(e.target.value))}
                         className="w-full bg-white border border-slate-200 py-1.5 px-3 rounded-lg"
@@ -2102,6 +2157,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   เลือกผู้ใช้งานทั่วไปที่เคยลงทะเบียนเข้ามาร่วมก๊วน เพื่อเลื่อนสิทธิ์เป็นพนักงานปฏิบัติการ (Staff) หรือผู้บริหารระบบ โดยไม่ต้องสร้างข้อมูลซ้ำซ้อน
                 </p>
 
+                {api.USE_BACKEND ? (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    ในโหมด API การแต่งตั้งพนักงาน/เปลี่ยนบทบาทยังทำได้เฉพาะในฐานข้อมูล ส่วนระดับสมาชิก (ส่วนลด) และแต้มสะสมแก้ไขได้ในตารางด้านขวา
+                  </p>
+                ) : (
                 <form onSubmit={handlePromoteUser} className="space-y-4 text-xs">
                   <div>
                     <label className="block text-slate-700 font-bold mb-1.5">ค้นหาเลือกจากผู้เล่นที่ลงไว้ในก๊วน:</label>
@@ -2147,6 +2207,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     🚀 ยืนยันสลับระดับแต่งตั้งพนักงาน
                   </button>
                 </form>
+                )}
               </div>
 
               {/* Comprehensive Users list & management search */}
@@ -2236,10 +2297,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                     : 'bg-slate-50 border-slate-200'
                                 }`}
                               >
-                                <option value={MemberType.NORMAL}>ทั่วไป (ลด 0%)</option>
-                                <option value={MemberType.MEMBER}>สมาชิกร้าน (ลด 10%)</option>
-                                <option value={MemberType.STUDENT}>นักศึกษา (ลด 20%)</option>
-                                <option value={MemberType.CORPORATE}>MOU องค์กร (ลด 15%)</option>
+                                {[MemberType.NORMAL, MemberType.MEMBER, MemberType.STUDENT, MemberType.CORPORATE].map(t => (
+                                  <option key={t} value={t}>{memberTierLabel(t)}</option>
+                                ))}
                               </select>
                               {userPendingChanges[item.id]?.memberType !== undefined && userPendingChanges[item.id]?.memberType !== item.memberType && (
                                 <span className="block text-[8px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
@@ -2251,6 +2311,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                               <select 
                                 value={userPendingChanges[item.id]?.role ?? item.role}
                                 onChange={(e) => handleStageUserRole(item.id, e.target.value as UserRole)}
+                                disabled={api.USE_BACKEND}
+                                title={api.USE_BACKEND ? 'เปลี่ยนบทบาทได้เฉพาะในฐานข้อมูลในโหมด API' : undefined}
                                 className={`border rounded py-1 px-1.5 text-[11px] font-mono font-bold transition duration-150 ${
                                   userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role
                                     ? 'bg-amber-50 border-amber-300 text-amber-900 ring-2 ring-amber-100'
@@ -2317,6 +2379,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                     ยกเลิก
                                   </button>
                                 </div>
+                              ) : api.USE_BACKEND ? (
+                                <span className="text-[9px] text-slate-400">{item.isActive ? 'ใช้งาน' : 'ระงับ'}</span>
                               ) : (
                                 <div className="flex items-center gap-1">
                                   <button

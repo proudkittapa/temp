@@ -3,7 +3,8 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR } from '../mockData';
+import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import DemoLogins, { DEMO_STAFF } from './DemoLogins';
 import { Check, X, ShoppingCart, Activity, RefreshCw, AlertTriangle, Coffee, ShieldCheck, Dumbbell, Receipt, Plus, Minus, CheckCircle2, UserCheck, AlertOctagon } from 'lucide-react';
@@ -37,6 +38,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [walkinPhone, setWalkinPhone] = useState<string>('');
   const [walkinPayMethod, setWalkinPayMethod] = useState<PaymentMethod>(PaymentMethod.PROMPTPAY);
   const [walkinSuccessAlert, setWalkinSuccessAlert] = useState<string | null>(null);
+  // A PromptPay walk-in is created awaiting payment: staff show this QR
+  // (with the price the server actually charges, member discount included)
+  // and confirm only once the transfer has arrived.
+  const [pendingWalkin, setPendingWalkin] = useState<{
+    paymentId: string; bookingCode: string; amount: number; qrPayload: string; label: string;
+  } | null>(null);
 
   // Receipt printed preview overlay target states
   const [selectedReceiptBooking, setSelectedReceiptBooking] = useState<Booking | null>(null);
@@ -171,8 +178,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (!api.USE_BACKEND) setDaysOff(rawDaysOff);
     setUsers(rawUsers);
 
-    // Initial Date selection to today
-    setWalkinDate(getTodayDateStr());
+    // Default to today, but keep the date staff picked across refreshes
+    // (every booking action triggers one, which used to jump back to today).
+    setWalkinDate(prev => prev || getTodayDateStr());
 
     // Seeding shoe_inventory if not exist
     const rawShoeInv = StorageService.get<any[]>('shoe_inventory', []);
@@ -220,6 +228,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       alert('กรุณากรอกข้อมูลและเลือกเวลาให้ครบถ้วน!');
       return;
     }
+    if (pendingWalkin) {
+      alert(`กรุณายืนยันหรือยกเลิกรายการ ${pendingWalkin.bookingCode} ที่รอชำระเงินก่อนค่ะ`);
+      return;
+    }
+    if (slotTiming(walkinDate, walkinSlot).ended) {
+      alert('ช่วงเวลานี้ผ่านไปแล้ว กรุณาเลือกช่วงเวลาอื่น');
+      return;
+    }
 
     // Double booking verify - checks the mutex group (FR-1.2), not just this
     // exact court id, so a walk-in half-court booking correctly blocks the
@@ -233,7 +249,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
     // Outside opening hours (no pricing rule covers it) - the server refuses these
     const slotCourt = courts.find(c => c.id === walkinCourtId);
-    if (slotCourt && !calculatePrice(slotCourt.type, walkinDate, walkinSlot, MemberType.NORMAL, false, walkinCourtId).isOpen) {
+    if (slotCourt && !calculatePrice(slotCourt.type, walkinDate, walkinSlot, MemberType.NORMAL, slotCourt).isOpen) {
       alert('ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ กรุณาเลือกช่วงเวลาอื่น');
       return;
     }
@@ -267,10 +283,21 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         .then(group => {
           const b = group.bookings[0];
           const courtName = courts.find(c => c.id === b.courtId)?.name || '';
-          const ptsNote = group.pointsAwarded > 0 ? `\n🎁 ได้รับแต้มสะสมเพิ่ม: +${group.pointsAwarded} แต้ม` : '';
-          pushLineMessage(walkinPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${group.bookingCode} | สนาม ${courtName}\n📅 ${b.date} ${b.startTime}-${b.endTime}\nพบกันที่สนาม! (Walk-in ชำระหน้าเคาน์เตอร์สำเร็จ)${ptsNote}`, "CONFIRMED");
           onAddAuditLog('WALKIN_BOOKING_CREATED_BY_STAFF', 'Booking', b.id, null, b);
-          setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${group.bookingCode} สำเร็จแล้ว! ยอด ${group.totalAmount} บาท ${group.pointsAwarded > 0 ? `(🎁 มอบแต้มสะสมสมาชิก +${group.pointsAwarded} แต้มสำเร็จ!)` : ''}`);
+          if (group.payment.status === PaymentStatus.VERIFIED) {
+            // Cash: paid on the spot, already confirmed.
+            const ptsNote = group.pointsAwarded > 0 ? `\n🎁 ได้รับแต้มสะสมเพิ่ม: +${group.pointsAwarded} แต้ม` : '';
+            pushLineMessage(walkinPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${group.bookingCode} | สนาม ${courtName}\n📅 ${b.date} ${b.startTime}-${b.endTime}\nพบกันที่สนาม! (Walk-in ชำระหน้าเคาน์เตอร์สำเร็จ)${ptsNote}`, "CONFIRMED");
+            setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${group.bookingCode} สำเร็จแล้ว! ยอด ${group.totalAmount} บาท ${group.pointsAwarded > 0 ? `(🎁 มอบแต้มสะสมสมาชิก +${group.pointsAwarded} แต้มสำเร็จ!)` : ''}`);
+          } else {
+            setPendingWalkin({
+              paymentId: group.payment.id,
+              bookingCode: group.bookingCode,
+              amount: group.totalAmount,
+              qrPayload: group.promptPayPayload,
+              label: `${courtName} ${b.date} ${b.startTime}-${b.endTime} (${walkinName})`
+            });
+          }
           setWalkinSlot('');
           setWalkinName('');
           setWalkinPhone('');
@@ -284,9 +311,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
 
     const courtObj = courts.find(c => c.id === walkinCourtId);
-    const normalizedPhone = walkinPhone.replace(/[^0-9]/g, '');
+    const normalizedPhone = normalizePhone(walkinPhone);
     const usersList = StorageService.get<User[]>('users', []);
-    const registeredUser = usersList.find(u => u.phone?.replace(/[^0-9]/g, '') === normalizedPhone);
+    const registeredUser = usersList.find(u => normalizePhone(u.phone) === normalizedPhone);
     const resolvedUserId = registeredUser ? registeredUser.id : 'u-walkin-' + Date.now();
 
     // Price through the same engine the grid preview uses (FR-2), instead of
@@ -298,10 +325,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       walkinDate,
       walkinSlot,
       registeredUser?.memberType || MemberType.NORMAL,
-      false,
-      walkinCourtId
+      courtObj
     );
     const isActuallyHalf = courtObj ? courtObj.shareOfGroup < 1 : false;
+    const paidInCash = walkinPayMethod === PaymentMethod.CASH;
 
     const bookingId = 'bk-walkin-' + Date.now();
     const bkCode = `BK${walkinDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -319,20 +346,22 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       isHalfCourt: isActuallyHalf,
       priceType: priceDetail.priceType,
       totalAmount: priceDetail.total,
-      status: BookingStatus.CONFIRMED, // Walkin is auto-approved because payment is physical at counter
+      // Cash is in the drawer, so it's confirmed now; a PromptPay walk-in
+      // waits until staff see the transfer (confirmPendingWalkin).
+      status: paidInCash ? BookingStatus.CONFIRMED : BookingStatus.PENDING_PAYMENT,
       isEventBlock: false,
       createdAt: new Date().toISOString(),
       createdBy: 'u-staff-1'
     };
 
+    const qrPayload = paidInCash ? undefined : generatePromptPayPayload(LOCAL_PROMPTPAY_ID, priceDetail.total);
     const newPayment: Payment = {
       id: 'pay-walkin-' + Date.now(),
       bookingId: bookingId,
       amount: priceDetail.total,
       method: walkinPayMethod,
-      status: PaymentStatus.VERIFIED,
-      verifiedAt: new Date().toISOString(),
-      verifiedBy: 'u-staff-1',
+      status: paidInCash ? PaymentStatus.VERIFIED : PaymentStatus.PENDING,
+      ...(paidInCash ? { verifiedAt: new Date().toISOString(), verifiedBy: 'u-staff-1' } : { qrPayload }),
       createdAt: new Date().toISOString()
     };
 
@@ -342,21 +371,24 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     StorageService.set('bookings', [...currentBookings, newBooking]);
     StorageService.set('payments', [...currentPayments, newPayment]);
 
-    // Award Points
-    let pointsAdded = 0;
-    if (registeredUser) {
-      // Walk-in single slot is always 1 hour
-      pointsAdded = StorageService.addPointsHour(resolvedUserId, 1);
-    }
-
     // Save Log
     onAddAuditLog('WALKIN_BOOKING_CREATED_BY_STAFF', 'Booking', bookingId, null, newBooking);
 
-    // Simulated Line Confirm message
-    const ptsNote = pointsAdded > 0 ? `\n🎁 ได้รับแต้มสะสมเพิ่ม: +${pointsAdded} แต้ม` : '';
-    pushLineMessage(walkinPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${bkCode} | สนาม ${courtObj?.name}\n📅 ${walkinDate} ${walkinSlot}-${newBooking.endTime}\nพบกันที่สนาม! (Walk-in ชำระหน้าเคาน์เตอร์สำเร็จ)${ptsNote}`, "CONFIRMED");
-
-    setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${bkCode} สำเร็จแล้ว! ออกใบจองและเช็คอินได้เลย ${pointsAdded > 0 ? `(🎁 มอบแต้มสะสมสมาชิก +${pointsAdded} แต้มสำเร็จ!)` : ''}`);
+    if (paidInCash) {
+      // Points (FR-4.1: 1 per hour) only once paid.
+      const pointsAdded = registeredUser ? StorageService.addPointsHour(resolvedUserId, 1) : 0;
+      const ptsNote = pointsAdded > 0 ? `\n🎁 ได้รับแต้มสะสมเพิ่ม: +${pointsAdded} แต้ม` : '';
+      pushLineMessage(walkinPhone, `🎉 ยืนยันการจองแล้ว!\n📋 ${bkCode} | สนาม ${courtObj?.name}\n📅 ${walkinDate} ${walkinSlot}-${newBooking.endTime}\nพบกันที่สนาม! (Walk-in ชำระหน้าเคาน์เตอร์สำเร็จ)${ptsNote}`, "CONFIRMED");
+      setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${bkCode} สำเร็จแล้ว! ออกใบจองและเช็คอินได้เลย ${pointsAdded > 0 ? `(🎁 มอบแต้มสะสมสมาชิก +${pointsAdded} แต้มสำเร็จ!)` : ''}`);
+    } else {
+      setPendingWalkin({
+        paymentId: newPayment.id,
+        bookingCode: bkCode,
+        amount: priceDetail.total,
+        qrPayload: qrPayload || '',
+        label: `${courtObj?.name || ''} ${walkinDate} ${walkinSlot}-${newBooking.endTime} (${walkinName})`
+      });
+    }
     
     // reset
     setWalkinSlot('');
@@ -368,17 +400,21 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Dynamic slots available check
   const getWalkinHours = () => {
     const list = [];
-    for (let h = 7; h < 23; h++) {
+    for (let h = OPENING_HOUR; h < CLOSING_HOUR; h++) {
       list.push(h.toString().padStart(2, '0') + ':00');
     }
     return list;
   };
 
-  // Phase 1 CORE: Approve Bank Slips (Slip Verification)
-  const handleVerifySlip = (paymentId: string) => {
+  // Phase 1 CORE: Approve Bank Slips (Slip Verification). Also confirms a
+  // PromptPay walk-in once staff see the transfer arrive. Resolves to
+  // whether it succeeded.
+  const handleVerifySlip = (paymentId: string): Promise<boolean> => {
     if (api.USE_BACKEND) {
       const entry = reviewQueue.find(r => r.payment.id === paymentId);
-      api.verifyPayment(paymentId)
+      // Send the slip version staff were shown, so the server refuses the
+      // approval if the customer swapped the slip in the meantime.
+      return api.verifyPayment(paymentId, entry?.payment.slipUploadedAt)
         .then(res => {
           if (entry) {
             // One line per booked hour: a group can span courts and
@@ -391,26 +427,27 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
             const ptsNote = res.pointsAwarded > 0 ? `\n🎁 และได้รับแต้มสะสมเพิ่ม: +${res.pointsAwarded} แต้ม!` : '';
             pushLineMessage(entry.bookings[0]?.userPhone || '', `🎉 ยืนยันการจองแล้ว!\n📋 ${res.bookingCode}\n${lines}\nพบกันที่สนาม!${ptsNote}`, "CONFIRMED");
           }
-          onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.VERIFIED });
+          onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: entry?.payment.status ?? PaymentStatus.PENDING }, { status: PaymentStatus.VERIFIED });
           onRefreshAll();
           alert(`ยืนยันเรียบร้อยแล้ว! อนุมัติ ${res.bookingsCount} สล็อต ${res.pointsAwarded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${res.pointsAwarded} แต้ม)` : ''}`);
+          return true;
         })
         .catch(err => {
           alert(`อนุมัติไม่สำเร็จ: ${err.message}`);
           onRefreshAll();
+          return false;
         });
-      return;
     }
 
     const allPayments = StorageService.get<Payment[]>('payments', []);
     const allBookings = StorageService.get<Booking[]>('bookings', []);
 
     const paymentObj = allPayments.find(p => p.id === paymentId);
-    if (!paymentObj) return;
+    if (!paymentObj) return Promise.resolve(false);
     if (paymentObj.status !== PaymentStatus.SLIP_UPLOADED && paymentObj.status !== PaymentStatus.PENDING) {
       alert(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
       onRefreshAll();
-      return;
+      return Promise.resolve(false);
     }
 
     const updatedPayments = allPayments.map(p => {
@@ -456,50 +493,56 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     StorageService.set('payments', updatedPayments);
     StorageService.set('bookings', updatedBookings);
 
-    onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.VERIFIED });
+    onAddAuditLog('SLIP_VERIFIED_BY_STAFF', 'Payment', paymentId, { status: paymentObj.status }, { status: PaymentStatus.VERIFIED });
     
     onRefreshAll();
     alert(`ยืนยันความถูกต้องเรียบร้อยแล้ว! อนุมัติ ${toConfirm.length} สล็อตและส่งไลน์ไปแจ้งเรียบร้อย ${ptsAdded > 0 ? `(🎁 มอบคะแนนสะสมสมาชิก +${ptsAdded} แต้ม)` : ''}`);
+    return Promise.resolve(true);
   };
 
-  // Phase 1 CORE: Reject Fraud Bank Slips
-  const handleRejectSlip = (paymentId: string) => {
-    if (!rejectReason) {
+  // Phase 1 CORE: Reject Fraud Bank Slips (or cancel an unpaid walk-in).
+  // Resolves to whether it succeeded.
+  const handleRejectSlip = (paymentId: string, reason: string = rejectReason): Promise<boolean> => {
+    if (!reason) {
       alert('กรุณากรอกสาเหตุการปฎิเสธสลิปด้วยค่ะ');
-      return;
+      return Promise.resolve(false);
     }
 
     if (api.USE_BACKEND) {
       const entry = reviewQueue.find(r => r.payment.id === paymentId);
-      api.rejectPayment(paymentId, rejectReason)
+      return api.rejectPayment(paymentId, reason, entry?.payment.slipUploadedAt)
         .then(res => {
           if (entry) {
-            pushLineMessage(entry.bookings[0]?.userPhone || '', `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${res.bookingCode}\nเหตุผล: ${rejectReason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`, "CANCELLED");
+            pushLineMessage(entry.bookings[0]?.userPhone || '', `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${res.bookingCode}\nเหตุผล: ${reason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`, "CANCELLED");
           }
-          onAddAuditLog('SLIP_REJECTED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.REJECTED, reason: rejectReason });
+          onAddAuditLog('SLIP_REJECTED_BY_STAFF', 'Payment', paymentId, { status: entry?.payment.status ?? PaymentStatus.PENDING }, { status: PaymentStatus.REJECTED, reason });
           setRejectId(null);
           setRejectReason('');
           onRefreshAll();
-          alert('ปฏิเสธสลิปแล้ว ระบบยกเลิกเวลาและแจ้งลูกค้าแล้ว');
+          alert('ปฏิเสธรายการแล้ว ระบบยกเลิกเวลาที่จองไว้แล้ว');
+          return true;
         })
-        .catch(err => alert(`ปฏิเสธไม่สำเร็จ: ${err.message}`));
-      return;
+        .catch(err => {
+          alert(`ปฏิเสธไม่สำเร็จ: ${err.message}`);
+          onRefreshAll();
+          return false;
+        });
     }
 
     const allPayments = StorageService.get<Payment[]>('payments', []);
     const allBookings = StorageService.get<Booking[]>('bookings', []);
 
     const paymentObj = allPayments.find(p => p.id === paymentId);
-    if (!paymentObj) return;
+    if (!paymentObj) return Promise.resolve(false);
     if (paymentObj.status !== PaymentStatus.SLIP_UPLOADED && paymentObj.status !== PaymentStatus.PENDING) {
       alert(`รายการนี้ถูกดำเนินการไปแล้ว (${paymentObj.status})`);
       onRefreshAll();
-      return;
+      return Promise.resolve(false);
     }
 
     const updatedPayments = allPayments.map(p => {
       if (p.id === paymentId) {
-        return { ...p, status: PaymentStatus.REJECTED, refundReason: rejectReason };
+        return { ...p, status: PaymentStatus.REJECTED, refundReason: reason };
       }
       return p;
     });
@@ -513,25 +556,45 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         .map(b => b.id)
     );
     if (rootBooking) {
-      const rejectMsg = `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${rootBooking.bookingCode}\nเหตุผล: ${rejectReason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`;
+      const rejectMsg = `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${rootBooking.bookingCode}\nเหตุผล: ${reason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`;
       pushLineMessage(rootBooking.userPhone, rejectMsg, "CANCELLED");
     }
 
     const updatedBookings = allBookings.map(b =>
       cancelIds.has(b.id)
-        ? { ...b, status: BookingStatus.CANCELLED, cancellationReason: `สลิปไม่ผ่านเกณฑ์: ${rejectReason}` }
+        ? { ...b, status: BookingStatus.CANCELLED, cancellationReason: `สลิปไม่ผ่านเกณฑ์: ${reason}` }
         : b
     );
 
     StorageService.set('payments', updatedPayments);
     StorageService.set('bookings', updatedBookings);
 
-    onAddAuditLog('SLIP_REJECTED_BY_STAFF', 'Payment', paymentId, { status: PaymentStatus.SLIP_UPLOADED }, { status: PaymentStatus.REJECTED, reason: rejectReason });
+    onAddAuditLog('SLIP_REJECTED_BY_STAFF', 'Payment', paymentId, { status: paymentObj.status }, { status: PaymentStatus.REJECTED, reason });
     
     setRejectId(null);
     setRejectReason('');
     onRefreshAll();
-    alert('ปฏิเสธสลิปแล้ว ระบบยกเลิกเวลาและยิงไลน์แจ้งลูกค้าแล้ว');
+    alert('ปฏิเสธรายการแล้ว ระบบยกเลิกเวลาที่จองไว้แล้ว');
+    return Promise.resolve(true);
+  };
+
+  // A PromptPay walk-in waiting for staff to see the transfer arrive.
+  const confirmPendingWalkin = () => {
+    if (!pendingWalkin) return;
+    handleVerifySlip(pendingWalkin.paymentId).then(ok => {
+      if (ok) {
+        setWalkinSuccessAlert(`จองสนามแบบ Walk-in รหัส ${pendingWalkin.bookingCode} ยืนยันการรับเงิน ${pendingWalkin.amount} บาทแล้ว!`);
+        setPendingWalkin(null);
+      }
+    });
+  };
+
+  const cancelPendingWalkin = () => {
+    if (!pendingWalkin) return;
+    if (!window.confirm(`ยกเลิกการจอง ${pendingWalkin.bookingCode} ที่ยังไม่ได้ชำระเงินใช่หรือไม่?`)) return;
+    handleRejectSlip(pendingWalkin.paymentId, 'ยกเลิกที่เคาน์เตอร์ ยังไม่ได้ชำระเงิน').then(ok => {
+      if (ok) setPendingWalkin(null);
+    });
   };
 
   // F&B Add to Receipt Cart
@@ -1021,9 +1084,40 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   type="submit" 
                   className="w-full bg-[#1e293b] hover:bg-[#334155] text-white py-3 rounded-lg font-bold text-xs shadow-sm transition"
                 >
-                  ออกตั๋วคอร์ทและยืนยันการรับเงินทันที &rarr;
+                  สร้างรายการจองและแสดง QR รับชำระ &rarr;
                 </button>
               </form>
+
+              {/* PromptPay walk-in awaiting the transfer: the amount is the
+                  server's price (member discount included), and the booking
+                  is only confirmed - and points awarded - once staff see
+                  the money arrive. */}
+              {pendingWalkin && (
+                <div id="walkin-pending-payment" className="mt-4 p-4 rounded-xl border-2 border-amber-300 bg-amber-50 space-y-3 text-xs">
+                  <p className="font-black text-amber-900">⏳ รอลูกค้าโอนเงิน · {pendingWalkin.bookingCode}</p>
+                  <p className="text-amber-800">{pendingWalkin.label}</p>
+                  <div className="flex items-center gap-4">
+                    {pendingWalkin.qrPayload && (
+                      <div className="bg-white p-2 rounded-lg border border-amber-200">
+                        <QRCodeSVG value={pendingWalkin.qrPayload} size={132} />
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-slate-500">ยอดที่ต้องชำระ</p>
+                      <p id="walkin-pending-amount" className="text-2xl font-black text-slate-900">{pendingWalkin.amount} บาท</p>
+                      <p className="text-[10px] text-slate-500 mt-1">ให้ลูกค้าสแกน QR แล้วตรวจยอดเงินเข้าก่อนกดยืนยัน</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={confirmPendingWalkin} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">
+                      ✅ ได้รับเงินแล้ว ยืนยันการจอง
+                    </button>
+                    <button type="button" onClick={cancelPendingWalkin} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg">
+                      ยกเลิกรายการ
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Interactive booked monitor table */}
@@ -1192,6 +1286,20 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           );
                         }
 
+                        // Over: nobody can book it (an hour in progress still can be,
+                        // at the counter).
+                        if (slotTiming(walkinDate, time).ended) {
+                          return (
+                            <td 
+                              key={time} 
+                              className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] cursor-not-allowed select-none"
+                              title="ช่วงเวลานี้ผ่านไปแล้ว"
+                            >
+                              <span className="block text-[8px] font-semibold text-slate-500">⌛ ผ่านไปแล้ว</span>
+                            </td>
+                          );
+                        }
+
                         if (isRestrictedPeakBasketball) {
                           return (
                             <td 
@@ -1210,8 +1318,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           walkinDate, 
                           time, 
                           MemberType.NORMAL, 
-                          isBasketballHalfCourt, 
-                          court.id
+                          court
                         );
 
                         // No pricing rule covers this hour: the server treats it
@@ -1361,7 +1468,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           
                           <button
                             type="button"
-                            onClick={() => handleVerifySlip(pay.id)}
+                            onClick={() => { void handleVerifySlip(pay.id); }}
                             className="bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
                           >
                             <Check className="h-3.5 w-3.5" /> อนุมัติสล็อตจอง
@@ -1402,7 +1509,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleRejectSlip(rejectId)}
+                        onClick={() => { void handleRejectSlip(rejectId); }}
                         className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 px-4 rounded"
                       >
                         ยืนยันการปฎิเสธ (Cancel Booking)

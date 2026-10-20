@@ -25,6 +25,9 @@ func TestValidateRule(t *testing.T) {
 		"empty window":       func(r *model.PricingRule) { r.EndHour = r.StartHour },
 		"past midnight":      func(r *model.PricingRule) { r.EndHour = 25 },
 		"negative price":     func(r *model.PricingRule) { r.PricePerHour = -1 },
+		"free hour":          func(r *model.PricingRule) { r.PricePerHour = 0 },
+		"before opening":     func(r *model.PricingRule) { r.StartHour = 6 },
+		"after closing":      func(r *model.PricingRule) { r.StartHour, r.EndHour = 22, 24 },
 	}
 	for name, mutate := range bad {
 		r := good

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   courtsConflict,
   isHubCourt,
@@ -9,6 +9,9 @@ import {
   generatePromptPayPayload,
   crc16,
   bookingGroupOf,
+  normalizePhone,
+  slotTiming,
+  memberTierLabel,
 } from './mockData';
 import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType } from './types';
 
@@ -126,46 +129,54 @@ describe('getDayType', () => {
   });
 });
 
+// calculatePrice takes the court itself; these mirror DEFAULT_COURTS.
+const court = (id: string) => ({ shareOfGroup: id.startsWith('b_half') ? 0.5 : 1 });
+
 describe('calculatePrice (FR-2)', () => {
   // 2026-06-15 is a Monday (weekday), 09:00 falls in badminton's weekday
   // off-peak window (07:00-17:00, rate 180) per DEFAULT_PRICING_RULES.
   it('full-court normal member pays the base off-peak rate with no discount', () => {
-    const result = calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.NORMAL, false, 'bad-1');
+    const result = calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.NORMAL, court('bad-1'));
     expect(result.total).toBe(180);
   });
 
   it('half-court rate is exactly 50% of the full rate (FR-2.4), not the old hardcoded 60%', () => {
     // b_half_b's basketball weekday off-peak base rate is 500 per DEFAULT_PRICING_RULES.
-    const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.NORMAL, false, 'b_half_b');
+    const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.NORMAL, court('b_half_b'));
     expect(result.total).toBe(250); // 500 * 0.5, NOT 500 * 0.6 = 300
   });
 
   it('member discount percentages match REQUIREMENTS.md FR-2.3 (15/10/20), applied to the badminton weekday off-peak rate of 180', () => {
-    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.STUDENT, false, 'bad-1').total).toBe(153); // 180 * 0.85
-    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.MEMBER, false, 'bad-1').total).toBe(162); // 180 * 0.90
-    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.CORPORATE, false, 'bad-1').total).toBe(144); // 180 * 0.80
+    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.STUDENT, court('bad-1')).total).toBe(153); // 180 * 0.85
+    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.MEMBER, court('bad-1')).total).toBe(162); // 180 * 0.90
+    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '09:00', MemberType.CORPORATE, court('bad-1')).total).toBe(144); // 180 * 0.80
   });
 
   it('half-court rate and membership discount compose (rate applied before discount)', () => {
     // b_half_b at 500 base * 0.5 half-court rate = 250, then * 0.85 student discount
-    const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.STUDENT, false, 'b_half_b');
+    const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.STUDENT, court('b_half_b'));
     expect(result.total).toBe(213); // round(250 * 0.85) = round(212.5) = 213
   });
 });
 
 describe('calculatePrice - UI agrees with the server', () => {
-  it('the half-court flag does not halve the full court (it is a full-share court)', () => {
-    const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.NORMAL, true, 'b_full_a');
-    expect(result.total).toBe(500);
+  it('the full court is never halved; a half-court side always is', () => {
+    expect(calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.NORMAL, court('b_full_a')).total).toBe(500);
+    expect(calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.NORMAL, court('b_half_c')).total).toBe(250);
+  });
+
+  it('a half court the browser has never stored (server-only court) is still half price', () => {
+    // The court object comes from the caller, not a localStorage lookup by id.
+    expect(calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.NORMAL, { shareOfGroup: 0.5 }).total).toBe(250);
   });
 
   it('an hour no pricing rule covers is closed, not priced at a fallback rate', () => {
     for (const hour of ['03:00', '23:00']) {
-      const result = calculatePrice(CourtType.BADMINTON, '2026-06-15', hour, MemberType.NORMAL, false, 'bad-1');
+      const result = calculatePrice(CourtType.BADMINTON, '2026-06-15', hour, MemberType.NORMAL, court('bad-1'));
       expect(result.isOpen).toBe(false);
       expect(result.total).toBe(0);
     }
-    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '22:00', MemberType.NORMAL, false, 'bad-1').isOpen).toBe(true);
+    expect(calculatePrice(CourtType.BADMINTON, '2026-06-15', '22:00', MemberType.NORMAL, court('bad-1')).isOpen).toBe(true);
   });
 });
 
@@ -201,5 +212,37 @@ describe('bookingGroupOf', () => {
     const otherDate = makeBooking({ id: 'x2', bookingCode: 'BK-1', userId: 'u-1', date: '2026-09-21' });
     const ids = bookingGroupOf(root, [root, sameGroup, otherUser, otherDate]).map(b => b.id);
     expect(ids).toEqual(['r', 'g2']);
+  });
+});
+
+describe('normalizePhone (same canonical form as the backend)', () => {
+  it('treats dashes, spaces and the +66 country code as the same number', () => {
+    for (const p of ['0812345678', '081-234-5678', '081 234 5678', '+66 81 234 5678', '+66812345678', '0066812345678']) {
+      expect(normalizePhone(p)).toBe('0812345678');
+    }
+    expect(normalizePhone('+66 2 123 4567')).toBe('021234567');
+    expect(normalizePhone(undefined)).toBe('');
+  });
+});
+
+describe('slotTiming (Bangkok time)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('marks hours that have started or ended, judged in Asia/Bangkok', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-20T11:20:00Z')); // 18:20 in Bangkok
+    expect(slotTiming('2026-10-20', '17:00')).toEqual({ started: true, ended: true });
+    expect(slotTiming('2026-10-20', '18:00')).toEqual({ started: true, ended: false }); // counter only
+    expect(slotTiming('2026-10-20', '19:00')).toEqual({ started: false, ended: false });
+    expect(slotTiming('2026-10-21', '07:00')).toEqual({ started: false, ended: false });
+    expect(slotTiming('2026-10-19', '22:00')).toEqual({ started: true, ended: true });
+  });
+});
+
+describe('memberTierLabel', () => {
+  it('shows the configured percentages from REQUIREMENTS.md FR-2.3 (not hard-coded ones)', () => {
+    expect(memberTierLabel(MemberType.STUDENT)).toContain('15%');
+    expect(memberTierLabel(MemberType.CORPORATE)).toContain('20%');
+    expect(memberTierLabel(MemberType.MEMBER)).toContain('10%');
   });
 });

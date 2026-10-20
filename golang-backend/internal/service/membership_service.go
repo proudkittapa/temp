@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -49,36 +50,48 @@ func (s *MembershipService) CalculateDiscount(ctx context.Context, mType model.M
 	}, nil
 }
 
-// UpgradeMembership converts the member tier of a user and records an audit trail
-func (s *MembershipService) UpgradeMembership(ctx context.Context, userID string, newTier model.MemberType, adminStaff string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var u model.User
+// SetMemberType sets a customer's membership tier (FR-2.3) - what the
+// server prices their bookings with - and audit-logs the change. Only
+// managers/admins reach this (PUT /admin/users/:id/member-type).
+func (s *MembershipService) SetMemberType(ctx context.Context, userID string, newTier model.MemberType, actorID, actorName string) (*model.User, error) {
+	switch newTier {
+	case model.MemberNormal, model.MemberStudent, model.MemberClub, model.MemberCorporate:
+	default:
+		return nil, fmt.Errorf("%w: unknown member_type %q", ErrInvalidBooking, newTier)
+	}
+	var u model.User
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&u, "id = ?", userID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
 			return err
 		}
-
+		if u.Role != model.RoleCustomer {
+			return fmt.Errorf("%w: membership tiers only apply to customers", ErrInvalidBooking)
+		}
 		oldTier := u.MemberType
-		u.MemberType = newTier
-		u.UpdatedAt = time.Now()
-
-		if err := tx.Save(&u).Error; err != nil {
+		if oldTier == newTier {
+			return nil
+		}
+		now := time.Now()
+		if err := tx.Model(&u).Updates(map[string]interface{}{"member_type": newTier, "updated_at": now}).Error; err != nil {
 			return err
 		}
-
-		// Create dynamic administrative audit trail
-		auditID := ids.New("log")
-		audit := model.AuditLog{
-			ID:          auditID,
-			UserID:      adminStaff,
-			UserName:    adminStaff,
-			Action:      "MEMBERSHIP_UPGRADE",
+		return tx.Create(&model.AuditLog{
+			ID:          ids.New("log"),
+			UserID:      actorID,
+			UserName:    actorName,
+			Action:      "MEMBERSHIP_CHANGED",
 			TargetType:  "User",
 			TargetID:    userID,
 			BeforeState: model.AuditJSON(map[string]model.MemberType{"member_type": oldTier}),
 			AfterState:  model.AuditJSON(map[string]model.MemberType{"member_type": newTier}),
-			CreatedAt:   time.Now(),
-		}
-
-		return tx.Create(&audit).Error
+			CreatedAt:   now,
+		}).Error
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
 }
