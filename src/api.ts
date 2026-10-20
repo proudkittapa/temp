@@ -15,7 +15,7 @@
 import {
   Booking, BookingStatus, Court, CourtType, DayOff, DayType, MemberDiscountRule, MemberType, Payment,
   PaymentMethod, PaymentStatus, PriceType, PricingConfig, PricingRule, User, UserRole,
-  AuditLog, Order, OrderItem, OrderStatus, OrderType, Product, ProductCat, ProductVariant
+  AuditLog, Order, OrderItem, OrderStatus, OrderType, Product, ProductCat, ProductVariant, Shift
 } from './types';
 import { StorageService } from './mockData';
 
@@ -653,11 +653,11 @@ export async function createCourt(input: { name: string; type: CourtType; halfCo
 
 // Admin: rename, open/close for booking. upcomingBookings: bookings still
 // standing on a court that was just closed.
-export async function updateCourt(id: string, patch: { name?: string; isActive?: boolean; offPeakOnly?: boolean }): Promise<{ court: Court; upcomingBookings: number }> {
-  const r = await request<{ court: ApiCourt; upcoming_bookings: number }>(`/admin/courts/${encodeURIComponent(id)}`, {
+export async function updateCourt(id: string, patch: { name?: string; isActive?: boolean; offPeakOnly?: boolean }): Promise<{ court: Court; upcomingBookings: number; upcoming: Booking[] }> {
+  const r = await request<{ court: ApiCourt; upcoming_bookings: number; upcoming?: ApiBooking[] }>(`/admin/courts/${encodeURIComponent(id)}`, {
     method: 'PUT', session: 'admin', body: { name: patch.name, is_active: patch.isActive, off_peak_only: patch.offPeakOnly }
   });
-  return { court: toCourt(r.court), upcomingBookings: r.upcoming_bookings };
+  return { court: toCourt(r.court), upcomingBookings: r.upcoming_bookings, upcoming: (r.upcoming || []).map(b => toBooking(b)) };
 }
 
 // ---- loyalty rewards (FR-4.2/4.3) ----
@@ -728,7 +728,7 @@ interface ApiOrderItem {
 interface ApiOrder {
   id: string; order_code: string; user_id?: string; customer_name: string; court_id?: string; type: string;
   status: string; total_amount: number; paid_amount: number; payment_method: string; created_by: string;
-  created_at: string; items: ApiOrderItem[];
+  created_at: string; items: ApiOrderItem[]; voided_at?: string; void_reason?: string;
 }
 
 const toProduct = (p: ApiProduct): Product => ({
@@ -746,6 +746,7 @@ const toOrder = (o: ApiOrder): OrderWithNames => ({
   id: o.id, orderCode: o.order_code, userId: o.user_id, customerName: o.customer_name, courtId: o.court_id,
   type: o.type as OrderType, status: o.status as OrderStatus, totalAmount: o.total_amount, paidAmount: o.paid_amount,
   paymentMethod: o.payment_method as PaymentMethod, createdAt: o.created_at, createdBy: o.created_by,
+  voidedAt: o.voided_at, voidReason: o.void_reason,
   items: (o.items || []).map(i => ({
     id: i.id, orderId: i.order_id, productId: i.product_id, productName: i.product_name, variantId: i.variant_id,
     qty: i.qty, unitPrice: i.unit_price, returnedAt: i.returned_at, shoeSize: i.shoe_size,
@@ -860,9 +861,9 @@ export async function dashboard(date: string): Promise<DashboardData> {
 
 export interface ReportBookingRow extends Booking { courtName: string; paymentMethod: string; paymentStatus: string; refundAmount: number }
 
-export async function monthReport(month: string): Promise<{ bookings: ReportBookingRow[]; orders: OrderWithNames[] }> {
+export async function monthReport(month: string, kind?: string): Promise<{ bookings: ReportBookingRow[]; orders: OrderWithNames[] }> {
   const r = await request<{ bookings: (ApiBooking & { court_name: string; payment_method: string; payment_status: string; refund_amount: number })[]; orders: ApiOrder[] }>(
-    `/admin/report?month=${encodeURIComponent(month)}`, { session: 'admin' });
+    `/admin/report?month=${encodeURIComponent(month)}${kind ? `&kind=${encodeURIComponent(kind)}` : ''}`, { session: 'admin' });
   return {
     bookings: (r.bookings || []).map(b => ({ ...toBooking(b), courtName: b.court_name, paymentMethod: b.payment_method, paymentStatus: b.payment_status, refundAmount: b.refund_amount })),
     orders: (r.orders || []).map(toOrder)
@@ -893,4 +894,44 @@ export async function auditLogs(opts: { search?: string; targetType?: string; li
     id: l.id, userId: l.user_id, userName: l.user_name, action: l.action, targetType: l.target_type as AuditLog['targetType'],
     targetId: l.target_id, before: asRecord(l.before_state), after: asRecord(l.after_state), reason: l.reason, createdAt: l.created_at
   }));
+}
+
+// Managers (staff session of a manager): cancel today's counter sale.
+export async function voidOrder(orderId: string, reason: string): Promise<OrderWithNames> {
+  return toOrder(await request<ApiOrder>(`/admin/orders/${encodeURIComponent(orderId)}/void`, { method: 'POST', session: 'staff', body: { reason } }));
+}
+
+// ---- cash drawer shifts (FR-6.1/6.2) ----
+
+// A shift with the cash taken while it was open.
+export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; expected: number }
+
+interface ApiShift {
+  id: string; staff_id: string; staff_name: string; opened_at: string; opening_float: number; closed_at?: string;
+  counted_cash?: number; expected_cash?: number; variance_cash?: number; notes?: string; closed_by_name?: string;
+  cash_bookings: number; cash_orders: number; expected: number;
+}
+
+const toShift = (s: ApiShift): ShiftView => ({
+  id: s.id, staffId: s.staff_id, staffName: s.staff_name, openedAt: s.opened_at, openingFloat: s.opening_float,
+  closedAt: s.closed_at, countedCash: s.counted_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
+  notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, expected: s.expected
+});
+
+export async function currentShift(): Promise<ShiftView | null> {
+  const s = await request<ApiShift | null>('/staff/shift', { session: 'staff' });
+  return s ? toShift(s) : null;
+}
+
+export async function openShift(openingFloat: number): Promise<ShiftView> {
+  return toShift(await request<ApiShift>('/staff/shift/open', { method: 'POST', session: 'staff', body: { opening_float: openingFloat } }));
+}
+
+export async function closeShift(countedCash: number, notes: string): Promise<ShiftView> {
+  return toShift(await request<ApiShift>('/staff/shift/close', { method: 'POST', session: 'staff', body: { counted_cash: countedCash, notes } }));
+}
+
+// Managers: recent shifts with over/short.
+export async function listShifts(): Promise<ShiftView[]> {
+  return (await request<ApiShift[]>('/admin/shifts', { session: 'staff' })).map(toShift);
 }

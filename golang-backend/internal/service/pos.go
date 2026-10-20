@@ -596,6 +596,95 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID, actorID, acto
 	return view, err
 }
 
+// VoidOrder cancels a counter sale (managers): stock comes back (items
+// still out on rent too), the purchase points are taken back (never below
+// zero), and the order drops out of the drawer and reports. Only a sale
+// from today (Bangkok) - an older one belongs to a closed day's count.
+func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, actorName string) (*OrderView, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, fmt.Errorf("%w: a reason is required to void a sale", ErrInvalidBooking)
+	}
+	var view *OrderView
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var order model.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", orderID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if order.Status == model.OrderCancelled {
+			return fmt.Errorf("%w: %s is already voided", ErrInvalidState, order.OrderCode)
+		}
+		now := s.now()
+		if order.CreatedAt.In(Bangkok).Format("2006-01-02") != now.In(Bangkok).Format("2006-01-02") {
+			return fmt.Errorf("%w: only today's sales can be voided", ErrInvalidState)
+		}
+		var lines []model.OrderItem
+		if err := tx.Where("order_id = ?", order.ID).Find(&lines).Error; err != nil {
+			return err
+		}
+		for _, l := range lines {
+			if l.ReturnedAt != nil {
+				continue // a returned rental item is already back in stock
+			}
+			if err := tx.Model(&model.Product{}).Where("id = ?", l.ProductID).Update("stock", gorm.Expr("stock + ?", l.Qty)).Error; err != nil {
+				return err
+			}
+			if l.VariantID != nil {
+				if err := tx.Model(&model.ProductVariant{}).Where("id = ?", *l.VariantID).Update("stock", gorm.Expr("stock + ?", l.Qty)).Error; err != nil {
+					return err
+				}
+			}
+		}
+		taken := 0
+		if order.UserID != nil {
+			var earned int64
+			if err := tx.Model(&model.PointsLedgerEntry{}).Select("COALESCE(SUM(points), 0)").
+				Where("ref_type = ? AND ref_id = ?", "Order", order.ID).Scan(&earned).Error; err != nil {
+				return err
+			}
+			if earned > 0 {
+				var u model.User
+				if err := tx.First(&u, "id = ?", *order.UserID).Error; err != nil {
+					return err
+				}
+				taken = int(earned)
+				if u.Points < taken {
+					taken = u.Points // never below zero (points may be spent already)
+				}
+				if taken > 0 {
+					refType, note := "Order", fmt.Sprintf("Sale %s voided: %s", order.OrderCode, reason)
+					if _, err := s.usrRepo.AddPointsEntry(ctx, tx, u.ID, model.LedgerReversePurchase, -taken, actorID, &refType, &order.ID, &note); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		before := order.Status
+		if err := tx.Model(&order).Updates(map[string]interface{}{"status": model.OrderCancelled, "voided_at": now, "void_reason": reason}).Error; err != nil {
+			return err
+		}
+		order.Status, order.VoidedAt, order.VoidReason = model.OrderCancelled, &now, &reason
+		if err := tx.Create(&model.AuditLog{
+			ID: ids.New("log"), UserID: actorID, UserName: actorName, Action: "ORDER_VOIDED", TargetType: "Order", TargetID: order.ID,
+			BeforeState: model.AuditJSON(map[string]any{"status": before, "total": order.TotalAmount}),
+			AfterState:  model.AuditJSON(map[string]any{"status": order.Status, "points_reversed": taken}),
+			Reason:      &reason, CreatedAt: now,
+		}).Error; err != nil {
+			return err
+		}
+		views, err := s.views(tx, []model.Order{order})
+		if err != nil {
+			return err
+		}
+		view = &views[0]
+		return nil
+	})
+	return view, err
+}
+
 // OrderTotals is the counter-sales part of the day's drawer report.
 type OrderTotals struct {
 	Cash           float64 `json:"orders_cash"`

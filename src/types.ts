@@ -259,6 +259,8 @@ export interface Order {
   createdAt: string;
   createdBy: string; // staff or manager id
   items: OrderItem[];
+  voidedAt?: string;   // a manager voided the sale (status CANCELLED)
+  voidReason?: string;
 }
 
 export interface AuditLog {
@@ -309,7 +311,8 @@ export enum LedgerEntryType {
   EARN_PURCHASE = 'EARN_PURCHASE',
   REDEEM = 'REDEEM',
   ADJUST_MANUAL = 'ADJUST_MANUAL',
-  REVERSE_BOOKING = 'REVERSE_BOOKING'
+  REVERSE_BOOKING = 'REVERSE_BOOKING',
+  REVERSE_PURCHASE = 'REVERSE_PURCHASE' // points of a voided counter sale
 }
 
 // Append-only loyalty history (FR-4.1/FR-4.3, AC-6/AC-7). User.points is a
@@ -371,5 +374,6 @@ export interface Shift {
   expectedCash?: number; // openingFloat + cash bookings + cash retail in-period
   varianceCash?: number; // countedCash - expectedCash
   notes?: string;
+  closedByName?: string; // who counted the drawer at the end
 }
 

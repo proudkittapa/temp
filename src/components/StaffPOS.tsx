@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
-  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType
+  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift
 } from '../types';
 import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
@@ -14,6 +14,17 @@ interface StaffPOSProps {
   onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
   triggerRefresh: number;
   onRefreshAll: () => void;
+}
+
+// Browser-only mode: a shift's cash taken (same rule as the server: cash
+// payments approved and non-voided cash orders while the shift was open).
+function localShiftView(sh: Shift, payments: Payment[], orders: Order[]): api.ShiftView {
+  const from = sh.openedAt, to = sh.closedAt || '9999';
+  const cashBookings = roundBaht(payments.filter(p => p.method === PaymentMethod.CASH && p.verifiedAt && p.verifiedAt >= from && p.verifiedAt < to &&
+    (p.status === PaymentStatus.VERIFIED || p.status === PaymentStatus.REFUNDED)).reduce((n, p) => n + p.amount, 0));
+  const cashOrders = roundBaht(orders.filter(o => o.paymentMethod === PaymentMethod.CASH && o.status !== OrderStatus.CANCELLED &&
+    o.createdAt >= from && o.createdAt < to).reduce((n, o) => n + o.totalAmount, 0));
+  return { ...sh, cashBookings, cashOrders, expected: sh.expectedCash ?? roundBaht(sh.openingFloat + cashBookings + cashOrders) };
 }
 
 // Browser-only mode keeps reward vouchers in localStorage ("redemptions").
@@ -74,6 +85,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Rentals still out (any day); in browser-only mode derived from orders.
   const [activeRentalOrders, setActiveRentalOrders] = useState<Order[]>([]);
 
+  // Cash drawer shift (FR-6.1/6.2): opened with a float, closed with a count.
+  const [shift, setShift] = useState<api.ShiftView | null>(null);
+  const [shiftHistory, setShiftHistory] = useState<api.ShiftView[]>([]);
+  const [shiftFloatInput, setShiftFloatInput] = useState<string>('');
+  const [shiftCountInput, setShiftCountInput] = useState<string>('');
+  const [shiftNote, setShiftNote] = useState<string>('');
+  const [closedShift, setClosedShift] = useState<api.ShiftView | null>(null);
+
   // Reject slip state
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<string>('');
@@ -94,9 +113,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   useEffect(() => {
     if (!api.USE_BACKEND || !staffUser) return;
     let cancelled = false;
-    Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals()])
-      .then(([queue, summary, prods, dayOrders, rentals]) => {
+    const isManager = staffUser.role === UserRole.MANAGER || staffUser.role === UserRole.ADMIN;
+    Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals(),
+      api.currentShift(), isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[])])
+      .then(([queue, summary, prods, dayOrders, rentals, openShift, history]) => {
         if (cancelled) return;
+        setShift(openShift);
+        setShiftHistory(history);
         setReviewQueue(queue);
         setDaySummary(summary);
         setProducts(prods);
@@ -190,6 +213,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setPayments(rawPayments);
     // In API mode products and orders come from the backend (effect above).
     if (!api.USE_BACKEND) {
+      const shifts = StorageService.get<Shift[]>('shifts', []).map(sh => localShiftView(sh, rawPayments, rawOrders));
+      setShift(shifts.find(sh => !sh.closedAt) || null);
+      setShiftHistory(shifts.filter(sh => sh.closedAt).reverse());
       setProducts(rawProducts.filter(p => p.isActive));
       setOrders(rawOrders);
       setActiveRentalOrders(rawOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT && o.status === OrderStatus.PREPARING));
@@ -1068,6 +1094,88 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // (payments approved today by method, refunds recorded today); in
   // browser-only mode from localStorage. Completed and no-show hours count
   // as paid like confirmed ones.
+  // Open the drawer shift with the counted float (FR-6.1).
+  const handleOpenShift = () => {
+    const float = Number(shiftFloatInput);
+    if (shiftFloatInput.trim() === '' || !(float >= 0)) {
+      alert('กรุณากรอกเงินทอนตั้งต้นในลิ้นชัก (บาท)');
+      return;
+    }
+    setClosedShift(null);
+    if (api.USE_BACKEND) {
+      api.openShift(float).then(() => { setShiftFloatInput(''); onRefreshAll(); }).catch(err => alert(`เปิดกะไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    const list = StorageService.get<Shift[]>('shifts', []);
+    if (list.some(sh => !sh.closedAt)) { alert('มีกะที่เปิดอยู่แล้ว ปิดกะก่อน'); return; }
+    const sh: Shift = { id: 'shf-' + Date.now(), staffId: 'u-staff-1', staffName: 'คุณ กิตติ (เดโม)', openedAt: new Date().toISOString(), openingFloat: roundBaht(float) };
+    StorageService.set('shifts', [...list, sh]);
+    onAddAuditLog('SHIFT_OPENED', 'Shift', sh.id, null, { openingFloat: sh.openingFloat });
+    setShiftFloatInput('');
+    onRefreshAll();
+  };
+
+  // Close it with the counted cash: expected vs counted = over/short (FR-6.2).
+  const handleCloseShift = () => {
+    if (!shift) return;
+    const counted = Number(shiftCountInput);
+    if (shiftCountInput.trim() === '' || !(counted >= 0)) {
+      alert('กรุณากรอกยอดเงินสดที่นับได้จริง');
+      return;
+    }
+    const variance = roundBaht(counted - shift.expected);
+    if (variance !== 0 && !shiftNote.trim()) {
+      alert(`ยอดนับ${variance > 0 ? 'เกิน' : 'ขาด'} ${formatBaht(Math.abs(variance))} บาท กรุณาใส่หมายเหตุอธิบาย`);
+      return;
+    }
+    if (!window.confirm(`ปิดกะ: คาดว่ามีเงินสด ${formatBaht(shift.expected)} บาท นับได้ ${formatBaht(counted)} บาท (${variance === 0 ? 'ตรง' : variance > 0 ? `เกิน ${formatBaht(variance)}` : `ขาด ${formatBaht(-variance)}`})`)) return;
+    const done = (closed: api.ShiftView) => {
+      setClosedShift(closed);
+      setShiftCountInput('');
+      setShiftNote('');
+      onRefreshAll();
+    };
+    if (api.USE_BACKEND) {
+      api.closeShift(counted, shiftNote).then(done).catch(err => alert(`ปิดกะไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    const closedAt = new Date().toISOString();
+    const closed: Shift = { ...shift, closedAt, countedCash: roundBaht(counted), expectedCash: shift.expected, varianceCash: variance, notes: shiftNote.trim() || undefined, closedByName: 'คุณ กิตติ (เดโม)' };
+    StorageService.set('shifts', StorageService.get<Shift[]>('shifts', []).map(sh => sh.id === shift.id ? closed : sh));
+    onAddAuditLog('SHIFT_CLOSED', 'Shift', shift.id, null, { expected: shift.expected, counted, variance });
+    done({ ...shift, ...closed });
+  };
+
+  // Manager: void today's counter sale - stock and points back, out of the
+  // drawer. Reason required.
+  const handleVoidOrder = (order: Order) => {
+    const reason = window.prompt(`เหตุผลการยกเลิกบิล ${order.orderCode} (${formatBaht(order.totalAmount)} บาท) - คืนเงินลูกค้าแล้วค่อยยืนยัน:`)?.trim();
+    if (!reason) return;
+    if (api.USE_BACKEND) {
+      api.voidOrder(order.id, reason)
+        .then(() => { onRefreshAll(); alert(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)`); })
+        .catch(err => alert(`ยกเลิกบิลไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+    if (localDateOf(order.createdAt) !== getTodayDateStr()) { alert('ยกเลิกได้เฉพาะบิลของวันนี้'); return; }
+    StorageService.set('products', StorageService.get<Product[]>('products', []).map(p => {
+      const lines = order.items.filter(it => it.productId === p.id && !it.returnedAt);
+      if (!lines.length) return p;
+      return {
+        ...p,
+        stock: p.stock + lines.reduce((n, it) => n + it.qty, 0),
+        variants: p.variants?.map(v => ({ ...v, stock: v.stock + lines.filter(it => it.variantId === v.id).reduce((n, it) => n + it.qty, 0) }))
+      };
+    }));
+    StorageService.set('orders', StorageService.get<Order[]>('orders', []).map(o => o.id === order.id
+      ? { ...o, status: OrderStatus.CANCELLED, voidedAt: new Date().toISOString(), voidReason: reason } : o));
+    const pts = Math.floor(order.totalAmount / 100);
+    if (order.userId && pts > 0) StorageService.addLedgerEntry(order.userId, LedgerEntryType.REVERSE_PURCHASE, -pts, 'manager', { note: `Sale ${order.orderCode} voided: ${reason}` });
+    onAddAuditLog('ORDER_VOIDED', 'Order', order.id, { status: order.status }, { status: OrderStatus.CANCELLED, reason });
+    onRefreshAll();
+    alert(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)`);
+  };
+
   // Today's (Bangkok) non-cancelled counter orders. API mode loads only
   // today's; stored times are UTC, so compare by local calendar date.
   const todaysOrders = () => orders.filter(o => o.status !== OrderStatus.CANCELLED &&
@@ -1148,6 +1256,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   return (
     <div className="space-y-6">
       
+      {!shift && (
+        <button type="button" id="no-shift-banner" onClick={() => setActivePosTab('todays_total')}
+          className="w-full text-left text-xs bg-amber-50 border border-amber-300 text-amber-900 rounded-xl px-4 py-2 font-bold">
+          ⚠️ ยังไม่ได้เปิดกะลิ้นชัก — นับเงินทอนตั้งต้นแล้วเปิดกะก่อนรับเงินสด (กดที่นี่)
+        </button>
+      )}
+
       {/* Staff Workspace Alert banner */}
       <div className="bg-slate-800 text-white p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4 border border-slate-700 shadow-sm">
         <div className="flex items-center gap-3">
@@ -2185,6 +2300,69 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         {/* Tab 5: Today's consolidate accounting summary (Read only block for staff) */}
         {activePosTab === 'todays_total' && (
           <div className="space-y-6">
+            {/* Cash drawer shift (FR-6.1/6.2) */}
+            <div id="shift-panel" className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3 shadow-sm text-xs">
+              <h4 className="text-sm font-bold text-slate-800">💰 กะลิ้นชักเงินสด</h4>
+              {!shift ? (
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="block text-slate-600 mb-1">เงินทอนตั้งต้นในลิ้นชัก (บาท)</label>
+                    <input id="shift-float" type="number" min={0} value={shiftFloatInput} onChange={e => setShiftFloatInput(e.target.value)}
+                      className="w-40 border border-slate-300 rounded-lg px-3 py-2" placeholder="เช่น 2000" />
+                  </div>
+                  <button type="button" onClick={handleOpenShift} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg">เปิดกะ</button>
+                  <p className="text-slate-500 w-full">นับเงินทอนในลิ้นชักก่อนเริ่มขาย แล้วกดเปิดกะ ระบบจะรวมเงินสดที่รับระหว่างกะให้อัตโนมัติ</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-slate-600">เปิดกะโดย <b>{shift.staffName}</b> เมื่อ {new Date(shift.openedAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">เงินทอนตั้งต้น</span><b>{formatBaht(shift.openingFloat)}</b></div>
+                    <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ เงินสดค่าสนาม</span><b>{formatBaht(shift.cashBookings)}</b></div>
+                    <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ เงินสดขายของ/เช่า</span><b>{formatBaht(shift.cashOrders)}</b></div>
+                    <div className="bg-emerald-50 rounded-lg p-2"><span className="text-emerald-700 block">= ควรมีในลิ้นชัก</span><b id="shift-expected">{formatBaht(shift.expected)}</b></div>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div>
+                      <label className="block text-slate-600 mb-1">เงินสดที่นับได้จริง (บาท)</label>
+                      <input id="shift-count" type="number" min={0} value={shiftCountInput} onChange={e => setShiftCountInput(e.target.value)} className="w-40 border border-slate-300 rounded-lg px-3 py-2" />
+                    </div>
+                    <div className="flex-1 min-w-[180px]">
+                      <label className="block text-slate-600 mb-1">หมายเหตุ (จำเป็นถ้ายอดไม่ตรง)</label>
+                      <input id="shift-note" value={shiftNote} onChange={e => setShiftNote(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
+                    </div>
+                    <button type="button" onClick={handleCloseShift} className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-lg">นับเงินและปิดกะ</button>
+                  </div>
+                  <p className="text-[10px] text-slate-500">การคืนเงินลูกค้าเป็นการโอน ไม่ได้จ่ายจากลิ้นชัก จึงไม่ถูกหักจากยอดนี้</p>
+                </div>
+              )}
+              {closedShift && (
+                <p id="shift-result" className={`rounded-lg px-3 py-2 font-bold ${closedShift.varianceCash === 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>
+                  ปิดกะแล้ว: ควรมี {formatBaht(closedShift.expectedCash ?? 0)} นับได้ {formatBaht(closedShift.countedCash ?? 0)} →{' '}
+                  {closedShift.varianceCash === 0 ? 'ตรง ✔' : (closedShift.varianceCash ?? 0) > 0 ? `เกิน ${formatBaht(closedShift.varianceCash ?? 0)} บาท` : `ขาด ${formatBaht(-(closedShift.varianceCash ?? 0))} บาท`}
+                </p>
+              )}
+              {canManageBookings && shiftHistory.filter(sh => sh.closedAt).length > 0 && (
+                <div>
+                  <p className="font-bold text-slate-700 mb-1">กะที่ปิดแล้ว (ผู้จัดการ)</p>
+                  <table className="w-full text-[11px]">
+                    <thead><tr className="text-left text-slate-500"><th>เปิด</th><th>พนักงาน</th><th className="text-right">ควรมี</th><th className="text-right">นับได้</th><th className="text-right">เกิน/ขาด</th><th>หมายเหตุ</th></tr></thead>
+                    <tbody>
+                      {shiftHistory.filter(sh => sh.closedAt).slice(0, 15).map(sh => (
+                        <tr key={sh.id} className="border-t border-slate-100">
+                          <td>{new Date(sh.openedAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                          <td>{sh.staffName}{sh.closedByName && sh.closedByName !== sh.staffName ? ` → ${sh.closedByName}` : ''}</td>
+                          <td className="text-right">{formatBaht(sh.expectedCash ?? sh.expected)}</td>
+                          <td className="text-right">{formatBaht(sh.countedCash ?? 0)}</td>
+                          <td className={`text-right font-bold ${(sh.varianceCash ?? 0) === 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatBaht(sh.varianceCash ?? 0)}</td>
+                          <td>{sh.notes || ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
             <div>
               <h3 className="text-base font-bold text-slate-900">สรุปบัญชีเงินสด และ ยอดจราจรวันนี้ (Cash Reconciliation)</h3>
               <p className="text-xs text-slate-500">รายงานข้อมูลเรียลไทม์ ยอดในหมวดหมู่คอร์ท การจราจร F&B เพื่อกระทบยอดปิดกะพนักงานประจำวันวันนี้ ({getTodayDateStr()})</p>
@@ -2283,6 +2461,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         >
                           <Receipt className="h-3 w-3" /> ใบเสร็จ
                         </button>
+                        {canManageBookings && (
+                          <button
+                            type="button"
+                            onClick={() => handleVoidOrder(o)}
+                            className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1 px-2 rounded text-[9.5px] shrink-0 ml-1"
+                          >
+                            ✖ ยกเลิกบิล
+                          </button>
+                        )}
                       </div>
                     ))}
                     {todaysOrders().length === 0 && (

@@ -39,6 +39,11 @@ stops everything it started. Open
 `123456` for a seeded member customer, or use the role switcher at the top
 of the page to jump straight to the Staff POS or Admin views.
 
+Each panel has its own address: the customer site is `/`, the counter
+(staff and managers) `/#/staff`, settings `/#/admin`. The role switcher is
+a demo tool: a production build with `VITE_DATA_SOURCE=api` hides it, so
+customers only see the customer site and staff bookmark `/#/staff`.
+
 ### API mode (real database)
 ```bash
 npm run dev:api
@@ -62,6 +67,7 @@ database from the Go Backend section below):
 | Cancel / refund (manager), record a cash payment (manager), no-show (staff), day's cash-drawer totals | `POST /admin/bookings/:id/cancel`, `POST /admin/payments/:id/refund`, `POST /admin/bookings/:id/mark-cash`, `POST /staff/bookings/:id/no-show`, `GET /staff/summary` |
 | Loyalty rewards: redeem points online, voucher check at the counter | `GET /rewards`, `POST /me/rewards/:id/redeem`, `GET /me/vouchers`, `GET`/`POST /staff/vouchers/:code[/dispense]` |
 | Counter shop: products with stock (shoes per size), F&B / equipment sales, racket & shoe rentals and returns (Staff POS); products and stock changes (Admin panel → 🥤) | `GET /staff/products`, `POST /pos/order`, `GET /staff/orders?date=`, `GET /staff/rentals`, `POST /staff/rentals/items/:id/return`, `GET`/`POST /admin/products`, `PUT /admin/products/:id`, `POST /admin/products/:id/stock` |
+| Cash drawer shifts: open with a float, close with the counted cash (over/short); void today's counter sale (manager) | `GET /staff/shift`, `POST /staff/shift/open`, `POST /staff/shift/close`, `GET /admin/shifts`, `POST /admin/orders/:id/void` |
 | Admin dashboard, monthly CSV exports (bookings, counter sales), audit log (admin only) | `GET /admin/dashboard?date=`, `GET /admin/report?month=`, `GET /admin/audit-logs` |
 | Users list, a customer's membership tier, manual points; staff roles and suspending accounts (admin) (Admin panel → users) | `GET /admin/users`, `PUT /admin/users/:id/member-type`, `POST /admin/users/:id/adjust-points`, `PUT /admin/users/:id/role`, `PUT /admin/users/:id/active` |
 

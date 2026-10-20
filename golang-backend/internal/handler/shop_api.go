@@ -15,10 +15,11 @@ type ShopHandler struct {
 	pos      *service.POSService
 	reports  *service.ReportService
 	bookings *service.BookingService
+	shifts   *service.ShiftService
 }
 
-func NewShopHandler(pos *service.POSService, reports *service.ReportService, bookings *service.BookingService) *ShopHandler {
-	return &ShopHandler{pos: pos, reports: reports, bookings: bookings}
+func NewShopHandler(pos *service.POSService, reports *service.ReportService, bookings *service.BookingService, shifts *service.ShiftService) *ShopHandler {
+	return &ShopHandler{pos: pos, reports: reports, bookings: bookings, shifts: shifts}
 }
 
 func today() string { return time.Now().In(service.Bangkok).Format("2006-01-02") }
@@ -176,10 +177,17 @@ func (h *ShopHandler) Dashboard(c *gin.Context) {
 }
 
 // GET /api/v1/admin/report?month=YYYY-MM - managers: bookings and counter
-// orders of the month for the export (FR-7.4).
+// orders of the month for the export (FR-7.4). Each fetch is audit-logged
+// as an export (customer names and phones leave the system).
 func (h *ShopHandler) MonthReport(c *gin.Context) {
-	r, err := h.reports.MonthReport(c.Request.Context(), c.DefaultQuery("month", today()[:7]))
+	month := c.DefaultQuery("month", today()[:7])
+	r, err := h.reports.MonthReport(c.Request.Context(), month)
 	if err != nil {
+		respondError(c, err)
+		return
+	}
+	actorID, actorName := actor(c)
+	if err := h.reports.LogExport(c.Request.Context(), month, c.Query("kind"), actorID, actorName); err != nil {
 		respondError(c, err)
 		return
 	}
@@ -199,4 +207,95 @@ func (h *ShopHandler) AuditLogs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": logs, "total": total})
+}
+
+// POST /api/v1/admin/orders/:id/void {"reason": "..."} - managers: cancel
+// today's counter sale (stock back, points back, out of the drawer).
+func (h *ShopHandler) VoidOrder(c *gin.Context) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	actorID, actorName := actor(c)
+	o, err := h.pos.VoidOrder(c.Request.Context(), c.Param("id"), in.Reason, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": o})
+}
+
+// GET /api/v1/staff/shift - staff: the open shift with cash taken so far
+// (data is null when no shift is open).
+func (h *ShopHandler) CurrentShift(c *gin.Context) {
+	sh, err := h.shifts.Current(c.Request.Context())
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": sh})
+}
+
+// POST /api/v1/staff/shift/open {"opening_float": 2000} - staff (FR-6.1).
+func (h *ShopHandler) OpenShift(c *gin.Context) {
+	var in struct {
+		OpeningFloat float64 `json:"opening_float"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	actorID, actorName := actor(c)
+	sh, err := h.shifts.Open(c.Request.Context(), in.OpeningFloat, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": sh})
+}
+
+// POST /api/v1/staff/shift/close {"counted_cash": 5230, "notes": "..."} -
+// staff (FR-6.2): stores expected cash and over/short; a note is required
+// when the count is off.
+func (h *ShopHandler) CloseShift(c *gin.Context) {
+	var in struct {
+		CountedCash *float64 `json:"counted_cash"`
+		Notes       string   `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil || in.CountedCash == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "counted_cash is required"})
+		return
+	}
+	actorID, actorName := actor(c)
+	sh, err := h.shifts.Close(c.Request.Context(), *in.CountedCash, in.Notes, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": sh})
+}
+
+// GET /api/v1/admin/shifts?from=YYYY-MM-DD&to=YYYY-MM-DD - managers: shifts
+// with expected, counted and over/short (default: the last 30 days).
+func (h *ShopHandler) ListShifts(c *gin.Context) {
+	now := time.Now().In(service.Bangkok)
+	from, err := time.ParseInLocation("2006-01-02", c.DefaultQuery("from", now.AddDate(0, 0, -30).Format("2006-01-02")), service.Bangkok)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "from must be YYYY-MM-DD"})
+		return
+	}
+	to, err := time.ParseInLocation("2006-01-02", c.DefaultQuery("to", now.Format("2006-01-02")), service.Bangkok)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "to must be YYYY-MM-DD"})
+		return
+	}
+	list, err := h.shifts.List(c.Request.Context(), from, to.AddDate(0, 0, 1))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
 }

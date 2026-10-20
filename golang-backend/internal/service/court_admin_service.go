@@ -92,8 +92,9 @@ func (s *CourtAdminService) Create(ctx context.Context, in CourtInput, actorID, 
 // CourtUpdateResult reports, when a court is closed, how many upcoming
 // bookings still stand on it - they are not cancelled automatically.
 type CourtUpdateResult struct {
-	Court            model.Court `json:"court"`
-	UpcomingBookings int64       `json:"upcoming_bookings"`
+	Court            model.Court     `json:"court"`
+	UpcomingBookings int64           `json:"upcoming_bookings"`
+	Upcoming         []model.Booking `json:"upcoming,omitempty"` // to move or cancel (with refund)
 }
 
 // Update renames a court, opens or closes it for new bookings, or sets
@@ -128,10 +129,13 @@ func (s *CourtAdminService) Update(ctx context.Context, id string, in CourtInput
 		}
 		if !c.IsActive {
 			today := s.now().In(Bangkok).Format("2006-01-02")
-			if err := tx.Model(&model.Booking{}).Where("court_id = ? AND date >= ? AND status IN ?", c.ID, today,
-				[]model.BookingStatus{model.BookingPendingPayment, model.BookingConfirmed}).Count(&out.UpcomingBookings).Error; err != nil {
+			if err := tx.Where("court_id = ? AND date >= ? AND status IN ?", c.ID, today,
+				[]model.BookingStatus{model.BookingPendingPayment, model.BookingConfirmed}).
+				Order("date, start_time").Find(&out.Upcoming).Error; err != nil {
 				return err
 			}
+			out.Upcoming = normalizeDates(out.Upcoming)
+			out.UpcomingBookings = int64(len(out.Upcoming))
 		}
 		out.Court = c
 		return tx.Create(&model.AuditLog{

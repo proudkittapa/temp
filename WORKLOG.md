@@ -18,10 +18,73 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Cash drawer shifts, voiding sales, closed-court bookings, separate panel URLs
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `b373e73`)
+- **Background:** The owner said "fix all that you are certain to fix" from
+  the remaining list. Done here: shifts (FR-6.1/6.2), voiding counter
+  sales, cancelling a closed court's bookings, separate staff/admin URLs
+  with the role switcher out of production, export logging. Left for the
+  owner's decision: VAT lines on receipts (is the business VAT-registered?),
+  mobile redesign, replacing prompt()/confirm() with dialogs, date format
+  (Buddhist vs Gregorian), showing availability before login.
+
+### Changed
+1. **Shifts** (`internal/service/shift_service.go`): one open shift at a
+   time (advisory lock), `GET /staff/shift`, `POST /staff/shift/open`
+   `{opening_float}`, `POST /staff/shift/close` `{counted_cash, notes}`,
+   `GET /admin/shifts` (managers). Expected = float + approved cash booking
+   payments + non-voided cash orders during the shift; refunds are
+   transfers so not deducted. Close stores expected/counted/variance and
+   who closed (`closed_by_*`, new columns); a note is required when the
+   count is off; a closed shift keeps its stored expected. Audited
+   SHIFT_OPENED/SHIFT_CLOSED. Staff POS: shift panel in "ยอดลิ้นชัก"
+   (open with float, live expected, count + note, over/short result,
+   managers see closed shifts) and a yellow "no shift open" banner on every
+   tab; same rules in browser-only mode (`shifts` in localStorage).
+   Cash sales are not blocked without a shift (banner only).
+2. **Void a sale** (`POSService.VoidOrder`, `POST /admin/orders/:id/void`,
+   managers, reason required, today's sales only): stock back (rental
+   items still out too, per size), purchase points taken back (ledger
+   `REVERSE_PURCHASE`, never below zero), status CANCELLED + `voided_at`/
+   `void_reason` (new columns), audited ORDER_VOIDED. "✖ ยกเลิกบิล" for
+   managers in the receipts list (both modes).
+3. **Closing a court** now returns its upcoming bookings; the Admin panel
+   lists them and offers to cancel them with refunds (like closures).
+4. **Separate URLs:** `/` customer, `/#/staff` counter (staff + managers),
+   `/#/admin` settings (`/#/manager` = manager demo view); the role switcher
+   updates the hash and is hidden in production API builds
+   (`SHOW_ROLE_SWITCHER`).
+5. `GET /admin/report` is audit-logged as REPORT_EXPORTED (with `kind`).
+
+### Verified
+- `go vet`, `go test ./...`, `tsc`, vitest 29/29.
+- Live API (`/var/tmp/e2e8.sh`): no shift → null; close without shift
+  refused; open 2000, second open refused; cash walk-in 180 + cash sale
+  650 → expected 2830, PromptPay sale not counted; void: staff 403, no
+  reason refused, manager void → CANCELLED, points 149→143, stock back,
+  double void refused, yesterday's sale refused, voided rental → size
+  back in stock and gone from rentals; expected after voids 2180; close
+  100 short without note refused, with note → variance -100, closed_by;
+  manager list / staff 403; exact close → 0. Court close → upcoming list.
+  Export and void/shift audit rows present.
+- Playwright: `ui9.cjs` both modes (banner, open shift, cash sale moves
+  expected, manager void, short close needs note, result, history);
+  `ui10.cjs` closing a court with 2 bookings → cancelled + 360 THB refund
+  recorded; `ui11.cjs` production API build: no switcher on `/`,
+  `/#/staff`, `/#/admin`, each opens its panel. Smoke test both modes clean.
+
+### Not done / follow-ups
+- Decisions for the owner (see Background).
+- A sale older than today can't be voided (it belongs to a closed day).
+
+---
+
 ## 2026-10-20 — Courts on the server, editable opening hours, no user delete in API mode
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `6856bcd`)
+- **Commit(s):** `b373e73` (on `main`, parent `6856bcd`)
 - **Background:** In API mode the Admin courts tab and the "🗑️ ลบไอดี"
   button only changed the browser's copy (a "new" court couldn't be booked,
   a "closed" one still could, a "deleted" user could still log in). The

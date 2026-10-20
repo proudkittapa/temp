@@ -535,8 +535,25 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         .then(r => {
           onAddAuditLog('COURT_TOGGLED_ACTIVE', 'Court', id, { active: court.isActive }, { active: r.court.isActive });
           onRefreshAll();
-          if (r.upcomingBookings > 0) {
-            alert(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจองตั้งแต่วันนี้ ${r.upcomingBookings} รายการบนสนามนี้ — ติดต่อลูกค้าเพื่อย้ายหรือยกเลิก (Staff POS → รายการจอง)`);
+          if (r.upcoming.length > 0) {
+            // The court takes no new bookings; offer to cancel the ones it
+            // still has (FR-6.3), recording a refund for paid hours.
+            const list = r.upcoming.map(b => `- ${b.date} ${b.startTime}–${b.endTime} ${b.userName} (${b.bookingCode})${b.status === BookingStatus.PENDING_PAYMENT ? ' ยังไม่ชำระ' : ''}`).join('\n');
+            if (!window.confirm(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจอง ${r.upcoming.length} รายการ:\n${list}\n\nยกเลิกทั้งหมดเลยหรือไม่? (รายการที่ชำระแล้วจะถูกบันทึกว่าคืนเงิน — กรุณาโอนคืนลูกค้า)\nกด Cancel = เก็บไว้ ติดต่อลูกค้าเพื่อย้ายสนามเอง`)) return;
+            (async () => {
+              let refunded = 0, failed = 0;
+              for (const b of r.upcoming) {
+                try {
+                  const res = await api.cancelBooking(b.id, `ปิดสนาม ${r.court.name}`, b.status === BookingStatus.CONFIRMED, [b.id], 'admin');
+                  refunded += res.refundAmount;
+                } catch {
+                  failed++;
+                }
+              }
+              onAddAuditLog('COURT_CLOSED_BOOKINGS_CANCELLED', 'Court', id, null, { cancelled: r.upcoming.length - failed, refunded });
+              onRefreshAll();
+              alert(`ยกเลิก ${r.upcoming.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
+            })();
           }
         })
         .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
@@ -1230,10 +1247,10 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     URL.revokeObjectURL(url);
   };
 
-  const monthData = async (): Promise<{ rows: api.ReportBookingRow[]; monthOrders: Order[] }> => {
+  const monthData = async (kind: string): Promise<{ rows: api.ReportBookingRow[]; monthOrders: Order[] }> => {
     const month = `${reportsYear}-${reportsMonth}`;
     if (api.USE_BACKEND) {
-      const r = await api.monthReport(month);
+      const r = await api.monthReport(month, kind); // the server logs the export
       return { rows: r.bookings, monthOrders: r.orders };
     }
     const rows = bookings.filter(b => b.date.startsWith(month)).map(b => {
@@ -1248,7 +1265,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const handleDownloadCSVReport = async (kind: 'bookings' | 'orders') => {
     let data;
     try {
-      data = await monthData();
+      data = await monthData(kind);
     } catch (err) {
       alert(`ดึงรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       return;

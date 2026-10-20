@@ -332,6 +332,9 @@ type Order struct {
 	PaymentMethod PaymentMethod `json:"payment_method" db:"payment_method" gorm:"column:payment_method"`
 	CreatedBy     string        `json:"created_by" db:"created_by" gorm:"column:created_by"`
 	CreatedAt     time.Time     `json:"created_at" db:"created_at" gorm:"column:created_at"`
+	// Set when a manager voids the sale (status CANCELLED).
+	VoidedAt   *time.Time `json:"voided_at,omitempty" db:"voided_at" gorm:"column:voided_at"`
+	VoidReason *string    `json:"void_reason,omitempty" db:"void_reason" gorm:"column:void_reason"`
 }
 
 // 9. Order Specific Line Item
@@ -406,6 +409,8 @@ const (
 	LedgerAdjustManual LedgerEntryType = "ADJUST_MANUAL"
 	// Points taken back when a confirmed hour is cancelled or marked no-show.
 	LedgerReverseBooking LedgerEntryType = "REVERSE_BOOKING"
+	// Points taken back when a counter sale is voided.
+	LedgerReversePurchase LedgerEntryType = "REVERSE_PURCHASE"
 )
 
 // 11. Append-only loyalty history (FR-4.1/FR-4.3, AC-6/AC-7). users.points is
@@ -483,6 +488,9 @@ type Shift struct {
 	ExpectedCash *float64   `json:"expected_cash,omitempty" db:"expected_cash" gorm:"column:expected_cash"`
 	VarianceCash *float64   `json:"variance_cash,omitempty" db:"variance_cash" gorm:"column:variance_cash"`
 	Notes        *string    `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
+	// Who counted the drawer at the end (may differ from who opened it).
+	ClosedByID   *string `json:"closed_by_id,omitempty" db:"closed_by_id" gorm:"column:closed_by_id"`
+	ClosedByName *string `json:"closed_by_name,omitempty" db:"closed_by_name" gorm:"column:closed_by_name"`
 }
 
 // 15. One failed login, for LoginThrottle's sliding-window limits. Key is a

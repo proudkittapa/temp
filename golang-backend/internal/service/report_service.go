@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"gorm.io/gorm"
 )
 
@@ -335,4 +336,13 @@ func (s *ReportService) AuditLogs(ctx context.Context, q AuditQuery) ([]model.Au
 		return nil, 0, err
 	}
 	return logs, total, nil
+}
+
+// LogExport records that someone downloaded a month's report (it carries
+// customer names and phone numbers).
+func (s *ReportService) LogExport(ctx context.Context, month, kind, actorID, actorName string) error {
+	return s.db.WithContext(ctx).Create(&model.AuditLog{
+		ID: ids.New("log"), UserID: actorID, UserName: actorName, Action: "REPORT_EXPORTED", TargetType: "Report", TargetID: month,
+		AfterState: model.AuditJSON(map[string]any{"month": month, "kind": kind}), CreatedAt: time.Now(),
+	}).Error
 }

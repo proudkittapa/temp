@@ -160,7 +160,7 @@ func main() {
 	rewardService := service.NewRewardService(db, usrRepo)
 	rewardHandler := handler.NewRewardHandler(rewardService)
 	courtHandler := handler.NewCourtHandler(service.NewCourtAdminService(db))
-	shopHandler := handler.NewShopHandler(posService, service.NewReportService(db, posService), bookingService)
+	shopHandler := handler.NewShopHandler(posService, service.NewReportService(db, posService), bookingService, service.NewShiftService(db))
 
 	arenaHandler := handler.NewArenaHandler(
 		authService,
@@ -282,6 +282,13 @@ func main() {
 		api.POST("/admin/products", managerOnly, shopHandler.CreateProducts)
 		api.PUT("/admin/products/:id", managerOnly, shopHandler.UpdateProduct)
 		api.POST("/admin/products/:id/stock", managerOnly, shopHandler.AdjustStock)
+		api.POST("/admin/orders/:id/void", managerOnly, shopHandler.VoidOrder)
+
+		// Cash drawer shifts (FR-6.1/6.2)
+		api.GET("/staff/shift", staffOnly, shopHandler.CurrentShift)
+		api.POST("/staff/shift/open", staffOnly, shopHandler.OpenShift)
+		api.POST("/staff/shift/close", staffOnly, shopHandler.CloseShift)
+		api.GET("/admin/shifts", managerOnly, shopHandler.ListShifts)
 
 		// Reports from the database (FR-7.2-7.4)
 		api.GET("/admin/dashboard", managerOnly, shopHandler.Dashboard)

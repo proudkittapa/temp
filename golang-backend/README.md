@@ -389,6 +389,30 @@ date and counter sales by sale time (Bangkok day). Occupancy = sold
 court-hours ÷ (physical courts × 16 h), a half court counting half. The
 audit log is admin-only (RBAC table in REQUIREMENTS.md).
 
+### 8f. Cash drawer shifts and voids (FR-6.1/6.2)
+One drawer, so one shift is open at a time. Expected cash = opening float +
+cash booking payments approved + non-voided cash counter sales while the
+shift was open (refunds are transfers, not from the drawer). Closing stores
+expected, counted and variance (counted - expected); a note is required
+when they differ.
+```bash
+curl http://localhost:8080/api/v1/staff/shift -H "Authorization: Bearer <Staff_Token>"     # open shift + running totals, or null
+curl -X POST http://localhost:8080/api/v1/staff/shift/open -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" -d '{"opening_float": 2000}'
+curl -X POST http://localhost:8080/api/v1/staff/shift/close -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"counted_cash": 4890, "notes": "gave 10 THB too much change"}'
+curl http://localhost:8080/api/v1/admin/shifts -H "Authorization: Bearer <Manager_Token>"   # last 30 days, ?from=&to=
+```
+Managers void a counter sale from today (reason required): stock comes back
+(items still out on rent too), purchase points are taken back (never below
+zero), and the sale leaves the drawer, shift and reports. Audited.
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/orders/<order_id>/void -H "Authorization: Bearer <Manager_Token>" \
+  -H "Content-Type: application/json" -d '{"reason": "wrong item keyed"}'
+```
+Closing a court (`PUT /admin/courts/:id {"is_active": false}`) returns its
+upcoming bookings in `upcoming`; the Admin panel offers to cancel them with
+refunds. `GET /admin/report` is logged as `REPORT_EXPORTED`.
+
 ### 9. Admin Points Modification & Audit Recording
 ```bash
 curl -X POST http://localhost:8080/api/v1/admin/users/<user_id>/adjust-points \

@@ -7,8 +7,19 @@ import AdminPanel from './components/AdminPanel';
 import { Shield, Sparkles, User, Users, Briefcase, Star, Clock } from 'lucide-react';
 import * as api from './api';
 
+// Each panel has its own address: the customer site is "/", the counter
+// "#/staff" (managers sign in there too), settings "#/admin". Hash routes
+// work on any static host without server rewrites.
+const ROUTES: Record<string, UserRole> = { '#/staff': UserRole.STAFF, '#/manager': UserRole.MANAGER, '#/admin': UserRole.ADMIN };
+const roleFromHash = () => ROUTES[window.location.hash] ?? UserRole.CUSTOMER;
+const hashForRole = (role: UserRole) => Object.keys(ROUTES).find(h => ROUTES[h] === role) ?? '#/';
+
+// The role switcher is a demo tool: shown in the browser-only demo and in
+// dev, never to customers of a real (backend) deployment.
+const SHOW_ROLE_SWITCHER = !(import.meta.env.PROD && api.USE_BACKEND);
+
 export default function App() {
-  const [currentRole, setCurrentRole] = useState<UserRole>(UserRole.CUSTOMER);
+  const [currentRole, setCurrentRole] = useState<UserRole>(roleFromHash);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   const [currentUtcTime, setCurrentUtcTime] = useState<string>('');
 
@@ -24,7 +35,9 @@ export default function App() {
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
+    const onHash = () => { setCurrentRole(roleFromHash()); triggerCompleteRefresh(); };
+    window.addEventListener('hashchange', onHash);
+    return () => { clearInterval(interval); window.removeEventListener('hashchange', onHash); };
   }, []);
 
   const triggerCompleteRefresh = () => {
@@ -96,7 +109,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Interactive Role Switcher Segment (AI Studio reviewer testbed) */}
+      {/* Role switcher (demo / dev only - see SHOW_ROLE_SWITCHER) */}
+      {SHOW_ROLE_SWITCHER && (
       <div className="bg-slate-900 text-white py-6 border-b border-slate-850">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-800 pb-2.5">
@@ -114,6 +128,7 @@ export default function App() {
                   key={roleObj.role}
                   onClick={() => {
                     setCurrentRole(roleObj.role);
+                    window.history.replaceState(null, '', roleObj.role === UserRole.CUSTOMER ? window.location.pathname : hashForRole(roleObj.role));
                     triggerCompleteRefresh();
                   }}
                   className={`p-3.5 rounded-xl border text-left cursor-pointer transition select-none ${
@@ -133,6 +148,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Main Dynamic View Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
