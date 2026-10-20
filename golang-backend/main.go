@@ -159,6 +159,7 @@ func main() {
 	pricingHandler := handler.NewPricingHandler(service.NewPricingAdminService(db))
 	rewardService := service.NewRewardService(db, usrRepo)
 	rewardHandler := handler.NewRewardHandler(rewardService)
+	shopHandler := handler.NewShopHandler(posService, service.NewReportService(db, posService), bookingService)
 
 	arenaHandler := handler.NewArenaHandler(
 		authService,
@@ -262,7 +263,7 @@ func main() {
 		api.POST("/staff/payments/:id/verify", staffOnly, arenaHandler.VerifyPayment)
 		api.POST("/staff/payments/:id/reject", staffOnly, arenaHandler.RejectPayment)
 		api.POST("/staff/bookings/:id/no-show", staffOnly, arenaHandler.MarkNoShow)
-		api.GET("/staff/summary", staffOnly, arenaHandler.DaySummary)
+		api.GET("/staff/summary", staffOnly, shopHandler.DaySummary)
 
 		// Cancellations, refunds and cash recorded by a manager (FR-6.3)
 		api.POST("/admin/bookings/:id/cancel", managerOnly, arenaHandler.CancelBooking)
@@ -270,8 +271,21 @@ func main() {
 		api.POST("/admin/payments/:id/mark-cash", managerOnly, arenaHandler.MarkPaidInCash)
 		api.POST("/admin/bookings/:id/mark-cash", managerOnly, arenaHandler.MarkBookingPaidInCash)
 
-		// POS systems
-		api.POST("/pos/order", staffOnly, arenaHandler.ProcessPOSCheckout)
+		// Counter shop (FR-5.2/5.3): catalog, sales, rentals and returns
+		api.GET("/staff/products", staffOnly, shopHandler.ListProducts(false))
+		api.POST("/pos/order", staffOnly, shopHandler.Checkout)
+		api.GET("/staff/orders", staffOnly, shopHandler.ListOrders)
+		api.GET("/staff/rentals", staffOnly, shopHandler.ActiveRentals)
+		api.POST("/staff/rentals/items/:id/return", staffOnly, shopHandler.ReturnRental)
+		api.GET("/admin/products", managerOnly, shopHandler.ListProducts(true))
+		api.POST("/admin/products", managerOnly, shopHandler.CreateProducts)
+		api.PUT("/admin/products/:id", managerOnly, shopHandler.UpdateProduct)
+		api.POST("/admin/products/:id/stock", managerOnly, shopHandler.AdjustStock)
+
+		// Reports from the database (FR-7.2-7.4)
+		api.GET("/admin/dashboard", managerOnly, shopHandler.Dashboard)
+		api.GET("/admin/report", managerOnly, shopHandler.MonthReport)
+		api.GET("/admin/audit-logs", adminOnly, shopHandler.AuditLogs)
 
 		// Admin & CRM managers wallets configuration
 		api.POST("/admin/users/:id/adjust-points", managerOnly, arenaHandler.ModifyPoints)
@@ -463,6 +477,33 @@ func seedDefaults(db *gorm.DB) {
 		}
 		check("reward "+r.ID, db.Where(model.RewardCatalogItem{ID: r.ID}).FirstOrCreate(&r).Error)
 	}
+	// Counter catalog, same items as mockData.ts DEFAULT_PRODUCTS.
+	// FirstOrCreate by id, so admin price/stock edits are kept.
+	sub := func(v string) *string { return &v }
+	products := []model.Product{
+		{ID: "pd-1", Name: "น้ำดื่มเนสท์เล่ 600ml", Category: model.ProductFB, SubCategory: sub("drink"), Price: 15, Stock: 120},
+		{ID: "pd-2", Name: "เกลือแร่สปอนเซอร์ 250ml", Category: model.ProductFB, SubCategory: sub("drink"), Price: 20, Stock: 85},
+		{ID: "pd-3", Name: "น้ำอัดลมโค้กกระป๋อง 325ml", Category: model.ProductFB, SubCategory: sub("drink"), Price: 20, Stock: 90},
+		{ID: "pd-4", Name: "เลย์ มันฝรั่งอบกรอบ 50g", Category: model.ProductFB, SubCategory: sub("snack"), Price: 30, Stock: 50},
+		{ID: "pd-5", Name: "ลูกแบดมินตัน RSL Silver (หลอด 12 ลูก)", Category: model.ProductEquipment, SubCategory: sub("shuttle"), Price: 650, Stock: 15},
+		{ID: "pd-6", Name: "ลูกแบด RSL (แบ่งขาย/คนละลูก)", Category: model.ProductEquipment, SubCategory: sub("shuttle"), Price: 60, Stock: 45},
+		{ID: "pd-7", Name: "เช่าไม้แบดมินตัน Yonex (ต่อชั่วโมง)", Category: model.ProductEquipment, SubCategory: sub("racket"), Price: 50, IsRental: true, Stock: 20},
+		{ID: "pd-8", Name: "เช่าไม้พิคเคิลบอล Franklin (ต่อชั่วโมง)", Category: model.ProductEquipment, SubCategory: sub("racket"), Price: 60, IsRental: true, Stock: 10},
+		{ID: "pd-9", Name: "เช่ารองเท้ากีฬาคุณภาพ (ต่อครั้ง)", Category: model.ProductEquipment, SubCategory: sub("shoes"), Price: 80, IsRental: true, Stock: 20},
+	}
+	for _, p := range products {
+		p.IsActive, p.CreatedAt = true, time.Now()
+		check("product "+p.ID, db.Where(model.Product{ID: p.ID}).FirstOrCreate(&p).Error)
+	}
+	// Shoes are stocked per EU size 36-45 and gender (FR-5.3), one pair each.
+	for size := 36; size <= 45; size++ {
+		for _, g := range []string{"M", "F"} {
+			gender := g
+			v := model.ProductVariant{ID: fmt.Sprintf("pd-9-%d-%s", size, g), ProductID: "pd-9", Label: fmt.Sprint(size), Gender: &gender, Stock: 1}
+			check("variant "+v.ID, db.Where(model.ProductVariant{ID: v.ID}).FirstOrCreate(&v).Error)
+		}
+	}
+
 	// rw-hour rows created before reward kinds existed default to ITEM.
 	check("reward kind rw-hour", db.Model(&model.RewardCatalogItem{}).Where("id = ?", "rw-hour").
 		Update("kind", model.RewardKindFreeOffPeakHour).Error)

@@ -299,33 +299,6 @@ func removeSlipFile(servedURL string) {
 	_ = os.Remove(filepath.Join(slipDir, name))
 }
 
-// 6. POS Order Dispatcher (POST /api/v1/pos/order)
-func (h *ArenaHandler) ProcessPOSCheckout(c *gin.Context) {
-	var input service.CheckoutInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
-		return
-	}
-
-	input.CreatedBy, _ = actor(c)
-
-	result, err := h.posService.ProcessCheckout(c.Request.Context(), input)
-	if err != nil {
-		if errors.Is(err, service.ErrInvalidBooking) {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
-		} else {
-			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
-		}
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Checkout transactional sales saved",
-		"data":    result,
-	})
-}
-
 // 7. Manual points change (POST /api/v1/admin/users/:id/adjust-points)
 // {"points_delta": 5, "reason": "..."} - manager/admin only.
 func (h *ArenaHandler) ModifyPoints(c *gin.Context) {

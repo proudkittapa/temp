@@ -5,7 +5,7 @@ import {
   OperatingHours, User, UserRole, MemberType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule 
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR, isPaidBooking, lastBookableDate, roundBaht } from '../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, OPENING_HOUR, CLOSING_HOUR, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf } from '../mockData';
 import * as api from '../api';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
@@ -174,30 +174,57 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     alert(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
   };
 
+  // API mode: the dashboard and its court grid come from the server.
+  const [dash, setDash] = useState<api.DashboardData | null>(null);
+  const [dashBookings, setDashBookings] = useState<Booking[]>([]);
+  // Size chosen for a per-size (shoes) stock change, by product id.
+  const [stockVariantSel, setStockVariantSel] = useState<Record<string, string>>({});
+
   // Product edit state
   const [newProductName, setNewProductName] = useState<string>('');
   const [newProductCat, setNewProductCat] = useState<ProductCat>(ProductCat.FB);
   const [newProductPrice, setNewProductPrice] = useState<number>(20);
   const [newProductStock, setNewProductStock] = useState<number>(50);
+  // Equipment can be sold (shuttlecocks) or rented out (rackets, shoes).
+  const [newProductIsRental, setNewProductIsRental] = useState<boolean>(false);
 
   // Load state from localStorage on triggerRefresh
   useEffect(() => {
     setCourts(StorageService.get<Court[]>('courts', []));
     if (!api.USE_BACKEND) setPricingRules(StorageService.get<PricingRule[]>('pricing_rules', []));
     setOperatingHours(StorageService.get<OperatingHours[]>('operating_hours', []));
-    setProducts(StorageService.get<Product[]>('products', []));
+    if (!api.USE_BACKEND) setProducts(StorageService.get<Product[]>('products', []));
     // In API mode the user list comes from the backend (see the effect below).
     if (!api.USE_BACKEND) setUsers(StorageService.get<User[]>('users', []));
     setBookings(StorageService.get<Booking[]>('bookings', []));
     setPayments(StorageService.get<Payment[]>('payments', []));
     setOrders(StorageService.get<Order[]>('orders', []));
-    setAuditLogs(StorageService.get<AuditLog[]>('audit_logs', []));
+    if (!api.USE_BACKEND) setAuditLogs(StorageService.get<AuditLog[]>('audit_logs', []));
     if (!api.USE_BACKEND) setDaysOff(StorageService.get<DayOff[]>('days_off', []));
     if (!api.USE_BACKEND) setMemberDiscounts(StorageService.get<MemberDiscountRule[]>('member_discounts', DEFAULT_MEMBER_DISCOUNTS));
   }, [triggerRefresh]);
 
+
+  // Bookings shown in the dashboard's court grid.
+  const gridBookings = api.USE_BACKEND ? dashBookings : bookings;
+
   // Calculations for Dashboards
   const getDashboardStats = () => {
+    if (api.USE_BACKEND) {
+      return {
+        allTimeRevenue: roundBaht((dash?.allTimeBookingSales ?? 0) + (dash?.allTimeOrderSales ?? 0)),
+        bookingSales: dash?.allTimeBookingSales ?? 0,
+        fbSales: dash?.allTimeOrderSales ?? 0,
+        customerCount: dash?.customerCount ?? 0,
+        occupancyRate: dash?.occupancyRate ?? 0,
+        dailyBookingsCount: dash?.dailyBookingsCount ?? 0,
+        dailyBookingsRevenue: dash?.dailyBookingsRevenue ?? 0,
+        dailyOrderRevenue: dash?.dailyOrderRevenue ?? 0,
+        dailyTotalRevenue: dash?.dailyTotalRevenue ?? 0,
+        pendingRevenue: dash?.pendingRevenue ?? 0,
+        refunds: dash?.allTimeRefunds ?? 0
+      };
+    }
     const targetDateStr = dashboardSelectedDate;
     
     // Daily target date metrics
@@ -233,13 +260,15 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       dailyBookingsCount: dailyBookings.length,
       dailyBookingsRevenue,
       dailyOrderRevenue,
-      dailyTotalRevenue: dailyBookingsRevenue + dailyOrderRevenue
+      dailyTotalRevenue: dailyBookingsRevenue + dailyOrderRevenue,
+      pendingRevenue: roundBaht(bookings.filter(b => b.status === BookingStatus.PENDING_PAYMENT).reduce((sum, b) => sum + Number(b.totalAmount), 0)),
+      refunds: roundBaht(payments.reduce((sum, p) => sum + (p.refundAmount || 0), 0))
     };
   };
 
   // Physical courts: a full court and its half-court sides share one
   // mutex group and count once.
-  const physicalCourtCount = () => new Set(courts.map(c => c.mutexGroupId || c.id)).size;
+  const physicalCourtCount = () => api.USE_BACKEND ? dash?.physicalCourts ?? 0 : new Set(courts.map(c => c.mutexGroupId || c.id)).size;
   const occupiedShare = (list: Booking[]) =>
     list.reduce((sum, b) => sum + (courts.find(c => c.id === b.courtId)?.shareOfGroup ?? 1), 0);
 
@@ -247,6 +276,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   // months up to the dashboard date.
   const getRevenueChartData = () => {
     const monthNames = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+    if (api.USE_BACKEND) {
+      return (dash?.monthlyRevenue || []).map(r => {
+        const [y, m] = r.month.split('-').map(Number);
+        return { name: `${monthNames[m - 1]} ${String(y + 543).slice(2)}`, 'รายได้ค่าคอร์ท': r.bookings, 'รายได้เครื่องดื่ม/เช่าแร็ก': r.orders };
+      });
+    }
     const [y, m] = dashboardSelectedDate.split('-').map(Number);
     return Array.from({ length: 6 }, (_, i) => {
       const d = new Date(y, m - 1 - (5 - i), 1);
@@ -261,6 +296,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   // Average occupancy per hour over the 30 days up to the dashboard date.
   const getDayCapacityChartData = () => {
+    if (api.USE_BACKEND) return (dash?.hourlyOccupancy || []).map(h => ({ hourName: h.hour, 'เฉลี่ยอัตรา (%)': h.percent }));
     const end = dashboardSelectedDate;
     const startD = new Date(`${end}T00:00:00`);
     startD.setDate(startD.getDate() - 29);
@@ -278,6 +314,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   // F&B / rental split of counter sales, by the sold products' category.
   const getPieChartData = () => {
     let food = 0, equipment = 0, rental = 0;
+    if (api.USE_BACKEND) ({ food, equipment, rental } = dash?.salesSplit ?? { food: 0, equipment: 0, rental: 0 });
+    else
     orders.filter(o => o.status !== OrderStatus.CANCELLED).forEach(o => o.items.forEach(it => {
       const prod = products.find(p => p.id === it.productId);
       const amount = it.qty * it.unitPrice;
@@ -495,10 +533,16 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setAdminApiError('เซสชันผู้จัดการหมดอายุหรือไม่มีสิทธิ์ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
-        const [closures, pricing, apiUsers] = await Promise.all([api.listDaysOff(getTodayDateStr()), api.syncPricingCache(), api.listUsers()]);
+        const [closures, pricing, apiUsers, apiProducts, logs] = await Promise.all([
+          api.listDaysOff(getTodayDateStr()), api.syncPricingCache(), api.listUsers(), api.adminListProducts(),
+          // The audit trail is for admins only (RBAC).
+          me!.role === UserRole.ADMIN ? api.auditLogs({ limit: 500 }) : Promise.resolve([] as AuditLog[])
+        ]);
         if (cancelled) return;
         setDaysOff(closures);
         setUsers(apiUsers);
+        setProducts(apiProducts);
+        setAuditLogs(logs);
         setMaxAdvanceDays(pricing.config.maxAdvanceDays ?? 30);
         setPricingRules(pricing.rules);
         setMemberDiscounts(pricing.memberDiscounts);
@@ -508,6 +552,19 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     })();
     return () => { cancelled = true; };
   }, [triggerRefresh, adminUser]);
+
+  useEffect(() => {
+    if (!api.USE_BACKEND || !adminUser) return;
+    let cancelled = false;
+    Promise.all([api.dashboard(dashboardSelectedDate), api.listBookingsByDate(dashboardSelectedDate, 'admin')])
+      .then(([d, list]) => {
+        if (cancelled) return;
+        setDash(d);
+        setDashBookings(list);
+      })
+      .catch(err => { if (!cancelled) setAdminApiError(err instanceof Error ? err.message : String(err)); });
+    return () => { cancelled = true; };
+  }, [triggerRefresh, adminUser, dashboardSelectedDate]);
 
   const handleAdminLogout = () => {
     api.logout('admin');
@@ -882,13 +939,26 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     e.preventDefault();
     if (!newProductName || !newProductPrice) return;
 
+    if (api.USE_BACKEND) {
+      api.createProducts([{ name: newProductName, category: newProductCat, price: Number(newProductPrice), isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental, stock: Number(newProductStock) }])
+        .then(() => {
+          setNewProductName('');
+          setNewProductPrice(20);
+          setNewProductStock(50);
+          onRefreshAll();
+          alert('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
+        })
+        .catch(err => alert(`เพิ่มสินค้าไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
     const newProdId = 'pd-' + Date.now();
     const newProd: Product = {
       id: newProdId,
       name: newProductName,
       category: newProductCat,
       price: Number(newProductPrice),
-      isRental: newProductCat === ProductCat.EQUIPMENT, // automatic rental configuration
+      isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental,
       stock: Number(newProductStock),
       isActive: true
     };
@@ -909,15 +979,39 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     alert('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
   };
 
+  // Restock (+) or count correction (-), with a reason for the audit log.
+  // Shoes are stocked per size: the size picked next to the buttons.
   const handleUpdateStockValue = (prodId: string, val: number) => {
+    const prod = products.find(p => p.id === prodId);
+    if (!prod) return;
+    const variant = prod.variants?.find(v => v.id === stockVariantSel[prodId]);
+    if (prod.variants?.length && !variant) {
+      alert('เลือกเบอร์ที่จะปรับสต๊อกก่อน');
+      return;
+    }
+    const what = variant ? `${prod.name} เบอร์ ${variant.label}${variant.gender ? ` (${variant.gender})` : ''}` : prod.name;
+    const reason = window.prompt(`เหตุผลการ${val > 0 ? 'เพิ่ม' : 'ลด'}สต๊อก ${what} ${val > 0 ? '+' : ''}${val} ชิ้น:`, val > 0 ? 'รับสินค้าเข้า' : 'ปรับยอดตามนับจริง')?.trim();
+    if (!reason) return;
+
+    if (api.USE_BACKEND) {
+      api.adjustStock(prodId, val, reason, variant?.id)
+        .then(updated => setProducts(list => list.map(p => p.id === prodId ? updated : p)))
+        .catch(err => alert(`ปรับสต๊อกไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
     const currentProds = StorageService.get<Product[]>('products', []);
     const updated = currentProds.map(p => {
-      if (p.id === prodId) {
-        const afterStock = Math.max(0, p.stock + val);
-        onAddAuditLog('PRODUCT_STOCK_ADJUSTED', 'Product', prodId, { stock: p.stock }, { stock: afterStock });
-        return { ...p, stock: afterStock };
+      if (p.id !== prodId) return p;
+      if (variant) {
+        const variants = p.variants?.map(v => v.id === variant.id ? { ...v, stock: Math.max(0, v.stock + val) } : v);
+        const afterStock = (variants || []).reduce((n, v) => n + v.stock, 0);
+        onAddAuditLog('PRODUCT_STOCK_ADJUSTED', 'Product', prodId, { stock: p.stock, variant: variant.id, variantStock: variant.stock }, { stock: afterStock, reason });
+        return { ...p, variants, stock: afterStock };
       }
-      return p;
+      const afterStock = Math.max(0, p.stock + val);
+      onAddAuditLog('PRODUCT_STOCK_ADJUSTED', 'Product', prodId, { stock: p.stock }, { stock: afterStock, reason });
+      return { ...p, stock: afterStock };
     });
 
     StorageService.set('products', updated);
@@ -988,6 +1082,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         const currentProds = StorageService.get<Product[]>('products', []);
         let importedCount = 0;
         const newProds: Product[] = [...currentProds];
+        const apiRows: api.ProductInput[] = [];
 
         data.forEach((row: any) => {
           const name = row['ชื่อสินค้า'] || row['name'] || row['Name'];
@@ -1005,8 +1100,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             ? ProductCat.EQUIPMENT
             : ProductCat.FB;
 
-          const isRental = isRentalVal === true || String(isRentalVal).toLowerCase() === 'true' || category === ProductCat.EQUIPMENT;
+          // The template's เช่า column decides; F&B is never rented.
+          const isRental = category === ProductCat.EQUIPMENT && (isRentalVal === true || String(isRentalVal).toLowerCase() === 'true');
 
+          apiRows.push({
+            name: String(name), category, price: Number(priceVal), isRental,
+            stock: isNaN(Number(stockVal)) ? 50 : Number(stockVal), subCategory: subCategoryVal ? String(subCategoryVal) : undefined
+          });
           const pId = 'pd-excel-' + Math.random().toString(36).substr(2, 9);
           newProds.push({
             id: pId,
@@ -1021,7 +1121,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           importedCount++;
         });
 
-        if (importedCount > 0) {
+        if (importedCount > 0 && api.USE_BACKEND) {
+          api.createProducts(apiRows)
+            .then(list => {
+              onRefreshAll();
+              alert(`นำเข้าสินค้า ${list.length} รายการเรียบร้อย`);
+            })
+            .catch(err => alert(`นำเข้าไม่สำเร็จ (ไม่มีรายการใดถูกบันทึก): ${err.message}`));
+        } else if (importedCount > 0) {
           StorageService.set('products', newProds);
           setProducts(newProds);
           onAddAuditLog('PRODUCTS_UPLOADED_VIA_EXCEL', 'Product', 'bulk', null, { count: importedCount });
@@ -1037,35 +1144,67 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     reader.readAsBinaryString(file);
   };
 
-  // Simulated Excel XLSX/CSV download (Module 4 Spec)
-  const handleDownloadCSVReport = () => {
+  // Monthly CSV exports (FR-7.4): the booking register and the counter
+  // sales. API mode reads the month from the server.
+  const csvCell = (v: unknown) => {
     // Quote every field (names can hold commas) and neutralise leading
     // = + - @ so a customer name can't run as a spreadsheet formula.
-    const cell = (v: unknown) => {
-      const t = String(v ?? '');
-      return `"${(/^[=+\-@]/.test(t) ? `'${t}` : t).replace(/"/g, '""')}"`;
-    };
-    const month = `${reportsYear}-${reportsMonth}`;
-    const headings = ['BookingCode', 'CourtName', 'CustomerName', 'Phone', 'Date', 'Time', 'PriceType', 'Amount', 'BookingStatus', 'PaymentMethod', 'PaymentStatus', 'Refunded'].join(',') + '\n';
-    const rows = bookings.filter(b => b.date.startsWith(month)).sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime)).map(b => {
-      const courtName = courts.find(c => c.id === b.courtId)?.name || '';
-      const pay = payments.find(p => p.bookingId === b.id);
-      return [b.bookingCode, courtName, b.userName, b.userPhone, b.date, b.startTime, b.priceType, b.totalAmount, b.status, pay?.method || '', pay?.status || '', pay?.refundAmount || 0].map(cell).join(',');
-    }).join('\n');
-
+    const t = String(v ?? '');
+    return `"${(/^[=+\-@]/.test(t) ? `'${t}` : t).replace(/"/g, '""')}"`;
+  };
+  const downloadCsv = (filename: string, header: string[], rows: unknown[][]) => {
     // The BOM makes Excel read the file as UTF-8 (Thai names stay readable).
-    const combined = '\uFEFF' + headings + rows;
-    const blob = new Blob([combined], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const text = '\uFEFF' + [header, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `SportsComplex_Report_${reportsMonth}_${reportsYear}.csv`);
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
-    onAddAuditLog('REPORT_CSV_EXPORTED', 'Report', 'csv-gen', null, { month: reportsMonth, year: reportsYear });
-    alert(`ดาวน์โหลดรายงานการจองเดือน ${reportsMonth}/${Number(reportsYear) + 543} แล้ว (.CSV เปิดด้วย Excel ได้)`);
+  const monthData = async (): Promise<{ rows: api.ReportBookingRow[]; monthOrders: Order[] }> => {
+    const month = `${reportsYear}-${reportsMonth}`;
+    if (api.USE_BACKEND) {
+      const r = await api.monthReport(month);
+      return { rows: r.bookings, monthOrders: r.orders };
+    }
+    const rows = bookings.filter(b => b.date.startsWith(month)).map(b => {
+      // A group's payment hangs off one of its rows.
+      const groupIds = new Set(bookings.filter(x => x.bookingCode === b.bookingCode).map(x => x.id));
+      const pay = payments.find(p => groupIds.has(p.bookingId));
+      return { ...b, courtName: courts.find(c => c.id === b.courtId)?.name || '', paymentMethod: pay?.method || '', paymentStatus: pay?.status || '', refundAmount: pay?.refundAmount || 0 };
+    });
+    return { rows, monthOrders: orders.filter(o => localDateOf(o.createdAt).startsWith(month)) };
+  };
+
+  const handleDownloadCSVReport = async (kind: 'bookings' | 'orders') => {
+    let data;
+    try {
+      data = await monthData();
+    } catch (err) {
+      alert(`ดึงรายงานไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    const tag = `${reportsYear}_${reportsMonth}`;
+    if (kind === 'bookings') {
+      const rows = [...data.rows].sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+      downloadCsv(`SportsComplex_Bookings_${tag}.csv`,
+        ['BookingCode', 'CourtName', 'CustomerName', 'Phone', 'Date', 'Time', 'PriceType', 'Amount', 'BookingStatus', 'PaymentMethod', 'PaymentStatus', 'Refunded'],
+        rows.map(b => [b.bookingCode, b.courtName, b.userName, b.userPhone, b.date, b.startTime, b.priceType, b.totalAmount, b.status, b.paymentMethod, b.paymentStatus, b.refundAmount]));
+    } else {
+      const productName = (id: string, fallback?: string) => fallback || products.find(p => p.id === id)?.name || id;
+      downloadCsv(`SportsComplex_CounterSales_${tag}.csv`,
+        ['OrderCode', 'DateTime', 'Type', 'Customer', 'PaymentMethod', 'Status', 'Item', 'Size', 'Qty', 'UnitPrice', 'LineTotal', 'Returned'],
+        data.monthOrders.flatMap(o => o.items.map(it => [
+          o.orderCode, new Date(o.createdAt).toLocaleString('sv-SE'), o.type, o.customerName, o.paymentMethod || '', o.status,
+          productName(it.productId, it.productName), it.shoeSize ? `${it.shoeSize}${it.shoeGender || ''}` : '', it.qty, it.unitPrice,
+          roundBaht(it.qty * it.unitPrice), it.returnedAt ? new Date(it.returnedAt).toLocaleString('sv-SE') : ''
+        ])));
+    }
+    onAddAuditLog('REPORT_CSV_EXPORTED', 'Report', 'csv-gen', null, { kind, month: reportsMonth, year: reportsYear });
   };
 
   // Filtering Audit Logs (Module 4 search spec)
@@ -1175,12 +1314,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           >
             📥 ออกรายงาน Excel
           </button>
-          <button 
-            onClick={() => setActiveAdminTab('audit_logs')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'audit_logs' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            🛡️ Audit Log ล็อกกลโกง
-          </button>
+          {canManageAccounts && (
+            <button 
+              onClick={() => setActiveAdminTab('audit_logs')} 
+              className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'audit_logs' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+            >
+              🛡️ Audit Log ล็อกกลโกง
+            </button>
+          )}
         </div>
       </div>
 
@@ -1190,11 +1331,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         {/* Sub Module 1: Main Dashboard (Recharts Visuals) */}
         {activeAdminTab === 'dashboard' && (
           <div className="space-y-6">
-            {api.USE_BACKEND && (
-              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
-                ⚠️ หน้านี้ยังอ่านข้อมูลที่บันทึกในเบราว์เซอร์นี้ ไม่ใช่ข้อมูลการจองและการชำระเงินบนเซิร์ฟเวอร์ ใช้ยอดจาก "ยอดลิ้นชักวันนี้" ใน Staff POS แทน (ดู TODO.md)
-              </p>
-            )}
             
             {/* Header with Date Selection */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-900 text-white p-5 rounded-2xl border border-slate-800 gap-4">
@@ -1262,6 +1398,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     <span>|</span>
                     <span>ตู้ POS: {getDashboardStats().fbSales}</span>
                   </div>
+                  <p className="text-[9px] text-slate-500 mt-1">รอชำระ (ยังไม่นับ): {formatBaht(getDashboardStats().pendingRevenue)} · คืนเงินแล้ว: {formatBaht(getDashboardStats().refunds)} บาท</p>
                 </div>
 
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-205 text-xs">
@@ -1437,7 +1574,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                           // conflicts (FR-1.2: the full court blocks every
                           // half-court side, but two half-court sides do NOT
                           // block each other), not just this exact court id.
-                          const matchedBooking = bookings.find(b => {
+                          const matchedBooking = gridBookings.find(b => {
                             if (b.date !== dashboardSelectedDate || b.status === BookingStatus.CANCELLED) return false;
                             const bookedCourt = courts.find(c => c.id === b.courtId);
                             if (!bookedCourt || !courtsConflict(court, bookedCourt)) return false;
@@ -2161,6 +2298,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                       />
                     </div>
 
+                    {newProductCat === ProductCat.EQUIPMENT && (
+                      <label className="flex items-center gap-2 text-slate-700">
+                        <input type="checkbox" checked={newProductIsRental} onChange={e => setNewProductIsRental(e.target.checked)} />
+                        ให้เช่า (คืนเข้าคลังหลังใช้) — ไม่ติ๊ก = ขายขาด เช่น ลูกแบด
+                      </label>
+                    )}
+
                     <button 
                       type="submit" 
                       className="w-full bg-slate-900 hover:bg-slate-800 py-2 rounded text-white font-bold transition"
@@ -2212,7 +2356,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                           {p.isRental ? 'ปล่อยเช่าเก็บคืน' : 'กระปุกแบ่งขายขาด'}
                         </span>
                         <p className="font-bold text-slate-800 mt-1">{p.name || 'สินค้า'}</p>
-                        <p className="text-[10px] text-slate-500">มูลค่าต่อหน่วย: <span className="font-bold text-slate-700">{p.price} บาท</span></p>
+                        <p className="text-[10px] text-slate-500">มูลค่าต่อหน่วย: <span className="font-bold text-slate-700">{formatBaht(p.price)} บาท</span>{!p.isActive && <span className="ml-1 text-rose-600 font-bold">(ปิดขาย)</span>}</p>
                       </div>
 
                       {/* Stock adjustments levers */}
@@ -2220,6 +2364,18 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         <span className={`text-xs font-black font-mono ${p.stock > 10 ? 'text-emerald-700' : 'text-rose-600 bg-rose-50 px-2 py-0.5 rounded'}`}>
                           คลังเหลือ: {p.stock} ชิ้น
                         </span>
+                        {!!p.variants?.length && (
+                          <select
+                            value={stockVariantSel[p.id] || ''}
+                            onChange={e => setStockVariantSel(sel => ({ ...sel, [p.id]: e.target.value }))}
+                            className="text-[10px] border border-slate-300 rounded px-1 py-0.5 bg-white"
+                          >
+                            <option value="">เลือกเบอร์</option>
+                            {p.variants.map(v => (
+                              <option key={v.id} value={v.id}>{v.label}{v.gender ? ` ${v.gender}` : ''} (เหลือ {v.stock})</option>
+                            ))}
+                          </select>
+                        )}
                         
                         <div className="flex gap-1">
                           <button 
@@ -2534,11 +2690,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         {/* Sub Module 5: Consolidated reports downloadable excel simulated CSV */}
         {activeAdminTab === 'reports' && (
           <div className="space-y-6">
-            {api.USE_BACKEND && (
-              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
-                ⚠️ หน้านี้ยังอ่านข้อมูลที่บันทึกในเบราว์เซอร์นี้ ไม่ใช่ข้อมูลการจองและการชำระเงินบนเซิร์ฟเวอร์ ใช้ยอดจาก "ยอดลิ้นชักวันนี้" ใน Staff POS แทน (ดู TODO.md)
-              </p>
-            )}
             <div>
               <h3 className="text-base font-bold text-slate-900">สรุปพิมพ์ดาวน์โหลดรายงานรายได้ (Exporter Console)</h3>
               <p className="text-xs text-slate-500">ข้อมูลจะรี่เรียงออกมาจัดรูปตามมติบัญชี สำหรับยื่นปิดงบดุลประจำปีกับสำนักบัญชีสัญญารุ่นไทย</p>
@@ -2583,12 +2734,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   </select>
                 </div>
 
-                <div className="flex items-end">
+                <div className="flex flex-col justify-end gap-2">
                   <button
-                    onClick={handleDownloadCSVReport}
+                    id="report-csv-bookings"
+                    onClick={() => handleDownloadCSVReport('bookings')}
                     className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded text-xs flex items-center justify-center gap-2 transition shadow-sm"
                   >
-                    <FileDown className="h-4 w-4" /> สร้างและดาวน์โหลด .CSV รายรวด
+                    <FileDown className="h-4 w-4" /> การจองสนาม .CSV
+                  </button>
+                  <button
+                    id="report-csv-orders"
+                    onClick={() => handleDownloadCSVReport('orders')}
+                    className="w-full bg-white hover:bg-slate-100 text-slate-900 border border-slate-300 font-bold py-2.5 rounded text-xs flex items-center justify-center gap-2 transition shadow-sm"
+                  >
+                    <FileDown className="h-4 w-4" /> ยอดขาย/เช่าที่เคาน์เตอร์ .CSV
                   </button>
                 </div>
               </div>
@@ -2602,13 +2761,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         )}
 
         {/* Sub Module 6: Anti-Fraud Audit LOG interactive system (Anti-Fraud and DB track specifications) */}
-        {activeAdminTab === 'audit_logs' && (
+        {activeAdminTab === 'audit_logs' && canManageAccounts && (
           <div className="space-y-4">
-            {api.USE_BACKEND && (
-              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
-                ⚠️ หน้านี้ยังอ่านข้อมูลที่บันทึกในเบราว์เซอร์นี้ ไม่ใช่ข้อมูลการจองและการชำระเงินบนเซิร์ฟเวอร์ ใช้ยอดจาก "ยอดลิ้นชักวันนี้" ใน Staff POS แทน (ดู TODO.md)
-              </p>
-            )}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-1">

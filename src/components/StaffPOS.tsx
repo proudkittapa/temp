@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType
 } from '../types';
-import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, isPaidBooking } from '../mockData';
+import { StorageService, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, OPENING_HOUR, CLOSING_HOUR, formatBaht, roundBaht, isPaidBooking, localDateOf } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import DemoLogins, { DEMO_STAFF } from './DemoLogins';
@@ -60,19 +60,19 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [cartCourtId, setCartCourtId] = useState<string>('');
   const [cartPayMethod, setCartPayMethod] = useState<PaymentMethod>(PaymentMethod.PROMPTPAY);
   const [cartSuccessAlert, setCartSuccessAlert] = useState<string | null>(null);
-  const [cartUserId, setCartUserId] = useState<string>('');
+  // A registered customer's phone: the sale earns them points (1 per 100 THB).
+  const [cartCustomerPhone, setCartCustomerPhone] = useState<string>('');
 
   // Rental items list
   const [rentalRenterName, setRentalRenterName] = useState<string>('');
   const [rentalCourtId, setRentalCourtId] = useState<string>('');
-  const [rentalItemPrice, setRentalItemPrice] = useState<number>(50); // initial
   const [selectedProductId, setSelectedProductId] = useState<string>('');
-  const [rentalUserId, setRentalUserId] = useState<string>('');
-  
-  // Specific Shoe rental states
+  const [rentalCustomerPhone, setRentalCustomerPhone] = useState<string>('');
+  // Shoes are rented by size: gender filter + the chosen size variant (FR-5.3).
   const [rentalShoeGender, setRentalShoeGender] = useState<'M' | 'F'>('M');
-  const [rentalShoeSize, setRentalShoeSize] = useState<string>('40');
-  const [shoeInventory, setShoeInventory] = useState<{ id: string; size: string; gender: 'M' | 'F'; totalStock: number; rentedCount: number; }[]>([]);
+  const [rentalVariantId, setRentalVariantId] = useState<string>('');
+  // Rentals still out (any day); in browser-only mode derived from orders.
+  const [activeRentalOrders, setActiveRentalOrders] = useState<Order[]>([]);
 
   // Reject slip state
   const [rejectId, setRejectId] = useState<string | null>(null);
@@ -94,11 +94,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   useEffect(() => {
     if (!api.USE_BACKEND || !staffUser) return;
     let cancelled = false;
-    Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr())])
-      .then(([queue, summary]) => {
+    Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals()])
+      .then(([queue, summary, prods, dayOrders, rentals]) => {
         if (cancelled) return;
         setReviewQueue(queue);
         setDaySummary(summary);
+        setProducts(prods);
+        setOrders(dayOrders);
+        setActiveRentalOrders(rentals);
         setStaffApiError(null);
       })
       .catch(err => {
@@ -185,8 +188,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       setBookings(rawBookings);
     }
     setPayments(rawPayments);
-    setProducts(rawProducts.filter(p => p.isActive));
-    setOrders(rawOrders);
+    // In API mode products and orders come from the backend (effect above).
+    if (!api.USE_BACKEND) {
+      setProducts(rawProducts.filter(p => p.isActive));
+      setOrders(rawOrders);
+      setActiveRentalOrders(rawOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT && o.status === OrderStatus.PREPARING));
+    }
     if (!api.USE_BACKEND) setDaysOff(rawDaysOff);
     setUsers(rawUsers);
 
@@ -194,18 +201,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     // (every booking action triggers one, which used to jump back to today).
     setWalkinDate(prev => prev || getTodayDateStr());
 
-    // Seeding shoe_inventory if not exist
-    const rawShoeInv = StorageService.get<any[]>('shoe_inventory', []);
-    if (rawShoeInv.length === 0) {
-      const defaultInv = [
-        ...[36, 37, 38, 39, 40].map(s => ({ id: `shoe-${s}-F`, size: s.toString(), gender: 'F' as const, totalStock: 3, rentedCount: 0 })),
-        ...[39, 40, 41, 42, 43, 44, 45].map(s => ({ id: `shoe-${s}-M`, size: s.toString(), gender: 'M' as const, totalStock: 4, rentedCount: 0 }))
-      ];
-      StorageService.set('shoe_inventory', defaultInv);
-      setShoeInventory(defaultInv);
-    } else {
-      setShoeInventory(rawShoeInv);
-    }
   }, [triggerRefresh]);
 
   // Handle first load of selections
@@ -877,213 +872,201 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
   };
 
-  // F&B Checkout submit
+  // Checkout of the cart (F&B and/or equipment for sale). An all-equipment
+  // cart is recorded as an equipment sale, anything else as F&B.
   const handleCartCheckout = () => {
     if (cartItems.length === 0) {
       alert('รถเข็นใบเสร็จว่างเปล่า! กรุณากดสินค้าเติมตระกร้า');
       return;
     }
+    const type = cartItems.every(i => i.product.category === ProductCat.EQUIPMENT) ? OrderType.EQUIPMENT_SALE : OrderType.FB;
+    const done = (orderCode: string, total: number, pts: number) => {
+      setCartItems([]);
+      setCartCustomerName('');
+      setCartCourtId('');
+      setCartCustomerPhone('');
+      setCartSuccessAlert(`ใบเสร็จ ${orderCode} ตัดสต๊อกเรียบร้อย! ชำระผ่าน ${cartPayMethod === PaymentMethod.CASH ? 'เงินสด' : 'โอน/พร้อมเพย์'} ยอดเงิน ${formatBaht(total)} บาท ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
+      onRefreshAll();
+    };
 
-    const totalAmount = cartItems.reduce((acc, current) => acc + (current.product.price * current.qty), 0);
+    if (api.USE_BACKEND) {
+      // The server prices the items, checks and takes the stock, and
+      // credits the customer with this phone.
+      api.checkout({
+        type, paymentMethod: cartPayMethod, customerName: cartCustomerName, customerPhone: cartCustomerPhone,
+        courtId: cartCourtId || undefined, items: cartItems.map(i => ({ productId: i.product.id, qty: i.qty }))
+      })
+        .then(r => {
+          onAddAuditLog('ORDER_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode, total: r.order.totalAmount });
+          done(r.order.orderCode, r.order.totalAmount, r.pointsEarned);
+        })
+        .catch(err => { alert(`ขายไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
+      return;
+    }
+
+    // Browser-only mode: same rules on localStorage, with fresh stock.
+    const rawProducts = StorageService.get<Product[]>('products', []);
+    for (const item of cartItems) {
+      const live = rawProducts.find(p => p.id === item.product.id);
+      if (!live || live.stock < item.qty) {
+        alert(`${item.product.name}: เหลือในคลัง ${live?.stock ?? 0} ชิ้น`);
+        return;
+      }
+    }
+    const totalAmount = roundBaht(cartItems.reduce((acc, current) => acc + (current.product.price * current.qty), 0));
     const orderId = 'o-' + Date.now();
     const orderCode = `OD${getTodayDateStr().replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
-
-    const newOrderItems = cartItems.map(item => ({
-      id: 'oi-' + Math.random().toString(36).substring(7),
-      orderId: orderId,
-      productId: item.product.id,
-      qty: item.qty,
-      unitPrice: item.product.price
-    }));
+    const customer = cartCustomerPhone.trim()
+      ? users.find(u => u.role === UserRole.CUSTOMER && normalizePhone(u.phone) === normalizePhone(cartCustomerPhone))
+      : undefined;
 
     const newOrder: Order = {
       id: orderId,
       orderCode,
-      userId: cartUserId || undefined,
-      customerName: cartCustomerName || 'ลูกค้าทั่วไป (Walk-in)',
+      userId: customer?.id,
+      customerName: cartCustomerName || customer?.name || 'ลูกค้าทั่วไป (Walk-in)',
       courtId: cartCourtId || undefined,
-      type: OrderType.FB,
+      type,
       status: OrderStatus.DELIVERED,
       totalAmount,
       paidAmount: totalAmount,
       paymentMethod: cartPayMethod,
       createdAt: new Date().toISOString(),
       createdBy: 'u-staff-1',
-      items: newOrderItems
+      items: cartItems.map(item => ({
+        id: 'oi-' + Math.random().toString(36).substring(7),
+        orderId,
+        productId: item.product.id,
+        qty: item.qty,
+        unitPrice: item.product.price
+      }))
     };
-
-    // Decrement stock inventories (Anti-fraud strict stock tracking)
-    const rawProducts = StorageService.get<Product[]>('products', []);
-    const updatedProducts = rawProducts.map(p => {
+    StorageService.set('products', rawProducts.map(p => {
       const match = cartItems.find(item => item.product.id === p.id);
-      if (match) {
-        return { ...p, stock: p.stock - match.qty };
-      }
-      return p;
-    });
-
-    const currentOrders = StorageService.get<Order[]>('orders', []);
-    
-    StorageService.set('products', updatedProducts);
-    StorageService.set('orders', [...currentOrders, newOrder]);
-
-    // Award Points
-    let ptsAdded = 0;
-    if (cartUserId) {
-      ptsAdded = StorageService.addPoints(cartUserId, totalAmount);
-    }
-
-    onAddAuditLog('ORDER_CREATED_FB_BY_STAFF', 'Order', orderId, null, newOrder);
-
-    // reset
-    setCartItems([]);
-    setCartCustomerName('');
-    setCartCourtId('');
-    setCartUserId('');
-    setCartSuccessAlert(`ใบเสร็จ F&B ${orderCode} ตัดสต๊อกเรียบร้อย! ชำระผ่าน ${cartPayMethod} ยอดเงิน ${totalAmount} บาท ${ptsAdded > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${ptsAdded} แต้ม!)` : ''}`);
-    onRefreshAll();
+      return match ? { ...p, stock: p.stock - match.qty } : p;
+    }));
+    StorageService.set('orders', [...StorageService.get<Order[]>('orders', []), newOrder]);
+    const ptsAdded = customer ? StorageService.addPoints(customer.id, totalAmount) : 0;
+    onAddAuditLog('ORDER_CREATED_BY_STAFF', 'Order', orderId, null, newOrder);
+    done(orderCode, totalAmount, ptsAdded);
   };
 
-  // Equipment Rental Rent-out Process
+  // Equipment rental (FR-5.3): the catalog price, one item; shoes by size.
   const handleRentalRentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rentalRenterName || !selectedProductId) {
       alert('กรุณากรอกชื่อผู้ขอเช่าเล่น และ เลือกชนิดอุปกรณ์กีฬา!');
       return;
     }
-
     const prodObj = products.find(p => p.id === selectedProductId);
     if (!prodObj || prodObj.stock <= 0) {
       alert('ของเช่าชิ้นนี้หมดชั่วคราว กรุณาติดต่อฝั่งสนาม');
       return;
     }
+    const variant = prodObj.variants?.find(v => v.id === rentalVariantId);
+    if (prodObj.variants?.length && !variant) {
+      alert('กรุณาเลือกเบอร์รองเท้า');
+      return;
+    }
+    if (variant && variant.stock <= 0) {
+      alert(`ขออภัยค่ะ! รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label} ถูกยืมหมดแล้ว`);
+      return;
+    }
+    const sizeNote = variant ? ` (รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label})` : '';
+    const done = (orderCode: string, pts: number) => {
+      setRentalRenterName('');
+      setRentalCourtId('');
+      setRentalCustomerPhone('');
+      setRentalVariantId('');
+      onRefreshAll();
+      alert(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
+    };
 
-    const isShoes = prodObj.subCategory === 'shoes' || prodObj.name.includes('รองเท้า');
-
-    // Verify and deduct shoe inventory if it's a shoe rental
-    if (isShoes) {
-      const currentShoeInv = StorageService.get<any[]>('shoe_inventory', []);
-      const foundItem = currentShoeInv.find(item => item.size === rentalShoeSize && item.gender === rentalShoeGender);
-      if (foundItem) {
-        if ((foundItem.totalStock - foundItem.rentedCount) <= 0) {
-          alert(`ขออภัยค่ะ! รองเท้า ${rentalShoeGender === 'M' ? 'ชาย' : 'หญิง'} เบอร์ ${rentalShoeSize} ถูกยืมครบหมดคลังชั่วคราวแล้ว`);
-          return;
-        }
-        
-        // Decrement available shoe custom stock
-        const updatedShoeInv = currentShoeInv.map(item => {
-          if (item.id === foundItem.id) {
-            return { ...item, rentedCount: item.rentedCount + 1 };
-          }
-          return item;
-        });
-        StorageService.set('shoe_inventory', updatedShoeInv);
-        setShoeInventory(updatedShoeInv);
-      }
+    if (api.USE_BACKEND) {
+      api.checkout({
+        type: OrderType.EQUIPMENT_RENT, paymentMethod: PaymentMethod.CASH, customerName: `${rentalRenterName} (เช่าอุปกรณ์)`,
+        customerPhone: rentalCustomerPhone, courtId: rentalCourtId || undefined,
+        items: [{ productId: prodObj.id, variantId: variant?.id, qty: 1 }]
+      })
+        .then(r => {
+          onAddAuditLog('RENTAL_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode });
+          done(r.order.orderCode, r.pointsEarned);
+        })
+        .catch(err => { alert(`ปล่อยเช่าไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
+      return;
     }
 
-    const totalAmount = rentalItemPrice;
     const orderId = 'o-rental-' + Date.now();
     const orderCode = `OD-RENT-${getTodayDateStr().replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
-
-    const newOrderItems = [{
-      id: 'oi-rent-' + Math.random().toString(36).substring(7),
-      orderId: orderId,
-      productId: prodObj.id,
-      qty: 1,
-      unitPrice: totalAmount,
-      shoeSize: isShoes ? rentalShoeSize : undefined,
-      shoeGender: isShoes ? rentalShoeGender : undefined
-    }];
-
+    const customer = rentalCustomerPhone.trim()
+      ? users.find(u => u.role === UserRole.CUSTOMER && normalizePhone(u.phone) === normalizePhone(rentalCustomerPhone))
+      : undefined;
     const newOrder: Order = {
       id: orderId,
       orderCode,
-      userId: rentalUserId || undefined,
+      userId: customer?.id,
       customerName: `${rentalRenterName} (เช่าอุปกรณ์)`,
       courtId: rentalCourtId || undefined,
       type: OrderType.EQUIPMENT_RENT,
-      status: OrderStatus.PREPARING, // preparing/using
-      totalAmount,
-      paidAmount: totalAmount,
+      status: OrderStatus.PREPARING, // out on rent until returned
+      totalAmount: prodObj.price,
+      paidAmount: prodObj.price,
       paymentMethod: PaymentMethod.CASH,
       createdAt: new Date().toISOString(),
       createdBy: 'u-staff-1',
-      items: newOrderItems
+      items: [{
+        id: 'oi-rent-' + Math.random().toString(36).substring(7),
+        orderId,
+        productId: prodObj.id,
+        variantId: variant?.id,
+        qty: 1,
+        unitPrice: prodObj.price,
+        shoeSize: variant?.label,
+        shoeGender: variant?.gender === 'U' ? undefined : variant?.gender
+      }]
     };
-
-    // Decrement product mock main stock
-    const rawProducts = StorageService.get<Product[]>('products', []);
-    const updatedProducts = rawProducts.map(p => {
-      if (p.id === prodObj.id) {
-        return { ...p, stock: p.stock - 1 };
-      }
-      return p;
-    });
-
-    const currentOrders = StorageService.get<Order[]>('orders', []);
-    StorageService.set('products', updatedProducts);
-    StorageService.set('orders', [...currentOrders, newOrder]);
-
-    // Award Points
-    let ptsAdded = 0;
-    if (rentalUserId) {
-      ptsAdded = StorageService.addPoints(rentalUserId, totalAmount);
-    }
-
+    StorageService.set('products', StorageService.get<Product[]>('products', []).map(p => p.id !== prodObj.id ? p : {
+      ...p,
+      stock: p.stock - 1,
+      variants: p.variants?.map(v => v.id === variant?.id ? { ...v, stock: v.stock - 1 } : v)
+    }));
+    StorageService.set('orders', [...StorageService.get<Order[]>('orders', []), newOrder]);
+    const ptsAdded = customer ? StorageService.addPoints(customer.id, prodObj.price) : 0;
     onAddAuditLog('RENTAL_CREATED_BY_STAFF', 'Order', orderId, null, newOrder);
-
-    // reset
-    setRentalRenterName('');
-    setRentalCourtId('');
-    setRentalUserId('');
-    onRefreshAll();
-    alert(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode} ${isShoes ? `(รองเท้าเพศ ${rentalShoeGender === 'M' ? 'ชาย' : 'หญิง'} เบอร์ ${rentalShoeSize})` : ''} ${ptsAdded > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${ptsAdded} แต้ม!)` : ''}`);
+    done(orderCode, ptsAdded);
   };
 
-  // Return Rental Item back to system storage
-  const handleReturnItem = (orderId: string, orderItemIdx: number) => {
-    const rawOrders = StorageService.get<Order[]>('orders', []);
-    const rawProducts = StorageService.get<Product[]>('products', []);
-
-    const orderObj = rawOrders.find(o => o.id === orderId);
-    if (!orderObj) return;
-
-    const updatedOrders = rawOrders.map(o => {
-      if (o.id === orderId) {
-        return { ...o, status: OrderStatus.DELIVERED }; // completed return
-      }
-      return o;
-    });
-
-    const itemRef = orderObj.items[orderItemIdx];
-    const updatedProducts = rawProducts.map(p => {
-      if (p.id === itemRef.productId) {
-        return { ...p, stock: p.stock + 1 };
-      }
-      return p;
-    });
-
-    // Reclaim shoe inventory back too if it has shoe size/gender metadata
-    if (itemRef.shoeSize && itemRef.shoeGender) {
-      const currentShoeInv = StorageService.get<any[]>('shoe_inventory', []);
-      const updatedShoeInv = currentShoeInv.map(item => {
-        if (item.size === itemRef.shoeSize && item.gender === itemRef.shoeGender) {
-          return { ...item, rentedCount: Math.max(0, item.rentedCount - 1) };
-        }
-        return item;
-      });
-      StorageService.set('shoe_inventory', updatedShoeInv);
-      setShoeInventory(updatedShoeInv);
+  // A rented item is back: restock it (its size, for shoes); the rental
+  // closes once every item is back.
+  const handleReturnItem = (orderId: string, itemId: string) => {
+    if (api.USE_BACKEND) {
+      api.returnRentalItem(itemId)
+        .then(o => {
+          onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', o.id, null, { item: itemId, status: o.status });
+          onRefreshAll();
+          alert('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
+        })
+        .catch(err => { alert(`บันทึกคืนไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
+      return;
     }
-
-    StorageService.set('orders', updatedOrders);
-    StorageService.set('products', updatedProducts);
-
-    onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', orderId, { status: OrderStatus.PREPARING }, { status: OrderStatus.DELIVERED });
-    
+    const rawOrders = StorageService.get<Order[]>('orders', []);
+    const orderObj = rawOrders.find(o => o.id === orderId);
+    const itemRef = orderObj?.items.find(it => it.id === itemId);
+    if (!orderObj || !itemRef || itemRef.returnedAt) return;
+    const now = new Date().toISOString();
+    StorageService.set('orders', rawOrders.map(o => {
+      if (o.id !== orderId) return o;
+      const items = o.items.map(it => it.id === itemId ? { ...it, returnedAt: now } : it);
+      return { ...o, items, status: items.every(it => it.returnedAt) ? OrderStatus.DELIVERED : o.status };
+    }));
+    StorageService.set('products', StorageService.get<Product[]>('products', []).map(p => p.id !== itemRef.productId ? p : {
+      ...p,
+      stock: p.stock + itemRef.qty,
+      variants: p.variants?.map(v => v.id === itemRef.variantId ? { ...v, stock: v.stock + itemRef.qty } : v)
+    }));
+    onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', orderId, { item: itemId, returned: false }, { item: itemId, returned: true });
     onRefreshAll();
-    alert('บันทึกการส่งคืนอุปกรณ์กีฬาเข้าคลังเรียบร้อย! คืนสต๊อกให้สนามเรียบร้อย');
+    alert('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
   };
 
   // Calculate Ledger parameters (Module 3 Specification). Booking money is
@@ -1091,16 +1074,23 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // (payments approved today by method, refunds recorded today); in
   // browser-only mode from localStorage. Completed and no-show hours count
   // as paid like confirmed ones.
+  // Today's (Bangkok) non-cancelled counter orders. API mode loads only
+  // today's; stored times are UTC, so compare by local calendar date.
+  const todaysOrders = () => orders.filter(o => o.status !== OrderStatus.CANCELLED &&
+    (api.USE_BACKEND || localDateOf(o.createdAt) === getTodayDateStr()));
+
   const calculateLedger = () => {
     const todayStr = getTodayDateStr();
     const paidBookings = bookings.filter(b => b.date === todayStr && isPaidBooking(b));
 
-    // Day's orders (F&B / rentals) - browser-only in both modes
-    const dayOrders = orders.filter(o => o.createdAt.startsWith(todayStr) && o.status !== OrderStatus.CANCELLED);
-    const fbIncome = roundBaht(dayOrders.filter(o => o.type === OrderType.FB).reduce((sum, o) => sum + Number(o.totalAmount), 0));
-    const rentalIncome = roundBaht(dayOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT).reduce((sum, o) => sum + Number(o.totalAmount), 0));
-    const cashSumFromOrders = dayOrders.filter(o => o.paymentMethod === PaymentMethod.CASH).reduce((sum, o) => sum + Number(o.totalAmount), 0);
-    const qrSumFromOrders = dayOrders.filter(o => o.paymentMethod === PaymentMethod.PROMPTPAY).reduce((sum, o) => sum + Number(o.totalAmount), 0);
+    // Day's counter orders: from the server's summary in API mode.
+    const dayOrders = todaysOrders();
+    const sumOf = (list: Order[]) => list.reduce((sum, o) => sum + Number(o.totalAmount), 0);
+    const fbIncome = roundBaht(api.USE_BACKEND ? (daySummary?.fbSales ?? 0) + (daySummary?.equipmentSales ?? 0)
+      : sumOf(dayOrders.filter(o => o.type !== OrderType.EQUIPMENT_RENT)));
+    const rentalIncome = roundBaht(api.USE_BACKEND ? daySummary?.rentalIncome ?? 0 : sumOf(dayOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT)));
+    const cashSumFromOrders = api.USE_BACKEND ? daySummary?.ordersCash ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.CASH));
+    const qrSumFromOrders = api.USE_BACKEND ? daySummary?.ordersPromptpay ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.PROMPTPAY));
 
     let cashFromBookings = 0, qrFromBookings = 0, refunded = 0;
     if (api.USE_BACKEND) {
@@ -1843,21 +1833,21 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               )}
 
               <div id="products-pos-grid" className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {products.filter(p => p.isActive && p.category === ProductCat.FB && !p.isRental).map((prod) => (
+                {products.filter(p => p.isActive && !p.isRental).map((prod) => (
                   <div 
                     key={prod.id} 
                     onClick={() => handleAddToCart(prod)}
                     className="bg-slate-50 border border-slate-200 hover:border-slate-300 hover:bg-slate-100/50 p-3.5 rounded-xl text-left flex flex-col justify-between cursor-pointer transition select-none h-32"
                   >
                     <div className="space-y-1">
-                      <span className="inline-block text-[8px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">
-                        อาหารและเครื่องดื่ม
+                      <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded ${prod.category === ProductCat.EQUIPMENT ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'}`}>
+                        {prod.category === ProductCat.EQUIPMENT ? 'อุปกรณ์กีฬา' : 'อาหารและเครื่องดื่ม'}
                       </span>
                       <p className="font-bold text-slate-800 text-xs line-clamp-2 leading-snug">{prod.name}</p>
                     </div>
 
                     <div className="flex justify-between items-center border-t border-slate-200/50 pt-2">
-                      <p className="font-extrabold text-slate-900 text-xs">{prod.price} บาท</p>
+                      <p className="font-extrabold text-slate-900 text-xs">{formatBaht(prod.price)} บาท</p>
                       <p className={`text-[9.5px] font-semibold ${prod.stock > 10 ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
                         คลัง: {prod.stock}
                       </p>
@@ -1881,7 +1871,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     <div key={item.product.id} className="bg-slate-800/80 p-3 rounded-lg flex items-center justify-between text-xs border border-slate-700/50">
                       <div>
                         <p className="font-bold text-slate-100">{item.product.name}</p>
-                        <p className="text-[9.5px] text-slate-400">{item.product.price} บาท / หน่วย</p>
+                        <p className="text-[9.5px] text-slate-400">{formatBaht(item.product.price)} บาท / หน่วย</p>
                       </div>
 
                       {/* Qty edit actions */}
@@ -1912,26 +1902,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 {cartItems.length > 0 && (
                   <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
                     <div>
-                      <label className="block text-[10px] text-amber-400 font-bold mb-1">🎁 สะสมแต้มให้สมาชิกก๊วน (เลือกเพื่อสะสมแต้ม):</label>
-                      <select 
-                        value={cartUserId} 
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setCartUserId(val);
-                          const matchedUser = users.find(u => u.id === val);
-                          if (matchedUser) {
-                            setCartCustomerName(matchedUser.name);
-                          }
-                        }}
+                      <label className="block text-[10px] text-amber-400 font-bold mb-1">🎁 เบอร์โทรสมาชิก (สะสมแต้ม 1 แต้ม / 100 บาท, เว้นได้):</label>
+                      <input
+                        type="tel"
+                        value={cartCustomerPhone}
+                        onChange={(e) => setCartCustomerPhone(e.target.value)}
+                        placeholder="เช่น 0812345678"
                         className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white"
-                      >
-                        <option value="">-- ไม่สะสมแต้ม (ลูกค้าทั่วไป/Walk-In) --</option>
-                        {users.filter(u => u.role === UserRole.CUSTOMER).map(u => (
-                          <option key={u.id} value={u.id}>
-                            👤 {u.name} | โทร: {u.phone || 'ไม่ระบุ'} [แต้มสะสมปัจจุบัน: {u.points || 0}]
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
 
                     <div>
@@ -1996,7 +1974,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-400 font-medium">รวมราคาสุทธิใบเสร็จ:</span>
                     <span className="font-extrabold text-emerald-400 text-lg">
-                      {cartItems.reduce((acc, c) => acc + (c.product.price * c.qty), 0)} บาท
+                      {formatBaht(cartItems.reduce((acc, c) => acc + (c.product.price * c.qty), 0))} บาท
                     </span>
                   </div>
 
@@ -2005,163 +1983,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded text-xs transition"
                   >
                     ยืนยันการรับเงินสด/โอน และตัดตู้สต๊อกคลัง
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 3.5: Sports Equipment Sales POS */}
-        {activePosTab === 'equip_sales' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
-            {/* Products Selector Grid (Left-Side) */}
-            <div className="col-span-1 lg:col-span-7 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-700 block">ขายอุปกรณ์กีฬา / ลูกแบดมินตัน:</span>
-                <span className="text-[10px] text-slate-400 font-medium">กดสินค้าเพื่อเพิ่มลงในตะกร้าบิล</span>
-              </div>
-
-              {cartSuccessAlert && (
-                <div className="bg-emerald-50 text-emerald-800 text-xs p-3.5 rounded-xl border border-emerald-200 flex justify-between">
-                  <span>{cartSuccessAlert}</span>
-                  <button onClick={() => setCartSuccessAlert(null)} className="font-bold underline text-[10px]">ตกลง</button>
-                </div>
-              )}
-
-              <div id="equip-pos-grid" className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {products.filter(p => p.isActive && p.category === ProductCat.EQUIPMENT && !p.isRental).map((prod) => (
-                  <div 
-                    key={prod.id} 
-                    onClick={() => handleAddToCart(prod)}
-                    className="bg-slate-50 border border-slate-200 hover:border-slate-300 hover:bg-slate-100/50 p-3.5 rounded-xl text-left flex flex-col justify-between cursor-pointer transition select-none h-32"
-                  >
-                    <div className="space-y-1">
-                      <span className="inline-block text-[8px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">
-                        อุปกรณ์กีฬาฝั่งคลัง
-                      </span>
-                      <p className="font-bold text-slate-800 text-xs line-clamp-2 leading-snug">{prod.name}</p>
-                    </div>
-
-                    <div className="flex justify-between items-center border-t border-slate-200/50 pt-2">
-                      <p className="font-extrabold text-slate-900 text-xs">{prod.price} บาท</p>
-                      <p className={`text-[9.5px] font-semibold ${prod.stock > 5 ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
-                        คลัง: {prod.stock}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Re-use the Receipt sidebar (same cartItems) */}
-            <div className="col-span-1 lg:col-span-5 bg-slate-900 text-white rounded-2xl p-5 flex flex-col justify-between border border-slate-800 shadow-md">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <span className="text-xs font-bold flex items-center gap-1"><ShoppingCart className="h-4 w-4 text-emerald-400" /> ตะกร้าอุปกรณ์กีฬา</span>
-                  <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">เวลายื่น: {getTodayDateStr()}</span>
-                </div>
-
-                {/* Cart Loop */}
-                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                  {cartItems.map((item) => (
-                    <div key={item.product.id} className="bg-slate-800/80 p-3 rounded-lg flex items-center justify-between text-xs border border-slate-700/50">
-                      <div>
-                        <p className="font-bold text-slate-100">{item.product.name}</p>
-                        <p className="text-[9.5px] text-slate-400">{item.product.price} บาท / หน่วย</p>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <button 
-                          onClick={() => handleUpdateCartQty(item.product.id, -1)}
-                          className="h-5 w-5 rounded bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-white"
-                        >
-                          <Minus className="h-3 w-3" />
-                        </button>
-                        <span className="font-bold font-mono w-4 text-center text-slate-200">{item.qty}</span>
-                        <button 
-                          onClick={() => handleUpdateCartQty(item.product.id, 1)}
-                          className="h-5 w-5 rounded bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-white"
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-
-                  {cartItems.length === 0 && (
-                    <p className="text-xs text-slate-500 text-center py-10 font-medium">ตะกร้าว่างเปล่า กดอัพเดตแอดสินค้าที่ต้องการครับ</p>
-                  )}
-                </div>
-
-                {cartItems.length > 0 && (
-                  <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
-                    <div>
-                      <label className="block text-[10px] text-slate-400 mb-1">ระบุชื่อลูกค้า (สำหรับอ้างอิงส่งออเดอร์):</label>
-                      <input 
-                        type="text" 
-                        value={cartCustomerName}
-                        onChange={(e) => setCartCustomerName(e.target.value)}
-                        placeholder="เช่น โต๊ะแบดสนาม 3, พี่แดงซอย 5"
-                        className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] text-slate-400 mb-1">อ้างอิงเลขสนามที่มาซื้อ (เว้นได้):</label>
-                      <select 
-                        value={cartCourtId} 
-                        onChange={(e) => setCartCourtId(e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white"
-                      >
-                        <option value="">-- ไม่เชื่อมสนาม --</option>
-                        {courts.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] text-slate-400 mb-1.5">ช่องทางจ่ายเงิน:</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button 
-                          disabled
-                          className="py-2 px-3 rounded text-left border text-[11px] font-bold bg-slate-900/40 border-slate-800 text-slate-600 cursor-not-allowed flex items-center justify-between"
-                        >
-                          💸 เงินสด (งดรับเงินสดทุกกรณี)
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => setCartPayMethod(PaymentMethod.PROMPTPAY)}
-                          className={`py-2 px-3 rounded text-left border text-[11px] font-bold transition flex items-center justify-between ${
-                            cartPayMethod === PaymentMethod.PROMPTPAY 
-                              ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400' 
-                              : 'bg-slate-850 border-slate-700 text-slate-400 hover:bg-slate-800'
-                          }`}
-                        >
-                          📱 สแกน QR / โอน {cartPayMethod === PaymentMethod.PROMPTPAY && <Check className="h-3.5 w-3.5 text-emerald-400" />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {cartItems.length > 0 && (
-                <div className="pt-4 border-t border-slate-800 space-y-4 text-xs mt-4">
-                  <div className="flex justify-between items-center bg-slate-850 p-2.5 rounded border border-slate-800">
-                    <span className="text-slate-400 text-[10px] font-semibold">ราคารวมออเดอร์:</span>
-                    <span className="font-extrabold text-amber-400 text-sm">
-                      {cartItems.reduce((acc, c) => acc + (c.product.price * c.qty), 0)} บาท
-                    </span>
-                  </div>
-
-                  <button 
-                    onClick={handleCartCheckout}
-                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded text-xs transition"
-                  >
-                    ยืนยันการขายอุปกรณ์กีฬาและตัดสต๊อก
                   </button>
                 </div>
               )}
@@ -2183,26 +2004,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
                 <form onSubmit={handleRentalRentSubmit} className="space-y-4 text-xs">
                   <div>
-                    <label className="block text-amber-600 font-bold mb-1.5">🎁 มอบแต้มสะสมให้สมาชิกก๊วน (ทางเลือก):</label>
-                    <select
-                      value={rentalUserId}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setRentalUserId(val);
-                        const matchedUser = users.find(u => u.id === val);
-                        if (matchedUser) {
-                          setRentalRenterName(matchedUser.name);
-                        }
-                      }}
+                    <label className="block text-amber-600 font-bold mb-1.5">🎁 เบอร์โทรสมาชิก (สะสมแต้ม, เว้นได้):</label>
+                    <input
+                      type="tel"
+                      value={rentalCustomerPhone}
+                      onChange={(e) => setRentalCustomerPhone(e.target.value)}
+                      placeholder="เช่น 0812345678"
                       className="w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-xs"
-                    >
-                      <option value="">-- ไม่สะสมแต้ม (ลูกค้าทั่วไป/Walk-In) --</option>
-                      {users.filter(u => u.role === UserRole.CUSTOMER).map(u => (
-                        <option key={u.id} value={u.id}>
-                          👤 {u.name} | โทร: {u.phone || 'ไม่ระบุ'} [แต้มสะสมปัจจุบัน: {u.points || 0}]
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </div>
 
                   <div>
@@ -2222,74 +2031,61 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       <label className="block text-slate-700 font-semibold mb-1.5">2. เลือกแร็กเกต/อุปกรณ์เช่า:</label>
                       <select
                         value={selectedProductId}
-                        onChange={(e) => setSelectedProductId(e.target.value)}
+                        onChange={(e) => { setSelectedProductId(e.target.value); setRentalVariantId(''); }}
                         className="w-full bg-slate-50 border border-slate-200 py-2 px-3 rounded-lg text-xs"
                       >
                         {products.filter(p => p.isRental).map(p => (
-                          <option key={p.id} value={p.id}>{p.name} (คลังหลัก: {p.stock})</option>
+                          <option key={p.id} value={p.id}>{p.name} (เหลือ {p.stock})</option>
                         ))}
                       </select>
                     </div>
 
                     <div>
                       <label className="block text-slate-700 font-semibold mb-1.5">3. ค่าบริการเช่า (บาท):</label>
-                      <input 
-                        type="number"
-                        min={0}
-                        value={rentalItemPrice}
-                        onChange={(e) => setRentalItemPrice(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 py-1.5 px-3 rounded-lg font-bold text-xs"
-                      />
+                      <p className="w-full bg-slate-100 border border-slate-200 py-1.5 px-3 rounded-lg font-bold text-xs">
+                        {formatBaht(products.find(p => p.id === selectedProductId)?.price ?? 0)} บาท
+                        <span className="font-normal text-slate-500"> (ราคาตั้งในหน้า Admin)</span>
+                      </p>
                     </div>
                   </div>
 
-                  {/* Inline shoe size and gender control wrapper if racket item is shoe */}
-                  {selectedProductId && (products.find(p => p.id === selectedProductId)?.subCategory === 'shoes' || products.find(p => p.id === selectedProductId)?.name.includes('รองเท้า')) && (
+                  {/* Shoes: pick gender and size; each size has its own stock (FR-5.3) */}
+                  {!!products.find(p => p.id === selectedProductId)?.variants?.length && (
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-3">
                       <p className="font-bold text-indigo-900 text-[11px] flex items-center gap-1">
-                        👟 ควบคุมสต็อกลงลึกประเภทรองเท้า (เบอร์ขนาด & เพศ ชาย/หญิง):
+                        👟 เลือกเบอร์รองเท้า (เพศ ชาย/หญิง):
                       </p>
-                      
                       <div className="grid grid-cols-2 gap-3 text-[11px]">
                         <div>
-                          <label className="block text-slate-500 mb-1">หมวดเพศรองเท้า:</label>
+                          <label className="block text-slate-500 mb-1">เพศ:</label>
                           <div className="flex gap-1">
-                            <button 
-                              type="button"
-                              onClick={() => setRentalShoeGender('M')}
-                              className={`flex-1 py-1 px-2 rounded text-[10px] font-bold transition border ${rentalShoeGender === 'M' ? 'bg-indigo-600 border-indigo-650 text-white' : 'bg-white border-slate-200 text-slate-700'}`}
-                            >
-                              ชาย (M)
-                            </button>
-                            <button 
-                              type="button"
-                              onClick={() => setRentalShoeGender('F')}
-                              className={`flex-1 py-1 px-2 rounded text-[10px] font-bold transition border ${rentalShoeGender === 'F' ? 'bg-indigo-600 border-indigo-655 text-white' : 'bg-white border-slate-200 text-slate-700'}`}
-                            >
-                              หญิง (F)
-                            </button>
+                            {(['M', 'F'] as const).map(g => (
+                              <button
+                                key={g}
+                                type="button"
+                                onClick={() => { setRentalShoeGender(g); setRentalVariantId(''); }}
+                                className={`flex-1 py-1 px-2 rounded text-[10px] font-bold transition border ${rentalShoeGender === g ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-700'}`}
+                              >
+                                {g === 'M' ? 'ชาย (M)' : 'หญิง (F)'}
+                              </button>
+                            ))}
                           </div>
                         </div>
-
                         <div>
-                          <label className="block text-slate-500 mb-1">เบอร์รองเท้าค่ายสโมสร:</label>
+                          <label className="block text-slate-500 mb-1">เบอร์ (EU):</label>
                           <select
-                            value={rentalShoeSize}
-                            onChange={(e) => setRentalShoeSize(e.target.value)}
+                            id="rental-shoe-size"
+                            value={rentalVariantId}
+                            onChange={(e) => setRentalVariantId(e.target.value)}
                             className="w-full bg-white border border-slate-200 rounded py-1 px-1.5 text-[11px] text-slate-800 focus:outline-none"
                           >
-                            {rentalShoeGender === 'F' 
-                              ? ['36', '37', '38', '39', '40'].map(sz => {
-                                  const stockItem = shoeInventory.find(item => item.size === sz && item.gender === 'F');
-                                  const av = stockItem ? (stockItem.totalStock - stockItem.rentedCount) : 0;
-                                  return <option key={sz} value={sz}>ไซส์ {sz} (เหลือเช่า: {av} คู่)</option>;
-                                })
-                              : ['39', '40', '41', '42', '43', '44', '45'].map(sz => {
-                                  const stockItem = shoeInventory.find(item => item.size === sz && item.gender === 'M');
-                                  const av = stockItem ? (stockItem.totalStock - stockItem.rentedCount) : 0;
-                                  return <option key={sz} value={sz}>ไซส์ {sz} (เหลือเช่า: {av} คู่)</option>;
-                                })
-                            }
+                            <option value="">-- เลือกเบอร์ --</option>
+                            {(products.find(p => p.id === selectedProductId)?.variants || [])
+                              .filter(v => v.gender === rentalShoeGender || v.gender === 'U')
+                              .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+                              .map(v => (
+                                <option key={v.id} value={v.id} disabled={v.stock <= 0}>เบอร์ {v.label} (เหลือ {v.stock} คู่)</option>
+                              ))}
                           </select>
                         </div>
                       </div>
@@ -2322,35 +2118,33 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               {/* Active Rental items tracking ledger with Return buttons */}
               <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
                 <div>
-                  <span className="text-xs font-bold text-slate-700 block mb-1">รายการอุปกรณ์เล่นรอนำส่งคืนสต๊อก ({orders.filter(o => o.type === OrderType.EQUIPMENT_RENT && o.status === OrderStatus.PREPARING).length} รายการ):</span>
-                  <span className="text-[10px] text-slate-400 block mb-3">เมื่อผู้เล่นใช้คาบแร็กเก็ตเสร็จเรียบร้อย กด "รับสินค้าคืนสต๊อก (Return)" เพื่อนำของกลับเข้าตู้อัตโนมัติ</span>
+                  <span className="text-xs font-bold text-slate-700 block mb-1">รายการอุปกรณ์เล่นรอนำส่งคืนสต๊อก ({activeRentalOrders.reduce((n, o) => n + o.items.filter(it => !it.returnedAt).length, 0)} ชิ้น):</span>
+                  <span className="text-[10px] text-slate-400 block mb-3">เมื่อผู้เล่นคืนอุปกรณ์ กด "บันทึกคืน" เพื่อนำของกลับเข้าคลัง</span>
                 </div>
 
-                <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                  {orders.filter(o => o.type === OrderType.EQUIPMENT_RENT && o.status === OrderStatus.PREPARING).map((order) => {
-                    const item = order.items[0];
-                    return (
-                      <div key={order.id} className="bg-white p-3.5 rounded-xl border border-slate-300 flex justify-between items-center text-xs">
-                        <div>
-                          <span className="text-[9px] bg-sky-100 text-sky-800 font-bold px-1.5 rounded uppercase font-mono">{order.orderCode}</span>
-                          <p className="font-bold text-slate-800 mt-1">{order.customerName}</p>
-                          <p className="text-[10px] text-slate-400">
-                            อุปกรณ์: {products.find(p => p.id === item?.productId)?.name || 'แร็กเก็ตเล่น'}
-                            {item?.shoeSize && ` (เบอร์: ${item.shoeSize} - เพศ ${item.shoeGender === 'M' ? 'ชาย' : 'หญิง'})`}
-                          </p>
-                        </div>
-
-                        <button
-                          onClick={() => handleReturnItem(order.id, 0)}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-3 rounded text-[10px] shadow-sm transition"
-                        >
-                          📬 บันทึกคุณส่งคืน
-                        </button>
+                <div id="active-rentals" className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                  {activeRentalOrders.flatMap(order => order.items.filter(it => !it.returnedAt).map(item => (
+                    <div key={item.id} className="bg-white p-3.5 rounded-xl border border-slate-300 flex justify-between items-center text-xs">
+                      <div>
+                        <span className="text-[9px] bg-sky-100 text-sky-800 font-bold px-1.5 rounded uppercase font-mono">{order.orderCode}</span>
+                        <p className="font-bold text-slate-800 mt-1">{order.customerName}</p>
+                        <p className="text-[10px] text-slate-400">
+                          อุปกรณ์: {item.productName || products.find(p => p.id === item.productId)?.name || 'อุปกรณ์เช่า'}
+                          {item.shoeSize && ` (เบอร์ ${item.shoeSize} ${item.shoeGender === 'F' ? 'หญิง' : 'ชาย'})`}
+                          {` · ตั้งแต่ ${new Date(order.createdAt).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' })}`}
+                        </p>
                       </div>
-                    );
-                  })}
 
-                  {orders.filter(o => o.type === OrderType.EQUIPMENT_RENT && o.status === OrderStatus.PREPARING).length === 0 && (
+                      <button
+                        onClick={() => handleReturnItem(order.id, item.id)}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1.5 px-3 rounded text-[10px] shadow-sm transition"
+                      >
+                        📬 บันทึกคืน
+                      </button>
+                    </div>
+                  )))}
+
+                  {activeRentalOrders.length === 0 && (
                     <p className="text-[10px] text-slate-400 text-center py-10">ยังไม่มีผู้เช่าไม้แร็กเก็ตหรือรองเท้ากีฬาออกไปเล่น ณ ขณะนี้</p>
                   )}
                 </div>
@@ -2476,13 +2270,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <div className="space-y-2.5">
                   <span className="text-[10.5px] font-bold text-slate-700 block">🥤 สินค้าขาย F&B & เช่าไม้นอกตู้อัตโนมัติ:</span>
                   <div className="space-y-2 max-h-[250px] overflow-y-auto border border-slate-100 rounded-lg p-2.5 bg-slate-50/30">
-                    {orders.filter(o => o.createdAt.startsWith(getTodayDateStr()) && o.status !== OrderStatus.CANCELLED).map(o => (
+                    {todaysOrders().map(o => (
                       <div key={o.id} className="bg-white p-2.5 rounded-lg border border-slate-200 text-[10.5px] flex items-center justify-between hover:bg-slate-50 transition">
                         <div>
                           <p className="font-bold text-slate-800">
-                            {o.type === OrderType.FB ? '🥤 ออเดอร์ F&B' : '🏸 เช่ารองเท้า/ไม้เล่น'}
+                            {o.type === OrderType.FB ? '🥤 ออเดอร์ F&B' : o.type === OrderType.EQUIPMENT_SALE ? '🏸 ขายอุปกรณ์กีฬา' : '👟 เช่ารองเท้า/ไม้เล่น'}
                           </p>
-                          <p className="text-[9.5px] text-slate-500">ลูกค้า: {o.customerName} | ยอด: {o.totalAmount} บ.</p>
+                          <p className="text-[9.5px] text-slate-500">ลูกค้า: {o.customerName} | ยอด: {formatBaht(o.totalAmount)} บ.</p>
                           <p className="text-[9.5px] text-[#475569]">รหัสธุรกรรม (Order): {o.orderCode}</p>
                         </div>
                         <button
@@ -2497,7 +2291,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         </button>
                       </div>
                     ))}
-                    {orders.filter(o => o.createdAt.startsWith(getTodayDateStr()) && o.status !== OrderStatus.CANCELLED).length === 0 && (
+                    {todaysOrders().length === 0 && (
                       <p className="text-[9.5px] text-slate-400 text-center py-6">ยังไม่มีผลงานออเดอร์ F&B วันนี้</p>
                     )}
                   </div>
@@ -2603,13 +2397,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                             </div>
                           </td>
                           <td className="py-1 text-center font-mono">1 คาบ</td>
-                          <td className="py-1 text-right font-mono font-bold text-slate-800">{selectedReceiptBooking.totalAmount}.00</td>
+                          <td className="py-1 text-right font-mono font-bold text-slate-800">{formatBaht(selectedReceiptBooking.totalAmount)}</td>
                         </tr>
                       );
                     })()}
 
                     {selectedReceiptOrder && selectedReceiptOrder.items.map((it, idx) => {
-                      const prodName = products.find(p => p.id === it.productId)?.name || 'สินค้า F&B / อุปกรณ์กีฬา';
+                      const prodName = it.productName || products.find(p => p.id === it.productId)?.name || 'สินค้า F&B / อุปกรณ์กีฬา';
                       return (
                         <tr key={idx}>
                           <td className="py-1">
@@ -2621,7 +2415,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                             )}
                           </td>
                           <td className="py-1 text-center font-mono">{it.qty}</td>
-                          <td className="py-1 text-right font-mono font-bold text-slate-800">{it.unitPrice * it.qty}.00</td>
+                          <td className="py-1 text-right font-mono font-bold text-slate-800">{formatBaht(it.unitPrice * it.qty)}</td>
                         </tr>
                       );
                     })}
@@ -2646,7 +2440,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <div className="flex justify-between font-black text-slate-900 border-t border-slate-200 pt-1.5 text-[11px]">
                   <span>ยอดชำระสุทธิ (Grand Total):</span>
                   <span className="font-mono text-emerald-700 text-[11.5px]">
-                    {selectedReceiptBooking ? selectedReceiptBooking.totalAmount : selectedReceiptOrder?.totalAmount}.00 บาท
+                    {formatBaht(selectedReceiptBooking ? selectedReceiptBooking.totalAmount : selectedReceiptOrder?.totalAmount || 0)} บาท
                   </span>
                 </div>
               </div>

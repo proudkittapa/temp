@@ -14,7 +14,8 @@
 // to the backend on :8080 (see vite.config.ts).
 import {
   Booking, BookingStatus, Court, CourtType, DayOff, DayType, MemberDiscountRule, MemberType, Payment,
-  PaymentMethod, PaymentStatus, PriceType, PricingConfig, PricingRule, User, UserRole
+  PaymentMethod, PaymentStatus, PriceType, PricingConfig, PricingRule, User, UserRole,
+  AuditLog, Order, OrderItem, OrderStatus, OrderType, Product, ProductCat, ProductVariant
 } from './types';
 import { StorageService } from './mockData';
 
@@ -600,14 +601,27 @@ export interface DaySummary {
   promptpayVerified: number;
   refunded: number;
   paidBookings: number;
+  // Counter sales (F&B, equipment, rentals) that day
+  ordersCash: number;
+  ordersPromptpay: number;
+  fbSales: number;
+  equipmentSales: number;
+  rentalIncome: number;
+  ordersCount: number;
 }
 
-// Staff: booking money received on a day by method (cash drawer), refunds.
+// Staff: money received on a day by method (cash drawer) - bookings and
+// counter orders - and refunds.
 export async function daySummary(date: string): Promise<DaySummary> {
-  const r = await request<{ date: string; cash_received: number; promptpay_verified: number; refunded: number; paid_bookings: number }>(
-    `/staff/summary?date=${encodeURIComponent(date)}`, { session: 'staff' }
-  );
-  return { date: r.date, cashReceived: r.cash_received, promptpayVerified: r.promptpay_verified, refunded: r.refunded, paidBookings: r.paid_bookings };
+  const r = await request<{
+    date: string; cash_received: number; promptpay_verified: number; refunded: number; paid_bookings: number;
+    orders_cash: number; orders_promptpay: number; fb_sales: number; equipment_sales: number; rental_income: number; orders_count: number;
+  }>(`/staff/summary?date=${encodeURIComponent(date)}`, { session: 'staff' });
+  return {
+    date: r.date, cashReceived: r.cash_received, promptpayVerified: r.promptpay_verified, refunded: r.refunded, paidBookings: r.paid_bookings,
+    ordersCash: r.orders_cash, ordersPromptpay: r.orders_promptpay, fbSales: r.fb_sales, equipmentSales: r.equipment_sales,
+    rentalIncome: r.rental_income, ordersCount: r.orders_count
+  };
 }
 
 // Admin: how many days ahead customers may book online.
@@ -667,4 +681,185 @@ export async function lookupVoucher(code: string): Promise<VoucherInfo> {
 
 export async function dispenseVoucher(code: string): Promise<VoucherInfo> {
   return toVoucher(await request<ApiVoucher>(`/staff/vouchers/${encodeURIComponent(code.trim())}/dispense`, { method: 'POST', session: 'staff' }));
+}
+
+// ---- counter shop: catalog, sales, rentals (FR-5.2/5.3) ----
+
+interface ApiVariant { id: string; product_id: string; label: string; gender?: string; stock: number }
+interface ApiProduct {
+  id: string; name: string; category: string; sub_category?: string; price: number; is_rental: boolean;
+  stock: number; is_active: boolean; variants?: ApiVariant[];
+}
+interface ApiOrderItem {
+  id: string; order_id: string; product_id: string; product_name: string; variant_id?: string; qty: number;
+  unit_price: number; returned_at?: string; shoe_size?: string; shoe_gender?: string;
+}
+interface ApiOrder {
+  id: string; order_code: string; user_id?: string; customer_name: string; court_id?: string; type: string;
+  status: string; total_amount: number; paid_amount: number; payment_method: string; created_by: string;
+  created_at: string; items: ApiOrderItem[];
+}
+
+const toProduct = (p: ApiProduct): Product => ({
+  id: p.id, name: p.name, category: p.category as ProductCat, subCategory: p.sub_category, price: p.price,
+  isRental: p.is_rental, stock: p.stock, isActive: p.is_active,
+  variants: p.variants?.length
+    ? p.variants.map(v => ({ id: v.id, productId: v.product_id, label: v.label, gender: v.gender as ProductVariant['gender'], stock: v.stock }))
+    : undefined
+});
+
+// Orders carry each line's product name, so lists don't need the catalog.
+export type OrderWithNames = Order & { items: (OrderItem & { productName: string })[] };
+
+const toOrder = (o: ApiOrder): OrderWithNames => ({
+  id: o.id, orderCode: o.order_code, userId: o.user_id, customerName: o.customer_name, courtId: o.court_id,
+  type: o.type as OrderType, status: o.status as OrderStatus, totalAmount: o.total_amount, paidAmount: o.paid_amount,
+  paymentMethod: o.payment_method as PaymentMethod, createdAt: o.created_at, createdBy: o.created_by,
+  items: (o.items || []).map(i => ({
+    id: i.id, orderId: i.order_id, productId: i.product_id, productName: i.product_name, variantId: i.variant_id,
+    qty: i.qty, unitPrice: i.unit_price, returnedAt: i.returned_at, shoeSize: i.shoe_size,
+    shoeGender: i.shoe_gender as OrderItem['shoeGender']
+  }))
+});
+
+export async function listProducts(): Promise<Product[]> {
+  return (await request<ApiProduct[]>('/staff/products', { session: 'staff' })).map(toProduct);
+}
+
+export interface CheckoutInput {
+  type: OrderType;
+  paymentMethod: PaymentMethod;
+  items: { productId: string; variantId?: string; qty: number }[];
+  customerName?: string;
+  customerPhone?: string; // a registered customer's phone earns the points
+  courtId?: string;
+}
+
+// Staff: sell or rent out. Prices and stock are the server's.
+export async function checkout(input: CheckoutInput): Promise<{ order: OrderWithNames; pointsEarned: number }> {
+  const r = await request<{ order: ApiOrder; points_earned: number }>('/pos/order', {
+    method: 'POST', session: 'staff',
+    body: {
+      type: input.type, payment_method: input.paymentMethod, customer_name: input.customerName || '',
+      customer_phone: input.customerPhone || '', court_id: input.courtId || undefined,
+      items: input.items.map(i => ({ product_id: i.productId, variant_id: i.variantId, qty: i.qty }))
+    }
+  });
+  return { order: toOrder(r.order), pointsEarned: r.points_earned };
+}
+
+export async function listOrders(date: string): Promise<OrderWithNames[]> {
+  return (await request<ApiOrder[]>(`/staff/orders?date=${encodeURIComponent(date)}`, { session: 'staff' })).map(toOrder);
+}
+
+export async function activeRentals(): Promise<OrderWithNames[]> {
+  return (await request<ApiOrder[]>('/staff/rentals', { session: 'staff' })).map(toOrder);
+}
+
+export async function returnRentalItem(itemId: string): Promise<OrderWithNames> {
+  return toOrder(await request<ApiOrder>(`/staff/rentals/items/${encodeURIComponent(itemId)}/return`, { method: 'POST', session: 'staff' }));
+}
+
+// Managers/admins (Admin panel session): the catalog incl. inactive items.
+export async function adminListProducts(): Promise<Product[]> {
+  return (await request<ApiProduct[]>('/admin/products', { session: 'admin' })).map(toProduct);
+}
+
+export interface ProductInput { name: string; category: ProductCat; subCategory?: string; price: number; isRental: boolean; stock?: number; isActive?: boolean }
+
+const productBody = (p: ProductInput) => ({
+  name: p.name, category: p.category, sub_category: p.subCategory || undefined, price: p.price,
+  is_rental: p.isRental, stock: p.stock ?? 0, is_active: p.isActive
+});
+
+export async function createProducts(list: ProductInput[]): Promise<Product[]> {
+  return (await request<ApiProduct[]>('/admin/products', { method: 'POST', session: 'admin', body: { products: list.map(productBody) } })).map(toProduct);
+}
+
+export async function updateProduct(id: string, p: ProductInput): Promise<Product> {
+  return toProduct(await request<ApiProduct>(`/admin/products/${encodeURIComponent(id)}`, { method: 'PUT', session: 'admin', body: productBody(p) }));
+}
+
+export async function adjustStock(id: string, delta: number, reason: string, variantId?: string): Promise<Product> {
+  return toProduct(await request<ApiProduct>(`/admin/products/${encodeURIComponent(id)}/stock`, {
+    method: 'POST', session: 'admin', body: { delta, reason, variant_id: variantId }
+  }));
+}
+
+// ---- admin reports from the database (FR-7.2-7.4) ----
+
+export interface DashboardData {
+  date: string;
+  dailyBookingsRevenue: number;
+  dailyBookingsCount: number;
+  dailyOrderRevenue: number;
+  dailyTotalRevenue: number;
+  occupancyRate: number;
+  physicalCourts: number;
+  hoursPerDay: number;
+  pendingRevenue: number;
+  allTimeBookingSales: number;
+  allTimeOrderSales: number;
+  allTimeRefunds: number;
+  customerCount: number;
+  monthlyRevenue: { month: string; bookings: number; orders: number }[];
+  hourlyOccupancy: { hour: string; percent: number }[];
+  salesSplit: { food: number; equipment: number; rental: number };
+  monthBySport: Record<string, number>;
+}
+
+export async function dashboard(date: string): Promise<DashboardData> {
+  const d = await request<{
+    date: string; daily_bookings_revenue: number; daily_bookings_count: number; daily_order_revenue: number;
+    daily_total_revenue: number; occupancy_rate: number; physical_courts: number; hours_per_day: number;
+    pending_revenue: number; all_time_booking_sales: number; all_time_order_sales: number; all_time_refunds: number;
+    customer_count: number; monthly_revenue: { month: string; bookings: number; orders: number }[];
+    hourly_occupancy: { hour: string; percent: number }[]; sales_split: { food: number; equipment: number; rental: number };
+    month_by_sport: Record<string, number>;
+  }>(`/admin/dashboard?date=${encodeURIComponent(date)}`, { session: 'admin' });
+  return {
+    date: d.date, dailyBookingsRevenue: d.daily_bookings_revenue, dailyBookingsCount: d.daily_bookings_count,
+    dailyOrderRevenue: d.daily_order_revenue, dailyTotalRevenue: d.daily_total_revenue, occupancyRate: d.occupancy_rate,
+    physicalCourts: d.physical_courts, hoursPerDay: d.hours_per_day, pendingRevenue: d.pending_revenue,
+    allTimeBookingSales: d.all_time_booking_sales, allTimeOrderSales: d.all_time_order_sales, allTimeRefunds: d.all_time_refunds,
+    customerCount: d.customer_count, monthlyRevenue: d.monthly_revenue || [], hourlyOccupancy: d.hourly_occupancy || [],
+    salesSplit: d.sales_split, monthBySport: d.month_by_sport || {}
+  };
+}
+
+export interface ReportBookingRow extends Booking { courtName: string; paymentMethod: string; paymentStatus: string; refundAmount: number }
+
+export async function monthReport(month: string): Promise<{ bookings: ReportBookingRow[]; orders: OrderWithNames[] }> {
+  const r = await request<{ bookings: (ApiBooking & { court_name: string; payment_method: string; payment_status: string; refund_amount: number })[]; orders: ApiOrder[] }>(
+    `/admin/report?month=${encodeURIComponent(month)}`, { session: 'admin' });
+  return {
+    bookings: (r.bookings || []).map(b => ({ ...toBooking(b), courtName: b.court_name, paymentMethod: b.payment_method, paymentStatus: b.payment_status, refundAmount: b.refund_amount })),
+    orders: (r.orders || []).map(toOrder)
+  };
+}
+
+interface ApiAuditLog {
+  id: string; user_id: string; user_name: string; action: string; target_type: string; target_id: string;
+  before_state?: unknown; after_state?: unknown; reason?: string; created_at: string;
+}
+
+// jsonb columns arrive as JSON values; the panel shows objects.
+const asRecord = (v: unknown): Record<string, unknown> | undefined => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'string') {
+    try { return asRecord(JSON.parse(v)); } catch { return { value: v }; }
+  }
+  return typeof v === 'object' ? v as Record<string, unknown> : { value: v };
+};
+
+// Admins: the server's audit trail, newest first.
+export async function auditLogs(opts: { search?: string; targetType?: string; limit?: number } = {}): Promise<AuditLog[]> {
+  const q = new URLSearchParams();
+  if (opts.search) q.set('search', opts.search);
+  if (opts.targetType) q.set('target_type', opts.targetType);
+  q.set('limit', String(opts.limit ?? 500));
+  return (await request<ApiAuditLog[]>(`/admin/audit-logs?${q}`, { session: 'admin' })).map(l => ({
+    id: l.id, userId: l.user_id, userName: l.user_name, action: l.action, targetType: l.target_type as AuditLog['targetType'],
+    targetId: l.target_id, before: asRecord(l.before_state), after: asRecord(l.after_state), reason: l.reason, createdAt: l.created_at
+  }));
 }

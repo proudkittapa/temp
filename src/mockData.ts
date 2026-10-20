@@ -137,12 +137,15 @@ const DEFAULT_USERS: User[] = [
 ];
 
 // Helper to format date with current timezone
-export const getTodayDateStr = () => {
-  const d = new Date();
-  const offset = d.getTimezoneOffset();
-  const adjusted = new Date(d.getTime() - (offset * 60 * 1000));
+// The local calendar date (YYYY-MM-DD) of an ISO timestamp - stored times
+// are UTC, so slicing the string gives the wrong day before 07:00 Bangkok.
+export const localDateOf = (iso: string) => {
+  const d = new Date(iso);
+  const adjusted = new Date(d.getTime() - (d.getTimezoneOffset() * 60 * 1000));
   return adjusted.toISOString().split('T')[0];
 };
+
+export const getTodayDateStr = () => localDateOf(new Date().toISOString());
 
 const DEFAULT_BOOKINGS = (): Booking[] => {
   const today = getTodayDateStr();

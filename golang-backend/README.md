@@ -27,9 +27,11 @@ This directory contains the production-grade, highly performant **Go (Golang)** 
     ├── repository
     │   └── booking.go         # SQL queries and row checking blocks for court schedule limits
     ├── service
-    │   └── pos.go             # Stock lock decrements and loyalty updates
+    │   ├── pos.go             # Counter shop: catalog, stock, sales, rentals/returns, day totals
+    │   └── report_service.go  # Admin dashboard, monthly export, audit-log listing
     └── handler
-        └── handlers.go        # HTTP controllers exposing Register/Login, Slots, Payments, and POS checkouts
+        ├── handlers.go        # HTTP controllers: Register/Login, Slots, Payments, users
+        └── shop_api.go        # Counter shop, drawer summary and admin report endpoints
 ```
 
 ---
@@ -318,6 +320,49 @@ curl -X POST http://localhost:8080/api/v1/staff/bookings \
        "customer_name": "Somchai", "customer_phone": "0811111111",
        "payment_method": "VOUCHER", "voucher_code": "RW-123456"}'
 ```
+
+### 8d. Counter shop: sales, rentals, stock (FR-5.2/5.3)
+Prices always come from the catalog; stock is locked and taken in the same
+transaction (the last item can't be sold twice). A registered customer's
+phone earns 1 point per 100 THB. Equipment is either for sale (shuttles) or
+for rent (rackets, shoes); a rental stays open (`PREPARING`) until every item
+is returned. Shoes are stocked per EU size + gender (`product_variants`), so
+a shoe rental needs `variant_id`. Out of stock → 409.
+```bash
+curl http://localhost:8080/api/v1/staff/products -H "Authorization: Bearer <Staff_Token>"
+curl -X POST http://localhost:8080/api/v1/pos/order -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"type": "FB", "payment_method": "CASH", "customer_phone": "0856789012",
+       "items": [{"product_id": "pd-1", "qty": 3}, {"product_id": "pd-6", "qty": 2}]}'
+curl -X POST http://localhost:8080/api/v1/pos/order -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"type": "EQUIPMENT_RENT", "payment_method": "CASH", "customer_name": "Team A",
+       "items": [{"product_id": "pd-9", "variant_id": "pd-9-42-M", "qty": 1}]}'
+curl http://localhost:8080/api/v1/staff/rentals -H "Authorization: Bearer <Staff_Token>"          # items still out
+curl -X POST http://localhost:8080/api/v1/staff/rentals/items/<item_id>/return -H "Authorization: Bearer <Staff_Token>"
+curl "http://localhost:8080/api/v1/staff/orders?date=2026-10-20" -H "Authorization: Bearer <Staff_Token>"
+```
+`GET /staff/summary` (the cash drawer) includes the day's counter sales:
+`orders_cash`, `orders_promptpay`, `fb_sales`, `equipment_sales`,
+`rental_income`. Managers maintain the catalog; every stock change needs a
+reason and is audited:
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/products -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \
+  -d '{"products": [{"name": "Orange juice", "category": "FB", "price": 35, "is_rental": false, "stock": 20}]}'
+curl -X PUT http://localhost:8080/api/v1/admin/products/<id> -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \
+  -d '{"name": "Orange juice", "category": "FB", "price": 39, "is_rental": false, "is_active": true}'
+curl -X POST http://localhost:8080/api/v1/admin/products/pd-9/stock -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \
+  -d '{"delta": 2, "variant_id": "pd-9-38-F", "reason": "bought 2 pairs"}'
+```
+
+### 8e. Reports (FR-7.2-7.4)
+```bash
+curl "http://localhost:8080/api/v1/admin/dashboard?date=2026-10-20" -H "Authorization: Bearer <Manager_Token>"
+curl "http://localhost:8080/api/v1/admin/report?month=2026-10" -H "Authorization: Bearer <Manager_Token>"   # bookings + orders for the CSVs
+curl "http://localhost:8080/api/v1/admin/audit-logs?search=refund&target_type=Payment&limit=100" -H "Authorization: Bearer <Admin_Token>"
+```
+The dashboard counts paid hours (confirmed, completed, no-show) by playing
+date and counter sales by sale time (Bangkok day). Occupancy = sold
+court-hours ÷ (physical courts × 16 h), a half court counting half. The
+audit log is admin-only (RBAC table in REQUIREMENTS.md).
 
 ### 9. Admin Points Modification & Audit Recording
 ```bash

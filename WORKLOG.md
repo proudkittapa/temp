@@ -18,10 +18,93 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Counter sales, rentals and admin reports on the server
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `cd31b74`)
+- **Background:** The owner asked to fix the first two "still weird" items:
+  (1) in API mode the admin dashboard, CSV report and audit log read the
+  browser's localStorage; (2) F&B sales and rentals lived only in the
+  counter's browser and were missing from the cash drawer.
+
+### Changed
+1. **Counter shop on the backend** (`internal/service/pos.go` rewritten,
+   `internal/handler/shop_api.go` new). `GET /staff/products` (with shoe
+   sizes), `POST /pos/order` (prices from the catalog, stock locked +
+   decremented per product and per shoe size, `customer_phone` → points 1 per
+   100 THB, rental orders stay `PREPARING`, audit `ORDER_CREATED`),
+   `GET /staff/orders?date=`, `GET /staff/rentals`,
+   `POST /staff/rentals/items/:id/return` (restocks the size, closes the
+   rental when all items are back, refuses a second return). Managers:
+   `GET/POST /admin/products`, `PUT /admin/products/:id`,
+   `POST /admin/products/:id/stock` (reason required, per size for shoes,
+   never below 0, audited). New `ErrOutOfStock` → 409. Catalog seeded like
+   `DEFAULT_PRODUCTS` (shoes = 20 size/gender variants). Removed the unused
+   `repository/product.go` and the old checkout handler.
+2. **Cash drawer:** `GET /staff/summary` now adds `orders_cash`,
+   `orders_promptpay`, `fb_sales`, `equipment_sales`, `rental_income`,
+   `orders_count`; the Staff POS "ยอดลิ้นชัก" uses them in API mode.
+3. **Reports on the backend** (`internal/service/report_service.go`):
+   `GET /admin/dashboard?date=` (day revenue/occupancy, all-time totals,
+   pending revenue, refunds, 6-month revenue, 30-day hourly occupancy,
+   counter sales split, month by sport), `GET /admin/report?month=`
+   (bookings with their group's payment + orders with lines),
+   `GET /admin/audit-logs` (admin only, search/type filter). The Admin
+   panel uses them in API mode; the "reads this browser" notices are gone.
+   Managers no longer see the audit tab in API mode (RBAC: admin only).
+4. **Staff POS (both modes):** member points by typing the phone (staff
+   can't list users in API mode); rentals use the product's price (the
+   free-typed rental price is gone) and the product's size variants (the
+   separate `shoe_inventory` list, which disagreed with the product data, is
+   gone); rental list shows every item still out with its own return
+   button; receipts show 2-decimal amounts and product names from the
+   server. **Shuttlecocks couldn't be sold:** the equipment-sales tab had no
+   button; for-sale equipment now shows in the "F&B / ลูกแบด" tab and an
+   all-equipment cart is recorded as `EQUIPMENT_SALE` (was always `FB`).
+   Today's orders are matched by local date (UTC strings were off before
+   07:00 Bangkok; new `localDateOf` in mockData).
+5. **Admin panel:** product create/stock/Excel import go to the server in
+   API mode; stock changes ask for a reason and, for shoes, a size; new
+   equipment is a rental only if "ให้เช่า" is ticked (form) or the template's
+   เช่า column is TRUE (Excel) — before, every EQUIPMENT item became a
+   rental. Two CSV exports: bookings and counter sales; dashboard shows
+   pending revenue and refunds.
+
+### Verified
+- `go build`, `go vet`, `go test ./...` (new `pos_test.go`), `tsc`, vitest 29/29.
+- Live API (`/var/tmp/e2e6.sh`): customer 403 on staff products/orders;
+  F&B sale with member phone → prices from catalog, stock down; 1,300 THB
+  sale → +13 points; qty 0 / over stock / rental item in a sale / shoes
+  without size refused; shoe+racket rental → PREPARING, same size again
+  refused (0 left), return → still open, second item → DELIVERED, stock
+  back, double return refused; manager create / restock (reason required,
+  no negative) / per-size restock / deactivate (gone from staff list);
+  staff 403 on admin endpoints; drawer summary includes orders; dashboard
+  and month report numbers checked against the DB; audit-logs 403 for
+  manager, filters work for admin. Race: 5 parallel rentals of the last
+  pair → one 200, four 409, stock 0.
+- Playwright (`/var/tmp/e2e/ui7.cjs`) in API and local mode: sale with
+  phone, rental by size, return, drawer, dashboard cards, per-size stock
+  +10 with reason, both CSV downloads, audit tab (server logs, hidden for
+  manager). Click-through smoke test both modes: no errors, no failed API
+  calls. Voucher test (`e2e5.sh`) still passes.
+
+### Not done / follow-ups
+- Shift open/close (FR-6.1/6.2: opening float, counted cash, over/short)
+  does not exist anywhere in the UI — not "browser-only", simply missing.
+- Orders can't be voided/refunded yet (no endpoint or button).
+- The courts tab, operating hours and user deletion in the Admin panel are
+  still localStorage-only in API mode.
+- Frontend actions that only the browser knew (`REPORT_CSV_EXPORTED`,
+  receipt printed) are not in the server audit log.
+- FR-7.4 asks for `.xlsx`; exports are CSV (opens in Excel).
+
+---
+
 ## 2026-10-20 — Staff can use the free-hour reward; UX clean-up (fake dashboard data, wording)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `80ec384`)
+- **Commit(s):** `cd31b74` (on `main`, parent `80ec384`)
 - **Background:** The owner asked to "allow the staff to use the reward"
   (the free 1-hour off-peak court voucher could be redeemed but never used)
   and "is the UI easy to use? anything weird?".

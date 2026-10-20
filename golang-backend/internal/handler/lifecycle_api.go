@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"time"
 
 	"arena-backend/internal/service"
 	"github.com/gin-gonic/gin"
@@ -85,18 +84,6 @@ func (h *ArenaHandler) MarkNoShow(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": b})
-}
-
-// GET /api/v1/staff/summary?date=YYYY-MM-DD - staff: money received from
-// bookings that day by method (for the cash drawer), and refunds.
-func (h *ArenaHandler) DaySummary(c *gin.Context) {
-	date := c.DefaultQuery("date", time.Now().In(service.Bangkok).Format("2006-01-02"))
-	sum, err := h.bookingService.Summary(c.Request.Context(), date)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": sum})
 }
 
 // RewardHandler serves the loyalty rewards club (FR-4.2/4.3).

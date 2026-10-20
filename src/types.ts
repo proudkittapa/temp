@@ -237,6 +237,7 @@ export interface OrderItem {
   returnedAt?: string; // for rental
   shoeSize?: string;    // display copy of the variant label at time of sale
   shoeGender?: 'M' | 'F'; // display copy of the variant gender at time of sale
+  productName?: string;   // display copy from the server (the product may be inactive now)
 }
 
 export interface Order {

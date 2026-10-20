@@ -30,11 +30,6 @@
 - [ ] Needs an SMS provider account (e.g. ThaiBulkSMS / Twilio) and its API key in `golang-backend/.env`. Until then the current "contact staff" message stays.
 - [ ] Optional: staff/admin can trigger a reset for a customer at the counter after checking ID.
 
-## 5. Server-backed admin reports and counter sales (API mode)
-- [ ] With `VITE_DATA_SOURCE=api` the admin dashboard, CSV report and audit-log tab still read this browser's localStorage, not the server (a notice says so). Add `GET /admin/bookings?from&to` (bookings + payments), `GET /admin/audit-logs` and a monthly report endpoint, and switch those tabs to them.
-- [ ] F&B sales and racket/shoe rentals are stored only in the counter's browser in both modes, so they are lost when the browser is cleared, two counters don't see each other's sales, and the cash drawer (`/staff/summary`) doesn't include them. Move orders, stock and rentals to the backend.
-- Estimate: ~2–3 days.
-
-## 6. Test the features
-- [ ] Add items 1–5 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).
+## 5. Test the features
+- [ ] Add items 1–4 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).
 - [ ] Scan the PromptPay QR with at least two Thai banking apps.
