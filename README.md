@@ -31,8 +31,9 @@ npm install
 ```bash
 npm run dev
 ```
-Starts the dev server (Vite on port 3000, proxied through `dev-runner.js`,
-which also tries to start the Go backend on port 8080 - see below). Open
+Starts the dev server (Vite on port 3000, via `dev-runner.js`). Everything
+is kept in the browser, so this needs neither Go nor a database; Ctrl+C
+stops everything it started. Open
 `http://localhost:3000`. Log in as one of the seeded users (see
 `DEFAULT_USERS` in `src/mockData.ts`), e.g. phone `0845678901` / password
 `123456` for a seeded member customer, or use the role switcher at the top
@@ -57,7 +58,7 @@ database from the Go Backend section below):
 | Staff walk-in bookings (PromptPay ones wait for staff to confirm the transfer) + the staff booking grid | `POST /staff/bookings`, `GET /bookings?date=` |
 | Court closures / days off (Admin panel; enforced on every booking) | `GET /days-off`, `POST /admin/days-off`, `DELETE /admin/days-off/:id` |
 | Pricing rules + member-tier discounts (Admin panel; what every booking is charged) | `GET /pricing`, `POST`/`PUT`/`DELETE /admin/pricing-rules`, `PUT /admin/member-discounts/:type` |
-| Users list, a customer's membership tier, manual points (Admin panel → users) | `GET /admin/users`, `PUT /admin/users/:id/member-type`, `POST /admin/users/:id/adjust-points` |
+| Users list, a customer's membership tier, manual points; staff roles and suspending accounts (admin) (Admin panel → users) | `GET /admin/users`, `PUT /admin/users/:id/member-type`, `POST /admin/users/:id/adjust-points`, `PUT /admin/users/:id/role`, `PUT /admin/users/:id/active` |
 
 `dev-runner.js` starts the backend with `SEED_DEMO_USERS=true`, which creates
 the same demo accounts as `DEFAULT_USERS` (all password `123456`) on every
@@ -74,8 +75,7 @@ the server charges.
 Still `localStorage`-only in API mode (no backend endpoints yet): POS / F&B /
 rentals, reward redemption, password reset, account deletion, the day's
 totals report, and the other Admin/Manager settings (courts, products,
-staff roles and suspending/deleting users - in API mode the users tab only
-changes membership tiers and points -, operating hours - the backend has its own `courts` table,
+deleting users - suspend them instead -, operating hours - the backend has its own `courts` table,
 seeded to match, so a court added only in the Admin panel doesn't exist
 there yet).
 

@@ -29,11 +29,11 @@ import (
 // from .env.example (SEED_DEMO_USERS=false, maybe another PORT) used to
 // silently override them - no demo accounts, or a backend the Vite proxy
 // can't reach.
-func loadEnv(filename string) {
+// Reports whether the file existed.
+func loadEnv(filename string) bool {
 	file, err := os.Open(filename)
 	if err != nil {
-		log.Printf("[EnvLoader] No %s file discovered. Proceeding with system environment configurations.\n", filename)
-		return
+		return false
 	}
 	defer file.Close()
 
@@ -67,17 +67,22 @@ func loadEnv(filename string) {
 	if err := scanner.Err(); err != nil {
 		log.Printf("[EnvLoader] Warning: error reading env file scanner: %v\n", err)
 	}
+	return true
 }
 
 func main() {
-	// Load the .env configuration at early startup before accessing variables
-	loadEnv(".env")
+	// Load the .env configuration at early startup before accessing
+	// variables. Without a .env, the documented local defaults in
+	// .env.example are used - the one place the local database password is
+	// written down (it used to be repeated as a fallback in this file).
+	if !loadEnv(".env") && loadEnv(".env.example") {
+		log.Println("[EnvLoader] No .env file - using the local-development defaults from .env.example. Copy it to .env to change them.")
+	}
 
 	// 1. Database configurations setup
 	pgConnString := os.Getenv("DATABASE_URL")
 	if pgConnString == "" {
-		// Production PostgreSQL fallback connection parameters
-		pgConnString = "postgres://arena_user:ArenaSecurePass99@localhost:5432/arena_db?sslmode=disable"
+		log.Fatalln("DATABASE_URL is not set: set it in the environment or in golang-backend/.env (see .env.example).")
 	}
 
 	log.Printf("Connecting Go database using GORM with postgres driver...")
@@ -116,6 +121,7 @@ func main() {
 		&model.RewardCatalogItem{},
 		&model.Voucher{},
 		&model.Shift{},
+		&model.LoginFailure{},
 	)
 	if err != nil {
 		log.Fatalf("Database initial migration failed: %v\n", err)
@@ -137,9 +143,9 @@ func main() {
 	auditRepo := repository.NewAuditRepository(db)
 
 	serverSecret := resolveJWTSecret()
-	authService := service.NewAuthService(usrRepo, auditRepo, serverSecret)
+	authService := service.NewAuthService(usrRepo, auditRepo, serverSecret, service.NewLoginThrottle(db))
 	slipSigner := handler.NewSlipSigner(serverSecret)
-	userService := service.NewUserService(usrRepo)
+	userService := service.NewUserService(db, usrRepo)
 	auditLogService := service.NewAuditLogService(auditRepo)
 	membershipService := service.NewMembershipService(db, usrRepo)
 	priceEngineService := service.NewPriceEngineService(courtRepo, membershipService)
@@ -183,11 +189,27 @@ func main() {
 	// details. They are fetched through signed, expiring links handed only
 	// to the booking's owner and staff - see handler.SlipSigner.
 
-	// Apply standard robust CORS handler rules to authorize our React Frontend Origins
+	// CORS. The API authenticates with a bearer token, never cookies, so it
+	// sends no Access-Control-Allow-Credentials (combined with
+	// Allow-Origin "*" that was invalid, and browsers rejected it).
+	// CORS_ALLOWED_ORIGINS (comma-separated, e.g. https://book.example.com)
+	// restricts cross-site callers; unset allows any origin.
+	allowedOrigins := map[string]bool{}
+	for _, o := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			allowedOrigins[o] = true
+		}
+	}
 	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*") // customizable to client origin in production
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		if len(allowedOrigins) == 0 {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			c.Writer.Header().Add("Vary", "Origin")
+			if origin := c.GetHeader("Origin"); allowedOrigins[origin] {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+		}
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control, X-Requested-With")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 
 		if c.Request.Method == "OPTIONS" {
@@ -199,7 +221,7 @@ func main() {
 
 	// 4. API Endpoints Map layout. Authenticate only parses an optional
 	// bearer token; RequireRole gates each route that needs a login.
-	api := router.Group("/api/v1", handler.Authenticate(authService, userService))
+	api := router.Group("/api/v1", handler.LimitBody(), handler.Authenticate(authService, userService))
 	loggedIn := handler.RequireRole()
 	staffOnly := handler.RequireRole(handler.StaffRoles...)
 	managerOnly := handler.RequireRole(handler.ManagerRoles...)
@@ -238,6 +260,8 @@ func main() {
 		api.POST("/admin/users/:id/adjust-points", managerOnly, arenaHandler.ModifyPoints)
 		api.GET("/admin/users", managerOnly, arenaHandler.ListUsers)
 		api.PUT("/admin/users/:id/member-type", managerOnly, arenaHandler.SetMemberType)
+		api.PUT("/admin/users/:id/role", adminOnly, arenaHandler.SetUserRole)
+		api.PUT("/admin/users/:id/active", adminOnly, arenaHandler.SetUserActive)
 
 		// Court closures (FR-1.3) - managers and admins (REQUIREMENTS.md
 		// section 3); enforced by booking creation
@@ -254,7 +278,7 @@ func main() {
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned
 	// checkouts don't block courts forever.
-	go expireUnpaidBookingsLoop(bookingService)
+	go expireUnpaidBookingsLoop(bookingService, authService)
 
 	// 5. Fire Up listener
 	port := os.Getenv("PORT")
@@ -277,10 +301,20 @@ func main() {
 // database would make every half-court or discounted booking fail with
 // "record not found" the first time someone tried to price one.
 func seedDefaults(db *gorm.DB) {
-	db.Where(model.PricingConfig{ID: "global"}).FirstOrCreate(&model.PricingConfig{
+	// Every write is checked: a failure used to be ignored while the log
+	// still said "verified", hiding e.g. a missing pricing config until the
+	// first booking failed.
+	failures := 0
+	check := func(what string, err error) {
+		if err != nil {
+			failures++
+			log.Printf("ERROR seeding %s: %v\n", what, err)
+		}
+	}
+	check("pricing_config", db.Where(model.PricingConfig{ID: "global"}).FirstOrCreate(&model.PricingConfig{
 		ID:                   "global",
 		HalfCourtRatePercent: 50,
-	})
+	}).Error)
 
 	discounts := []model.MemberDiscount{
 		{MemberType: model.MemberNormal, Name: "ลูกค้าทั่วไป", DiscountPercent: 0, IsActive: true},
@@ -289,7 +323,7 @@ func seedDefaults(db *gorm.DB) {
 		{MemberType: model.MemberCorporate, Name: "องค์กรพันธมิตรร่วม MOU", DiscountPercent: 20, IsActive: true},
 	}
 	for _, d := range discounts {
-		db.Where(model.MemberDiscount{MemberType: d.MemberType}).FirstOrCreate(&d)
+		check("member discount "+string(d.MemberType), db.Where(model.MemberDiscount{MemberType: d.MemberType}).FirstOrCreate(&d).Error)
 	}
 
 	// Courts and pricing rules matching mockData.ts's DEFAULT_COURTS /
@@ -310,7 +344,7 @@ func seedDefaults(db *gorm.DB) {
 		courts = append(courts, model.Court{ID: fmt.Sprintf("pick-%d", i), Name: fmt.Sprintf("สนามพิคเคิลบอล %d", i), Type: model.CourtPickleball, ShareOfGroup: 1, IsActive: true})
 	}
 	for _, c := range courts {
-		db.Where(model.Court{ID: c.ID}).FirstOrCreate(&c)
+		check("court "+c.ID, db.Where(model.Court{ID: c.ID}).FirstOrCreate(&c).Error)
 	}
 	// Databases seeded by an earlier version got English names for these
 	// four courts. Rename them only if they still have that exact seeded
@@ -326,7 +360,7 @@ func seedDefaults(db *gorm.DB) {
 	}
 	for _, c := range courts {
 		if old, ok := oldSeedNames[c.ID]; ok {
-			db.Model(&model.Court{}).Where("id = ? AND name = ?", c.ID, old).Update("name", c.Name)
+			check("court name "+c.ID, db.Model(&model.Court{}).Where("id = ? AND name = ?", c.ID, old).Update("name", c.Name).Error)
 		}
 	}
 
@@ -353,7 +387,7 @@ func seedDefaults(db *gorm.DB) {
 		{ID: "p-meet-all-we", CourtType: model.CourtMeetingRoom, DayType: "WEEKEND", StartHour: 7, EndHour: 23, PricePerHour: 500, PriceType: "NORMAL", Label: "ห้องประชุม ราคาคงที่เสาร์-อาทิตย์", IsActive: true},
 	}
 	for _, r := range pricingRules {
-		db.Where(model.PricingRule{ID: r.ID}).FirstOrCreate(&r)
+		check("pricing rule "+r.ID, db.Where(model.PricingRule{ID: r.ID}).FirstOrCreate(&r).Error)
 	}
 
 	// Databases seeded by an earlier version got English pricing-rule labels
@@ -383,7 +417,7 @@ func seedDefaults(db *gorm.DB) {
 	}
 	for _, r := range pricingRules {
 		if old, ok := oldRuleLabels[r.ID]; ok {
-			db.Model(&model.PricingRule{}).Where("id = ? AND label = ?", r.ID, old).Update("label", r.Label)
+			check("pricing rule label "+r.ID, db.Model(&model.PricingRule{}).Where("id = ? AND label = ?", r.ID, old).Update("label", r.Label).Error)
 		}
 	}
 	oldTierNames := map[model.MemberType]string{
@@ -394,11 +428,20 @@ func seedDefaults(db *gorm.DB) {
 	}
 	for _, d := range discounts {
 		if old, ok := oldTierNames[d.MemberType]; ok {
-			db.Model(&model.MemberDiscount{}).Where("member_type = ? AND name = ?", d.MemberType, old).Update("name", d.Name)
+			check("member discount name "+string(d.MemberType), db.Model(&model.MemberDiscount{}).Where("member_type = ? AND name = ?", d.MemberType, old).Update("name", d.Name).Error)
 		}
 	}
 
-	log.Println("Default pricing_config/member_discounts/courts/pricing_rules rows verified.")
+	// Without the pricing config no booking can be priced at all.
+	var cfgCount int64
+	if err := db.Model(&model.PricingConfig{}).Where("id = ?", "global").Count(&cfgCount).Error; err != nil || cfgCount == 0 {
+		log.Fatalf("pricing_config row 'global' is missing and could not be created - bookings cannot be priced (%v)\n", err)
+	}
+	if failures > 0 {
+		log.Printf("WARNING: seeding default data finished with %d error(s) - see the ERROR lines above.\n", failures)
+	} else {
+		log.Println("Default pricing_config/member_discounts/courts/pricing_rules rows verified.")
+	}
 
 	if os.Getenv("SEED_DEMO_USERS") == "true" {
 		seedDemoUsers(db)
@@ -431,7 +474,7 @@ func resolveJWTSecret() []byte {
 	return b
 }
 
-func expireUnpaidBookingsLoop(bookings *service.BookingService) {
+func expireUnpaidBookingsLoop(bookings *service.BookingService, auth *service.AuthService) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for ; ; <-ticker.C {
@@ -440,6 +483,9 @@ func expireUnpaidBookingsLoop(bookings *service.BookingService) {
 			log.Printf("Warning: expiring unpaid bookings failed: %v\n", err)
 		} else if n > 0 {
 			log.Printf("Expired %d unpaid booking group(s) past the %v payment hold.\n", n, service.PaymentHoldDuration)
+		}
+		if err := auth.PruneLoginFailures(context.Background()); err != nil {
+			log.Printf("Warning: pruning old failed logins failed: %v\n", err)
 		}
 	}
 }
@@ -450,11 +496,12 @@ func expireUnpaidBookingsLoop(bookings *service.BookingService) {
 // constraint used to be missing) would make AutoMigrate - and so startup -
 // fail outright, whereas this only warns until the duplicates are cleaned up.
 func ensureUserUniqueIndexes(db *gorm.DB) {
-	for _, col := range []string{"phone", "email"} {
-		stmt := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_%s ON users (%s)", col, col)
+	// Email is unique ignoring case (logins compare it that way).
+	for name, expr := range map[string]string{"phone": "phone", "email": "email", "email_lower": "lower(email)"} {
+		stmt := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_%s ON users (%s)", name, expr)
 		if err := db.Exec(stmt).Error; err != nil {
 			log.Printf("WARNING: users.%s has duplicate values, so it is not unique-indexed yet and duplicate sign-ups are still possible. "+
-				"Find them with: SELECT %s, count(*) FROM users GROUP BY %s HAVING count(*) > 1; then restart. (%v)\n", col, col, col, err)
+				"Find them with: SELECT %s, count(*) FROM users GROUP BY %s HAVING count(*) > 1; then restart. (%v)\n", expr, expr, expr, err)
 		}
 	}
 }
@@ -478,11 +525,19 @@ func seedDemoUsers(db *gorm.DB) {
 		{ID: "u-cust-std", Name: "น้องพีเดอร์ นักเรียน", Email: email("student@school.ac.th"), Phone: "0856789012", Role: model.RoleCustomer, MemberType: model.MemberStudent},
 	}
 	now := time.Now()
+	var failed []string
 	for _, u := range users {
 		u.IsActive = true
 		u.PasswordHash = string(hash)
 		u.CreatedAt, u.UpdatedAt = now, now
-		db.Where(model.User{ID: u.ID}).FirstOrCreate(&u)
+		if err := db.Where(model.User{ID: u.ID}).FirstOrCreate(&u).Error; err != nil {
+			failed = append(failed, u.Phone)
+			log.Printf("ERROR creating demo account %s (%s): %v\n", u.Phone, u.Name, err)
+		}
+	}
+	if len(failed) > 0 {
+		log.Printf("WARNING: SEED_DEMO_USERS=true but %d demo account(s) could not be created: %s\n", len(failed), strings.Join(failed, ", "))
+		return
 	}
 	log.Println("SEED_DEMO_USERS=true: demo accounts verified (password 123456).")
 }

@@ -10,10 +10,11 @@ import (
 )
 
 const (
-	ctxUserID    = "user_id"
-	ctxRole      = "role"
-	ctxUserName  = "user_name"
-	ctxAuthError = "auth_error"
+	ctxAuthUnavailable = "auth_unavailable"
+	ctxUserID          = "user_id"
+	ctxRole            = "role"
+	ctxUserName        = "user_name"
+	ctxAuthError       = "auth_error"
 )
 
 // Authenticate reads an optional "Authorization: Bearer <jwt>" header and,
@@ -47,7 +48,12 @@ func Authenticate(auth *service.AuthService, users *service.UserService) gin.Han
 		}
 		u, err := users.GetUserProfile(c.Request.Context(), claims.UserID)
 		if err != nil {
-			abortJSON(c, http.StatusInternalServerError, "could not load session user")
+			// A database hiccup: carry on as anonymous so public pages
+			// (courts, pricing, availability) still load, and let
+			// RequireRole answer 503 rather than 401 - a 401 makes the
+			// frontend drop a perfectly valid session.
+			c.Set(ctxAuthUnavailable, true)
+			c.Next()
 			return
 		}
 		if u == nil || !u.IsActive {
@@ -68,6 +74,10 @@ func Authenticate(auth *service.AuthService, users *service.UserService) gin.Han
 func RequireRole(roles ...model.UserRole) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role, ok := c.Get(ctxRole)
+		if !ok && c.GetBool(ctxAuthUnavailable) {
+			abortJSON(c, http.StatusServiceUnavailable, "could not check your session right now - please try again")
+			return
+		}
 		if !ok {
 			msg := "login required"
 			if reason := c.GetString(ctxAuthError); reason != "" {
@@ -124,4 +134,23 @@ func isStaff(r model.UserRole) bool {
 
 func abortJSON(c *gin.Context, status int, msg string) {
 	c.AbortWithStatusJSON(status, gin.H{"success": false, "error": msg})
+}
+
+// LimitBody caps request bodies before anything reads them, so a huge
+// upload is cut off while streaming instead of being spooled to disk first
+// and only then rejected by the 5 MB slip check. Slip uploads get the slip
+// limit plus room for the multipart framing; everything else 1 MB.
+func LimitBody() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		limit := int64(1 << 20)
+		if strings.HasSuffix(c.Request.URL.Path, "/upload-slip") {
+			limit = maxSlipBytes + 64<<10
+		}
+		if c.Request.ContentLength > limit {
+			abortJSON(c, http.StatusRequestEntityTooLarge, "request is too large")
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		c.Next()
+	}
 }

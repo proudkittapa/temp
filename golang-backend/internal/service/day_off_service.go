@@ -85,6 +85,14 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 
 	res := &CreateDayOffResult{AffectedBookings: []model.Booking{}}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Wait for bookings on this date that are mid-transaction (they
+		// hold the lock shared) and keep new ones out until this closure
+		// is committed - otherwise a booking that checked closures a moment
+		// before could still be written into the closed window. A booking
+		// that got in first is then listed below as affected.
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?, hashtext(?))", closureLockClass, in.Date).Error; err != nil {
+			return err
+		}
 		if in.CourtID != nil {
 			var n int64
 			if err := tx.Model(&model.Court{}).Where("id = ?", *in.CourtID).Count(&n).Error; err != nil {

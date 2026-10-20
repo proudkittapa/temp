@@ -183,13 +183,11 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		return nil, fmt.Errorf("%w: unknown user", ErrInvalidBooking)
 	}
 
+	// Early, unlocked check for a friendly error; repeated under a lock
+	// inside the transaction below.
 	if input.WalkIn == nil {
-		unpaid, err := s.countUnpaidGroups(ctx, input.UserID)
-		if err != nil {
+		if err := s.checkUnpaidCap(s.db.WithContext(ctx), input.UserID); err != nil {
 			return nil, err
-		}
-		if unpaid >= MaxUnpaidGroupsPerUser {
-			return nil, fmt.Errorf("%w: you already have %d bookings awaiting payment or slip review - please wait for them to be confirmed", ErrTooManyUnpaid, unpaid)
 		}
 	}
 
@@ -228,6 +226,41 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 
 	result := &CreateBookingResult{}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the customer's row first (before any court rows, the same
+		// order AddPointsEntry follows later in this transaction), so two
+		// bookings sent at the same moment by one customer run one after
+		// the other: each then sees the other's unpaid group, and the cap
+		// can't be raced.
+		if bookingUser != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&model.User{}, "id = ?", bookingUser.ID).Error; err != nil {
+				return err
+			}
+			if input.WalkIn == nil {
+				if err := s.checkUnpaidCap(tx, input.UserID); err != nil {
+					return err
+				}
+			}
+		}
+		// Closures were checked before the transaction; one created since
+		// would be missed. Take this date's closure lock (shared, so
+		// bookings don't wait for each other; DayOffService.Create takes it
+		// exclusively) and check again against what is committed now.
+		if err := tx.Exec("SELECT pg_advisory_xact_lock_shared(?, hashtext(?))", closureLockClass, input.Date).Error; err != nil {
+			return err
+		}
+		var closures []model.DayOff
+		if err := tx.Where("date = ?", input.Date).Find(&closures).Error; err != nil {
+			return err
+		}
+		if input.WalkIn == nil || !input.WalkIn.OverrideClosure {
+			for _, p := range planned {
+				_, hour, _ := hourSlotEnd(p.startTime)
+				if closure := repository.ClosureFor(closures, p.court.ID, hour); closure != nil {
+					return fmt.Errorf("%w: %s is closed at %s (%s)", ErrSlotUnavailable, p.court.Name, p.startTime, closure.Reason)
+				}
+			}
+		}
+
 		code, err := uniqueBookingCode(tx, input.Date)
 		if err != nil {
 			return err
@@ -494,14 +527,31 @@ func hourSlotEnd(start string) (string, int, error) {
 	return fmt.Sprintf("%02d:00", h+1), h, nil
 }
 
+// closureLockClass namespaces the per-date advisory lock that serializes
+// closure creation against in-flight bookings (see CreateBookings).
+const closureLockClass = 4201
+
+// checkUnpaidCap refuses a new online booking when the customer already has
+// MaxUnpaidGroupsPerUser groups awaiting payment or review.
+func (s *BookingService) checkUnpaidCap(db *gorm.DB, userID string) error {
+	unpaid, err := countUnpaidGroups(db, userID)
+	if err != nil {
+		return err
+	}
+	if unpaid >= MaxUnpaidGroupsPerUser {
+		return fmt.Errorf("%w: you already have %d bookings awaiting payment or slip review - please wait for them to be confirmed", ErrTooManyUnpaid, unpaid)
+	}
+	return nil
+}
+
 // countUnpaidGroups counts the user's booking groups whose payment staff
 // haven't approved yet: still waiting for a slip (PENDING) or with a slip
 // waiting for review (SLIP_UPLOADED). Counting only PENDING let a customer
 // upload any image to escape the cap - and the 30-minute expiry, which only
 // applies to PENDING - and hold any number of courts.
-func (s *BookingService) countUnpaidGroups(ctx context.Context, userID string) (int, error) {
+func countUnpaidGroups(db *gorm.DB, userID string) (int, error) {
 	var n int64
-	err := s.db.WithContext(ctx).Model(&model.Payment{}).
+	err := db.Model(&model.Payment{}).
 		Joins("JOIN bookings ON bookings.id = payments.booking_id").
 		Where("bookings.user_id = ? AND payments.status IN ?", userID,
 			[]model.PaymentStatus{model.PaymentPending, model.PaymentSlipUploaded}).

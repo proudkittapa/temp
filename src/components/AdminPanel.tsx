@@ -450,6 +450,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   // on the server (FR-2, RBAC matrix: "Configure Court Pricing" = Admin), so
   // a manager logged in here doesn't get those tabs - every save would fail.
   const canEditPricing = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
+  // Staff roles and suspending accounts are admin-only on the server too.
+  const canManageAccounts = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
   useEffect(() => {
     if (!canEditPricing && (activeAdminTab === 'pricing' || activeAdminTab === 'member_discounts')) {
       setActiveAdminTab('dashboard');
@@ -598,6 +600,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       return;
     }
 
+    if (api.USE_BACKEND) {
+      const before = users.find(u => u.id === userIdToPromote);
+      api.setUserRole(userIdToPromote, newUserRole)
+        .then(updated => {
+          setUsers(prev => prev.map(u => (u.id === updated.id ? updated : u)));
+          onAddAuditLog('USER_PROMOTED_TO_OPERATOR_BY_ADMIN', 'User', updated.id, before ?? null, updated);
+          setUserIdToPromote('');
+          onRefreshAll();
+          alert(`🎉 เลื่อนสิทธิ์ให้คุณ "${updated.name}" เป็น "${updated.role}" เรียบร้อยแล้วค่ะ!`);
+        })
+        .catch(err => alert(`เลื่อนสิทธิ์ไม่สำเร็จ: ${err.message}`));
+      return;
+    }
+
     const currentUsers = StorageService.get<User[]>('users', []);
     const foundIdx = currentUsers.findIndex(u => u.id === userIdToPromote);
     
@@ -674,22 +690,26 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       // be changed there. Roles can't be changed from the panel yet.
       const before = users.find(u => u.id === id);
       if (!before) return;
-      if (target.role !== before.role) {
-        alert('การเปลี่ยนบทบาท (Role) ยังทำได้เฉพาะในฐานข้อมูลในโหมด API');
-        return;
-      }
-      api.setMemberType(id, target.memberType)
+      // Role first (admin only), then the tier (only customers have one).
+      const roleStep = target.role !== before.role
+        ? api.setUserRole(id, target.role)
+        : Promise.resolve(before);
+      roleStep
+        .then(afterRole => (target.memberType !== (afterRole.memberType ?? MemberType.NORMAL) && afterRole.role === UserRole.CUSTOMER
+          ? api.setMemberType(id, target.memberType)
+          : afterRole))
         .then(updated => {
           setUsers(prev => prev.map(u => (u.id === id ? updated : u)));
-          onAddAuditLog('USER_MEMBER_TYPE_SAVED_BY_ADMIN', 'User', id,
-            { name: before.name, memberType: before.memberType }, { name: updated.name, memberType: updated.memberType });
+          onAddAuditLog('USER_PERMISSIONS_SAVED_BY_ADMIN', 'User', id,
+            { name: before.name, role: before.role, memberType: before.memberType },
+            { name: updated.name, role: updated.role, memberType: updated.memberType });
           setUserPendingChanges(prev => {
             const copy = { ...prev };
             delete copy[id];
             return copy;
           });
           onRefreshAll();
-          alert(`💾 บันทึกระดับสมาชิกของ "${updated.name}" เป็น ${memberTierLabel(updated.memberType)} แล้ว`);
+          alert(`💾 บันทึกสิทธิ์ของ "${updated.name}" แล้ว: ${updated.role} · ${memberTierLabel(updated.memberType)}`);
         })
         .catch(err => alert(`บันทึกไม่สำเร็จ: ${err.message}`));
       return;
@@ -752,6 +772,16 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   };
 
   const handleToggleUserActive = (id: string, currentlyActive: boolean) => {
+    if (api.USE_BACKEND) {
+      api.setUserActive(id, !currentlyActive)
+        .then(updated => {
+          setUsers(prev => prev.map(u => (u.id === id ? updated : u)));
+          onAddAuditLog('USER_STATUS_TOGGLED', 'User', id, { isActive: currentlyActive }, { isActive: updated.isActive });
+          onRefreshAll();
+        })
+        .catch(err => alert(`เปลี่ยนสถานะไม่สำเร็จ: ${err.message}`));
+      return;
+    }
     const currentUsers = StorageService.get<User[]>('users', []);
     const updated = currentUsers.map(u => u.id === id ? { ...u, isActive: !currentlyActive } : u);
 
@@ -2157,9 +2187,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   เลือกผู้ใช้งานทั่วไปที่เคยลงทะเบียนเข้ามาร่วมก๊วน เพื่อเลื่อนสิทธิ์เป็นพนักงานปฏิบัติการ (Staff) หรือผู้บริหารระบบ โดยไม่ต้องสร้างข้อมูลซ้ำซ้อน
                 </p>
 
-                {api.USE_BACKEND ? (
+                {!canManageAccounts ? (
                   <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                    ในโหมด API การแต่งตั้งพนักงาน/เปลี่ยนบทบาทยังทำได้เฉพาะในฐานข้อมูล ส่วนระดับสมาชิก (ส่วนลด) และแต้มสะสมแก้ไขได้ในตารางด้านขวา
+                    การแต่งตั้งพนักงาน เปลี่ยนบทบาท และระงับบัญชี ทำได้เฉพาะผู้ดูแลระบบ (Admin) ส่วนระดับสมาชิก (ส่วนลด) และแต้มสะสมแก้ไขได้ในตารางด้านขวา
                   </p>
                 ) : (
                 <form onSubmit={handlePromoteUser} className="space-y-4 text-xs">
@@ -2311,8 +2341,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                               <select 
                                 value={userPendingChanges[item.id]?.role ?? item.role}
                                 onChange={(e) => handleStageUserRole(item.id, e.target.value as UserRole)}
-                                disabled={api.USE_BACKEND}
-                                title={api.USE_BACKEND ? 'เปลี่ยนบทบาทได้เฉพาะในฐานข้อมูลในโหมด API' : undefined}
+                                disabled={!canManageAccounts || item.id === adminUser?.id}
+                                title={!canManageAccounts ? 'เปลี่ยนบทบาทได้เฉพาะผู้ดูแลระบบ (Admin)' : item.id === adminUser?.id ? 'เปลี่ยนบทบาทของตัวเองไม่ได้' : undefined}
                                 className={`border rounded py-1 px-1.5 text-[11px] font-mono font-bold transition duration-150 ${
                                   userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role
                                     ? 'bg-amber-50 border-amber-300 text-amber-900 ring-2 ring-amber-100'
@@ -2380,7 +2410,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                   </button>
                                 </div>
                               ) : api.USE_BACKEND ? (
-                                <span className="text-[9px] text-slate-400">{item.isActive ? 'ใช้งาน' : 'ระงับ'}</span>
+                                // No delete through the API: suspending keeps the
+                                // account's bookings and points history.
+                                canManageAccounts && item.id !== adminUser?.id ? (
+                                  <button
+                                    onClick={() => handleToggleUserActive(item.id, item.isActive)}
+                                    className={`px-2.5 py-1 text-[9px] rounded-lg font-bold shadow-xs transition ${
+                                      item.isActive ? 'bg-emerald-100 text-emerald-800 hover:bg-amber-100 hover:text-amber-800' : 'bg-rose-100 text-rose-800 hover:bg-slate-200'
+                                    }`}
+                                  >
+                                    {item.isActive ? 'ใช้งาน' : 'ระงับชั่วคราว'}
+                                  </button>
+                                ) : (
+                                  <span className="text-[9px] text-slate-400">{item.isActive ? 'ใช้งาน' : 'ระงับ'}</span>
+                                )
                               ) : (
                                 <div className="flex items-center gap-1">
                                   <button

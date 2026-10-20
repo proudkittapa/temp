@@ -18,10 +18,111 @@ Entry format:
 
 ---
 
+## 2026-10-20 — Close the remaining review items (5, 10–22) and the follow-ups
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `f644839`)
+- **Background:** The owner asked to fix everything still open: items 5 and
+  10–22 from the first review, plus the follow-ups listed in the previous
+  entry (in-memory login limits, staff roles / suspension in API mode).
+
+### Changed
+- **5 POS negative quantities:** each line must be 1–100; order type and
+  payment method are validated (400). `internal/service/pos.go`.
+- **10 Unpaid cap raced by parallel requests:** the cap is re-checked inside
+  the booking transaction with the customer's row locked (`FOR UPDATE`), so
+  simultaneous bookings by one customer run one after another.
+  `internal/service/booking_service.go`.
+- **11 Closure created mid-booking:** bookings take a shared per-date
+  advisory lock and re-read closures inside their transaction; creating a
+  closure takes the same lock exclusively, so it waits for in-flight
+  bookings (which then show up as affected) and blocks new ones until it is
+  committed. `booking_service.go`, `day_off_service.go`.
+- **12 Huge uploads hit the disk before the size check:** new `LimitBody`
+  middleware caps bodies before anything reads them (slip uploads 5 MB +
+  framing, everything else 1 MB); oversize → 413.
+  `internal/handler/middleware.go`, `handlers.go`.
+- **13 Email case:** emails are stored lower-case, compared ignoring case,
+  and unique on `lower(email)`. `repository/user.go`, `auth_service.go`, `main.go`.
+- **14 Repeating receipt codes:** `REC<date>-<random>` checked for uniqueness,
+  like booking codes. `pos.go`.
+- **15 DB hiccup broke public pages for logged-in users:** a failed session
+  lookup now continues as anonymous; login-only routes answer 503 instead of
+  401 (which made the frontend drop the session). `middleware.go`.
+- **16 Seeding ignored errors:** every seed write is checked and reported;
+  "verified" is only logged when all succeeded; a missing pricing config
+  stops startup. `main.go`.
+- **17 Invalid CORS:** no more `Allow-Credentials` with `*` (the API uses
+  bearer tokens); optional `CORS_ALLOWED_ORIGINS` allowlist. `main.go`,
+  `.env.example`.
+- **18 `npm run dev` needed Go:** the dev runner only starts the backend in
+  API mode, and in API mode checks for Go first with a clear message.
+  `dev-runner.js`.
+- **19 Dev runner left processes running:** children run in their own
+  process groups and the whole group is stopped (then force-killed after
+  5 s), including the binary `go run` starts; if one side exits, the other
+  is stopped too. `dev-runner.js`.
+- **20 DB password in two places:** removed from `main.go`; without a `.env`
+  the server loads `.env.example`, and with no `DATABASE_URL` at all it stops
+  with a clear message.
+- **21 Weekday off by one west of UTC:** `getDayType` reads the calendar date
+  in UTC. `src/mockData.ts`.
+- **22 Booking history re-scanned everything per row:** lookups are built
+  once with `useMemo`; the list also uses Bangkok time instead of the
+  browser's clock. `src/components/CustomerPanel.tsx`.
+- **Login limits (follow-up):** stored in a new `login_failures` table
+  (hashed keys, pruned every minute) so they survive restarts and work
+  across instances. Lockout is now harder to abuse: 5 failures lock the
+  account only from that IP, 20 from anywhere lock the account, 50 lock an
+  IP. `internal/service/login_throttle.go`, `model.LoginFailure`.
+- **Roles and suspension in API mode (follow-up):** new admin-only
+  `PUT /admin/users/:id/role` and `PUT /admin/users/:id/active` (audit-logged;
+  nobody can change their own). The Admin users tab uses them; managers keep
+  tier and points only. Accounts are never deleted through the API (their
+  bookings and points history must stay) - suspend instead.
+  `user_service.go`, `handlers.go`, `src/api.ts`, `AdminPanel.tsx`.
+
+Docs: README.md, golang-backend/README.md, .env.example, TESTING_CHECKLIST.md.
+
+### Verified
+- `go vet`, `go test ./...` pass (new: DB-backed throttle logic with the
+  per-IP/per-account rules and pruning; middleware during a DB outage →
+  public 200 / protected 503). `tsc` clean; `vitest` 28/28, also with
+  `TZ=America/Los_Angeles` (the old `getDayType` fails 2 tests there).
+  `vite build` succeeds.
+- Live backend + PostgreSQL 16: qty -5/0/101 → 400; three parallel POS
+  sales → three different receipt codes; `John@Gmail.com` stored lower-case,
+  re-register with other case refused, login in capitals works; 6 parallel
+  bookings by one customer → exactly 3 created, 3 × 429; a closure waited
+  ~2.5 s for an in-flight booking lock, then later bookings into it were
+  refused; 50 MB upload → 413 in 1 ms, no temp files; 2 MB JSON → 413; CORS
+  header only for the allowed origin; manager promote 403, admin promote OK,
+  self-demote 403, promoted user reaches the staff queue, suspension makes
+  their token 401 and login fail; 5 failures from one IP lock it while the
+  owner logs in from another IP; the lock survives a backend restart; seed
+  logs "verified".
+- Dev runner: `npm run dev` works with Go removed from PATH; Ctrl+C frees
+  port 3000; `--api` serves on 8080 and 3000 through the proxy, Ctrl+C stops
+  the compiled Go binary too; backend falls back to `.env.example`.
+- Browser (API mode): 2-hour booking shows one upload button in history;
+  admin promotes a customer to STAFF and suspends them from the users tab;
+  own role select is disabled.
+
+### Not done / follow-ups
+- Slip duplicates are caught only for identical files; matching the bank's
+  transaction reference needs a third-party slip-verification service and an
+  account with it.
+- Deleting users through the API is intentionally not offered (suspend).
+- Still browser-only in API mode (documented in README): POS / F&B /
+  rentals, reward redemption, password reset, courts, products, operating
+  hours.
+
+---
+
 ## 2026-10-20 — Second review: fix findings 1–5 and 7–16; managers keep closures
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `772ab1a`)
+- **Commit(s):** `f644839` (on `main`, parent `772ab1a`)
 - **Background:** A second review produced 16 findings. The owner decided #6
   (managers creating/deleting court closures) is allowed, so the spec was
   changed instead of the code, and asked for everything else to be fixed.

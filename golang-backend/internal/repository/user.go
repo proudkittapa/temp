@@ -85,13 +85,15 @@ const canonicalPhoneSQL = `(CASE
 	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^0066[0-9]{8,9}$' THEN '0' || substr(regexp_replace(phone, '[^0-9]', '', 'g'), 5)
 	ELSE regexp_replace(phone, '[^0-9]', '', 'g') END)`
 
-// FindByIdentity returns every user whose email is identity or - when
-// identity has no "@" - whose phone is the same number, oldest first.
+// FindByIdentity returns every user whose email is identity (ignoring
+// case: "John@Gmail.com" is john@gmail.com) or - when identity has no "@" -
+// whose phone is the same number, oldest first.
 // Usually that is zero or one user, but before phones were normalized the
 // same number could be registered twice (e.g. "081-555-0000" and
 // "0815550000"), so callers must not assume a single match.
 func (r *UserRepository) FindByIdentity(ctx context.Context, identity string) ([]model.User, error) {
-	q := r.db.WithContext(ctx).Where("email = ?", identity)
+	identity = strings.TrimSpace(identity)
+	q := r.db.WithContext(ctx).Where("lower(email) = lower(?)", identity)
 	if !strings.Contains(identity, "@") {
 		if phone := NormalizePhone(identity); phone != "" {
 			q = q.Or(canonicalPhoneSQL+" = ?", phone)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Court, CourtType, PriceType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayType, DayOff,
@@ -95,6 +95,21 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const [showLineSimulator, setShowLineSimulator] = useState<boolean>(false);
   const [bookingSuccessAlert, setBookingSuccessAlert] = useState<string | null>(null);
   const [daysOff, setDaysOff] = useState<DayOff[]>([]);
+
+  // Lookups for the booking history, built once per data change instead of
+  // re-scanning every booking and payment for each row on every render.
+  const bookingById = useMemo(() => new Map(bookings.map(b => [b.id, b])), [bookings]);
+  const courtNameById = useMemo(() => new Map(courts.map(c => [c.id, c.name])), [courts]);
+  const paymentForBooking = useMemo(() => {
+    const groupKey = (b: Booking) => `${b.bookingCode}|${b.userId}|${b.date}`;
+    const byBookingId = new Map(payments.map(p => [p.bookingId, p]));
+    const byGroup = new Map<string, Payment>();
+    for (const p of payments) {
+      const root = bookingById.get(p.bookingId);
+      if (root) byGroup.set(groupKey(root), p);
+    }
+    return (b: Booking) => byBookingId.get(b.id) || byGroup.get(groupKey(b));
+  }, [payments, bookingById]);
 
   // Load everything
   useEffect(() => {
@@ -1905,10 +1920,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
           <div className="space-y-3 max-h-[250px] overflow-y-auto pr-1">
             {(() => {
-              const now = new Date();
-              const todayStr = getTodayDateStr();
-              const currentTimeStr = now.toTimeString().split(' ')[0].substring(0, 5);
-
               if (!loggedInUser) {
                 return (
                   <p className="text-xs text-slate-400 text-center py-4">
@@ -1917,14 +1928,11 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 );
               }
 
-              const userFilteredFutureBookings = bookings.filter(booking => {
-                const isMine = booking.userId === loggedInUser.id;
-                if (!isMine) return false;
-                
-                // Show only future bookings
-                const isFuture = booking.date > todayStr || (booking.date === todayStr && booking.startTime > currentTimeStr);
-                return isFuture;
-              });
+              // Upcoming and in-progress bookings only, judged in Bangkok time
+              // (the browser's own clock/time zone used to decide this).
+              const userFilteredFutureBookings = bookings.filter(booking =>
+                booking.userId === loggedInUser.id && !slotTiming(booking.date, booking.startTime).ended
+              );
 
               if (userFilteredFutureBookings.length === 0) {
                 return (
@@ -1937,11 +1945,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
               const groupsWithButton = new Set<string>();
               return userFilteredFutureBookings.map((booking) => {
-                const courtName = courts.find(c => c.id === booking.courtId)?.name || 'สนามกีฬาทั่วไป';
+                const courtName = courtNameById.get(booking.courtId) || 'สนามกีฬาทั่วไป';
                 // The payment hangs off the group's first row; every row of
-                // the group (same code) shares it.
-                const matchedPayment = payments.find(p => p.bookingId === booking.id) ||
-                  payments.find(p => bookings.some(b => b.id === p.bookingId && b.bookingCode === booking.bookingCode && b.userId === booking.userId));
+                // the group shares it.
+                const matchedPayment = paymentForBooking(booking);
                 const awaitingSlip = booking.status === BookingStatus.PENDING_PAYMENT && !!matchedPayment &&
                   (matchedPayment.status === PaymentStatus.PENDING || matchedPayment.status === PaymentStatus.SLIP_UPLOADED);
                 // One upload button per booking group, not one per hour.
@@ -1985,7 +1992,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                         <button
                           type="button"
                           onClick={() => {
-                            const root = bookings.find(b => b.id === matchedPayment.bookingId) || booking;
+                            const root = bookingById.get(matchedPayment.bookingId) || booking;
                             handleReopenPayment(root, matchedPayment);
                           }}
                           className="mt-1 text-[10px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition"

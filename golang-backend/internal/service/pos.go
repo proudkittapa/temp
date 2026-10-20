@@ -37,6 +37,24 @@ type CheckoutResult struct {
 	PointsEarned int     `json:"points_earned"`
 }
 
+// MaxPOSLineQty caps one order line, so a typo can't empty the stock.
+const MaxPOSLineQty = 100
+
+// uniqueOrderCode picks a receipt code ("REC20261020-7F3A9C") no order uses.
+func uniqueOrderCode(tx *gorm.DB, date string) (string, error) {
+	for i := 0; i < 5; i++ {
+		code := ids.Code("REC", date)
+		var n int64
+		if err := tx.Model(&model.Order{}).Where("order_code = ?", code).Count(&n).Error; err != nil {
+			return "", err
+		}
+		if n == 0 {
+			return code, nil
+		}
+	}
+	return "", errors.New("could not allocate a unique receipt code, please retry")
+}
+
 type POSService struct {
 	db      *gorm.DB
 	usrRepo *repository.UserRepository
@@ -49,7 +67,22 @@ func NewPOSService(db *gorm.DB, usrRepo *repository.UserRepository) *POSService 
 // ProcessCheckout performs thread-safe inventory decrements and registers receipt transactions.
 func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (*CheckoutResult, error) {
 	if len(input.Items) == 0 {
-		return nil, errors.New("boundary check: order must contain at least one item")
+		return nil, fmt.Errorf("%w: order must contain at least one item", ErrInvalidBooking)
+	}
+	// A zero or negative quantity used to be accepted: it added stock back
+	// and recorded a negative sale (and could cancel out a real line).
+	for _, item := range input.Items {
+		if item.Qty < 1 || item.Qty > MaxPOSLineQty {
+			return nil, fmt.Errorf("%w: quantity for %s must be between 1 and %d", ErrInvalidBooking, item.ProductID, MaxPOSLineQty)
+		}
+	}
+	switch input.Type {
+	case model.OrderFB, model.OrderEquipmentRent, model.OrderEquipmentSale:
+	default:
+		return nil, fmt.Errorf("%w: type must be FB, EQUIPMENT_RENT or EQUIPMENT_SALE", ErrInvalidBooking)
+	}
+	if input.PaymentMeth != model.PaymentCash && input.PaymentMeth != model.PaymentPromptPay {
+		return nil, fmt.Errorf("%w: payment_method must be CASH or PROMPTPAY", ErrInvalidBooking)
 	}
 
 	var totalAmount float64 = 0.0
@@ -87,9 +120,15 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 			totalAmount += p.Price * float64(item.Qty)
 		}
 
-		// 2. Insert main Order record
+		// 2. Insert main Order record. The code used to be the Unix time
+		// mod 100000 - repeating every ~28 hours and for two sales in the
+		// same second; now it is random and checked for uniqueness, like
+		// booking codes.
 		orderID := ids.New("ord")
-		orderCode = fmt.Sprintf("REC-%05d", time.Now().Unix()%100000)
+		var err error
+		if orderCode, err = uniqueOrderCode(tx, time.Now().In(Bangkok).Format("2006-01-02")); err != nil {
+			return err
+		}
 
 		ordModel := model.Order{
 			ID:            orderID,

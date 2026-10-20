@@ -447,3 +447,13 @@ type Shift struct {
 	VarianceCash *float64   `json:"variance_cash,omitempty" db:"variance_cash" gorm:"column:variance_cash"`
 	Notes        *string    `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
 }
+
+// 15. One failed login, for LoginThrottle's sliding-window limits. Key is a
+// SHA-256 of what is being limited (account, account+IP, or IP), so no
+// phone numbers, emails or IPs are stored. Rows older than the window are
+// pruned every minute.
+type LoginFailure struct {
+	ID  uint      `json:"-" gorm:"primaryKey;autoIncrement"`
+	Key string    `json:"-" gorm:"column:key;index:idx_login_failures_key_at,priority:1"`
+	At  time.Time `json:"-" gorm:"column:at;index:idx_login_failures_key_at,priority:2;index"`
+}

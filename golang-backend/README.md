@@ -87,16 +87,20 @@ go test ./... -v     # runs internal/model and internal/service tests
 ```
 
 ### 5. Set Environment Variables
-`.env` in this directory already has values matching step 2's Homebrew
-setup. If you used Docker/a hosted DB instead, or a different local
-user/password, edit it to match:
+Without a `.env`, the server uses `.env.example`, whose values match step
+2's Homebrew setup (that file is the only place the local database password
+is written down). If you used Docker/a hosted DB instead, or a different
+local user/password, copy it to `.env` and edit it:
 ```bash
+cp .env.example .env
 cat .env
 # DATABASE_URL=postgres://arena_user:ArenaSecurePass99@localhost:5432/arena_db?sslmode=disable
 # PORT=8080
 # JWT_SECRET=<output of: openssl rand -hex 32>   # unset = random per run (logins reset on restart)
 # PROMPTPAY_ID=0105561008012                      # merchant PromptPay ID for customer QR codes
 # SEED_DEMO_USERS=true   # local dev only: demo accounts, password 123456
+# TRUSTED_PROXIES=        # reverse proxy IPs whose X-Forwarded-For is believed
+# CORS_ALLOWED_ORIGINS=   # e.g. https://book.example.com; empty = any origin
 ```
 A variable already set in the environment wins over `.env`, so
 `npm run dev:api` (which sets `PORT=8080` and `SEED_DEMO_USERS=true`) works
@@ -278,10 +282,23 @@ curl -X PUT http://localhost:8080/api/v1/admin/users/<user_id>/member-type \
   -d '{"member_type": "STUDENT"}'
 ```
 
+Admins can also change roles and suspend/reactivate accounts (nobody can
+change their own; accounts are never deleted through the API, so their
+bookings and points history stay intact):
+```bash
+curl -X PUT http://localhost:8080/api/v1/admin/users/<user_id>/role \
+  -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" -d '{"role": "STAFF"}'
+curl -X PUT http://localhost:8080/api/v1/admin/users/<user_id>/active \
+  -H "Authorization: Bearer <Admin_Token>" -H "Content-Type: application/json" -d '{"is_active": false}'
+```
+
 ### Login limits
-Five wrong passwords for one account within 15 minutes lock that account's
-login for the rest of the window (429, `Retry-After`); 50 failures from one
-IP do the same for that IP. Limits are kept in memory per server process.
-Behind a reverse proxy, set `TRUSTED_PROXIES` so the real client IP is used.
+Within any 15 minutes: 5 wrong passwords for one account *from one IP* lock
+that account from that IP (the owner elsewhere can still log in); 20 for one
+account from anywhere lock the account; 50 from one IP lock the IP. Answers
+are 429 with `Retry-After`. Failures are stored (hashed) in the
+`login_failures` table, so the limits survive restarts and hold across
+several backend instances. Behind a reverse proxy, set `TRUSTED_PROXIES`
+so the real client IP is used.
 Phone numbers are stored in one form (`0812345678`); `081-234-5678` and
 `+66 81 234 5678` log in to the same account.

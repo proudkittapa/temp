@@ -206,6 +206,11 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 
 	// Parse incoming file from the form data field "slip" (or fallback to "image")
 	file, err := c.FormFile("slip")
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"success": false, "error": "slip image must be 5 MB or smaller"})
+		return
+	}
 	if err != nil {
 		file, err = c.FormFile("image")
 		if err != nil {
@@ -299,7 +304,11 @@ func (h *ArenaHandler) ProcessPOSCheckout(c *gin.Context) {
 
 	result, err := h.posService.ProcessCheckout(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+		if errors.Is(err, service.ErrInvalidBooking) {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		} else {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
+		}
 		return
 	}
 
@@ -365,6 +374,44 @@ func (h *ArenaHandler) SetMemberType(c *gin.Context) {
 	}
 	actorID, actorName := actor(c)
 	u, err := h.membershipService.SetMemberType(c.Request.Context(), c.Param("id"), input.MemberType, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": u})
+}
+
+// PUT /api/v1/admin/users/:id/role {"role": "STAFF"} - admin only.
+func (h *ArenaHandler) SetUserRole(c *gin.Context) {
+	var input struct {
+		Role model.UserRole `json:"role" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	actorID, actorName := actor(c)
+	u, err := h.userService.SetRole(c.Request.Context(), c.Param("id"), input.Role, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": u})
+}
+
+// PUT /api/v1/admin/users/:id/active {"is_active": false} - admin only:
+// suspend or reactivate an account. (Accounts are never deleted through the
+// API: their bookings, payments and points history must stay intact.)
+func (h *ArenaHandler) SetUserActive(c *gin.Context) {
+	var input struct {
+		IsActive *bool `json:"is_active" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	actorID, actorName := actor(c)
+	u, err := h.userService.SetActive(c.Request.Context(), c.Param("id"), *input.IsActive, actorID, actorName)
 	if err != nil {
 		respondError(c, err)
 		return

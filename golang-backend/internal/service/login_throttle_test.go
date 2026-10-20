@@ -1,54 +1,98 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 )
 
-func TestLoginThrottleLocksAnAccountAfterFiveFailures(t *testing.T) {
-	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
-	th := NewLoginThrottle()
-	th.now = func() time.Time { return now }
+func testThrottle(now *time.Time) *LoginThrottle {
+	th := newLoginThrottle(newMemAttemptStore())
+	th.now = func() time.Time { return *now }
+	return th
+}
 
-	for i := 0; i < 5; i++ {
-		if w := th.RetryAfter("081-234-5678", "1.1.1.1"); w != 0 {
-			t.Fatalf("attempt %d blocked early (%v)", i+1, w)
-		}
-		th.Failed("081-234-5678", "1.1.1.1")
+func wait(t *testing.T, th *LoginThrottle, identity, ip string) time.Duration {
+	t.Helper()
+	w, err := th.RetryAfter(context.Background(), identity, ip)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// The same account in another format, from another IP, is still locked.
-	if w := th.RetryAfter("+66812345678", "2.2.2.2"); w <= 0 {
-		t.Fatal("6th attempt on the same account should be blocked")
+	return w
+}
+
+func fail(th *LoginThrottle, identity, ip string, n int) {
+	for i := 0; i < n; i++ {
+		_ = th.Failed(context.Background(), identity, ip)
 	}
-	// Other accounts from a different IP are unaffected.
-	if w := th.RetryAfter("0899999999", "2.2.2.2"); w != 0 {
-		t.Fatalf("an unrelated account was blocked (%v)", w)
+}
+
+func TestLoginThrottleLocksAnAccountFromTheGuessingIP(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	th := testThrottle(&now)
+
+	fail(th, "081-234-5678", "1.1.1.1", 4)
+	if w := wait(t, th, "0812345678", "1.1.1.1"); w != 0 {
+		t.Fatalf("blocked after 4 failures (%v)", w)
+	}
+	fail(th, "081-234-5678", "1.1.1.1", 1)
+	// The same account in another format, from the guessing IP: locked.
+	if w := wait(t, th, "+66812345678", "1.1.1.1"); w <= 0 {
+		t.Fatal("6th attempt from the guessing IP should be blocked")
+	}
+	// The owner on another network can still log in.
+	if w := wait(t, th, "0812345678", "9.9.9.9"); w != 0 {
+		t.Fatalf("the account was locked for everyone after only 5 failures (%v)", w)
 	}
 	// The lock lifts once the window has passed.
 	now = now.Add(15 * time.Minute)
-	if w := th.RetryAfter("0812345678", "1.1.1.1"); w != 0 {
+	if w := wait(t, th, "0812345678", "1.1.1.1"); w != 0 {
 		t.Fatalf("still blocked after the window (%v)", w)
 	}
 }
 
-func TestLoginThrottleSuccessClearsTheAccount(t *testing.T) {
-	th := NewLoginThrottle()
-	for i := 0; i < 4; i++ {
-		th.Failed("a@x.com", "1.1.1.1")
+func TestLoginThrottleLocksAnAccountUnderDistributedGuessing(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	th := testThrottle(&now)
+	for i := 0; i < 20; i++ {
+		fail(th, "a@x.com", "10.0.0."+string(rune('a'+i)), 1)
 	}
-	th.Succeeded("A@X.com")
-	th.Failed("a@x.com", "1.1.1.1")
-	if w := th.RetryAfter("a@x.com", "9.9.9.9"); w != 0 {
-		t.Fatalf("a correct password should reset the account's failures (%v)", w)
+	if w := wait(t, th, "A@X.com", "8.8.8.8"); w <= 0 {
+		t.Fatal("20 failures from many IPs should lock the account everywhere")
 	}
 }
 
 func TestLoginThrottlePerIPLimit(t *testing.T) {
-	th := NewLoginThrottle()
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	th := testThrottle(&now)
 	for i := 0; i < 50; i++ {
-		th.Failed("08000000"+string(rune('0'+i%10))+string(rune('0'+i/10)), "6.6.6.6")
+		fail(th, "08000000"+string(rune('0'+i%10))+string(rune('0'+i/10)), "6.6.6.6", 1)
 	}
-	if w := th.RetryAfter("0811111111", "6.6.6.6"); w <= 0 {
+	if w := wait(t, th, "0811111111", "6.6.6.6"); w <= 0 {
 		t.Fatal("an IP spraying many accounts should be blocked")
+	}
+}
+
+func TestLoginThrottleSuccessClearsTheAccount(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	th := testThrottle(&now)
+	fail(th, "a@x.com", "1.1.1.1", 4)
+	_ = th.Succeeded(context.Background(), "A@X.com", "1.1.1.1")
+	fail(th, "a@x.com", "1.1.1.1", 1)
+	if w := wait(t, th, "a@x.com", "1.1.1.1"); w != 0 {
+		t.Fatalf("a correct password should reset the account's failures (%v)", w)
+	}
+}
+
+func TestLoginThrottlePrune(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	store := newMemAttemptStore()
+	th := newLoginThrottle(store)
+	th.now = func() time.Time { return now }
+	fail(th, "a@x.com", "1.1.1.1", 3)
+	now = now.Add(16 * time.Minute)
+	_ = th.Prune(context.Background())
+	if len(store.m) != 0 {
+		t.Fatalf("old failures should be pruned, %d keys left", len(store.m))
 	}
 }

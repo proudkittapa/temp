@@ -411,8 +411,13 @@ export class StorageService {
 }
 
 // Pricing Helper Calculation
+// dateStr is a calendar date ("YYYY-MM-DD"). It used to go through
+// new Date(dateStr).getDay(): that parses as UTC midnight but reads the
+// weekday in the browser's zone, so west of UTC every date was a day early
+// (Saturday priced as a weekday, Monday as weekend).
 export function getDayType(dateStr: string): DayType {
-  const day = new Date(dateStr).getDay();
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   return (day === 0 || day === 6) ? DayType.WEEKEND : DayType.WEEKDAY;
 }
 

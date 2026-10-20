@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +33,7 @@ type AuthService struct {
 // package init(), which runs before main loads .env - so a secret set in
 // .env was silently ignored in favour of a hard-coded, publicly committed
 // default that anyone could use to sign an ADMIN token.
-func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.AuditRepository, jwtSecret []byte) *AuthService {
+func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.AuditRepository, jwtSecret []byte, throttle *LoginThrottle) *AuthService {
 	if len(jwtSecret) == 0 {
 		panic("auth: empty JWT secret")
 	}
@@ -40,8 +41,13 @@ func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.Au
 		usrRepo:   usrRepo,
 		auditRepo: auditRepo,
 		jwtSecret: jwtSecret,
-		throttle:  NewLoginThrottle(),
+		throttle:  throttle,
 	}
+}
+
+// PruneLoginFailures forgets failed logins older than the throttle window.
+func (s *AuthService) PruneLoginFailures(ctx context.Context) error {
+	return s.throttle.Prune(ctx)
 }
 
 // TooManyAttemptsError is returned by Login while an account or client IP
@@ -87,6 +93,9 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 	if len(phone) < 9 {
 		return nil, ErrInvalidPhone
 	}
+	// Emails are stored lower-case and compared ignoring case, so
+	// "John@Gmail.com" can't become a second account next to john@gmail.com.
+	email = strings.ToLower(strings.TrimSpace(email))
 	// The unique indexes on users.phone/email are the real guarantee; this
 	// pre-check just gives a clear message in the common case.
 	for _, identity := range []string{phone, email} {
@@ -167,7 +176,11 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 // UserRepository.FindByIdentity) - checking only the oldest locked the
 // other account's owner out.
 func (s *AuthService) Login(ctx context.Context, identity, password, clientIP string) (*AuthResult, error) {
-	if wait := s.throttle.RetryAfter(identity, clientIP); wait > 0 {
+	wait, err := s.throttle.RetryAfter(ctx, identity, clientIP)
+	if err != nil {
+		return nil, err
+	}
+	if wait > 0 {
 		return nil, &TooManyAttemptsError{RetryAfter: wait}
 	}
 	users, err := s.usrRepo.FindByIdentity(ctx, identity)
@@ -188,10 +201,14 @@ func (s *AuthService) Login(ctx context.Context, identity, password, clientIP st
 	// Same error for unknown user and wrong password so the response
 	// doesn't reveal which phone numbers/emails are registered.
 	if user == nil {
-		s.throttle.Failed(identity, clientIP)
+		if err := s.throttle.Failed(ctx, identity, clientIP); err != nil {
+			return nil, err
+		}
 		return nil, ErrInvalidCredentials
 	}
-	s.throttle.Succeeded(identity)
+	if err := s.throttle.Succeeded(ctx, identity, clientIP); err != nil {
+		return nil, err
+	}
 
 	if !user.IsActive {
 		return nil, ErrAccountSuspended
@@ -206,6 +223,11 @@ func (s *AuthService) Login(ctx context.Context, identity, password, clientIP st
 		Token: tokenString,
 		User:  user,
 	}, nil
+}
+
+// IssueTokenForTest signs a token like a login would; tests only.
+func (s *AuthService) IssueTokenForTest(userID, role string) (string, error) {
+	return s.generateToken(userID, role, time.Hour)
 }
 
 func (s *AuthService) generateToken(userID string, role string, d time.Duration) (string, error) {

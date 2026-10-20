@@ -1,107 +1,200 @@
 package service
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"sync"
 	"time"
 
+	"arena-backend/internal/model"
 	"arena-backend/internal/repository"
+	"gorm.io/gorm"
 )
 
-// LoginThrottle limits failed logins, per account and per client IP, within
-// a sliding window - without it a 6-character password could be guessed by
-// brute force. State is in memory, so it is per server process and resets
-// on restart; that is enough for one backend instance.
+// LoginThrottle limits failed logins within a sliding 15-minute window,
+// without which a 6-character password could be guessed by brute force:
 //
-// A locked identity cannot log in until the window passes even with the
-// right password; that is the usual trade-off (someone can lock a known
-// phone number for 15 minutes) in exchange for stopping password guessing.
+//   - 5 failures for one account from one IP lock that account *from that
+//     IP* - a guesser is stopped quickly, but a stranger on another network
+//     can't lock the real owner out with five wrong guesses;
+//   - 20 failures for one account from anywhere lock the account (a
+//     distributed guess);
+//   - 50 failures from one IP lock that IP (one source spraying accounts).
+//
+// Failures are stored in the database (login_failures), so the limits hold
+// across restarts and across several backend instances. Keys are stored
+// hashed, so the table holds no phone numbers, emails or IPs.
 type LoginThrottle struct {
-	mu             sync.Mutex
-	failures       map[string][]time.Time
-	window         time.Duration
-	maxPerIdentity int
-	maxPerIP       int
-	now            func() time.Time
+	store      attemptStore
+	window     time.Duration
+	maxPerPair int
+	maxPerAcct int
+	maxPerIP   int
+	now        func() time.Time
 }
 
-func NewLoginThrottle() *LoginThrottle {
-	return &LoginThrottle{
-		failures:       map[string][]time.Time{},
-		window:         15 * time.Minute,
-		maxPerIdentity: 5,
-		// Generous, because many customers can share one IP (mobile
-		// carrier NAT, the venue's Wi-Fi).
-		maxPerIP: 50,
-		now:      time.Now,
-	}
+// attemptStore keeps failure timestamps per key.
+type attemptStore interface {
+	record(ctx context.Context, keys []string, at time.Time) error
+	since(ctx context.Context, key string, from time.Time) ([]time.Time, error) // oldest first
+	clear(ctx context.Context, keys []string) error
+	prune(ctx context.Context, before time.Time) error
 }
 
-// identityKey makes "081-234-5678" and "0812345678", or "A@x.com" and
+func newLoginThrottle(store attemptStore) *LoginThrottle {
+	return &LoginThrottle{store: store, window: 15 * time.Minute, maxPerPair: 5, maxPerAcct: 20, maxPerIP: 50, now: time.Now}
+}
+
+// NewLoginThrottle stores failures in the database.
+func NewLoginThrottle(db *gorm.DB) *LoginThrottle { return newLoginThrottle(&dbAttemptStore{db: db}) }
+
+// identityKey makes "081-234-5678" and "+66812345678", or "A@x.com" and
 // "a@x.com", count as the same account.
 func identityKey(identity string) string {
 	identity = strings.TrimSpace(identity)
 	if strings.Contains(identity, "@") {
-		return "id:" + strings.ToLower(identity)
+		return strings.ToLower(identity)
 	}
 	if p := repository.NormalizePhone(identity); p != "" {
-		return "id:" + p
+		return p
 	}
-	return "id:" + identity
+	return identity
 }
 
-// recent returns key's failures still inside the window (and forgets older ones).
-func (t *LoginThrottle) recent(key string, now time.Time) []time.Time {
-	list := t.failures[key]
-	cut := 0
-	for cut < len(list) && now.Sub(list[cut]) >= t.window {
-		cut++
-	}
-	list = list[cut:]
-	if len(list) == 0 {
-		delete(t.failures, key)
-	} else {
-		t.failures[key] = list
-	}
-	return list
+func hashKey(kind, value string) string {
+	h := sha256.Sum256([]byte(kind + ":" + value))
+	return hex.EncodeToString(h[:])
 }
 
-// RetryAfter reports how long until another attempt is allowed for this
-// identity/IP pair; zero means it may proceed now.
-func (t *LoginThrottle) RetryAfter(identity, ip string) time.Duration {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+func (t *LoginThrottle) keys(identity, ip string) (pair, acct, ipKey string) {
+	id := identityKey(identity)
+	return hashKey("pair", id+"|"+ip), hashKey("acct", id), hashKey("ip", ip)
+}
+
+// RetryAfter reports how long until this identity/IP may try again; zero
+// means now.
+func (t *LoginThrottle) RetryAfter(ctx context.Context, identity, ip string) (time.Duration, error) {
 	now := t.now()
+	pair, acct, ipKey := t.keys(identity, ip)
 	wait := time.Duration(0)
-	for key, max := range map[string]int{identityKey(identity): t.maxPerIdentity, "ip:" + ip: t.maxPerIP} {
-		if list := t.recent(key, now); len(list) >= max {
-			if w := list[len(list)-max].Add(t.window).Sub(now); w > wait {
+	for _, l := range []struct {
+		key string
+		max int
+	}{{pair, t.maxPerPair}, {acct, t.maxPerAcct}, {ipKey, t.maxPerIP}} {
+		times, err := t.store.since(ctx, l.key, now.Add(-t.window))
+		if err != nil {
+			return 0, err
+		}
+		if len(times) >= l.max {
+			if w := times[len(times)-l.max].Add(t.window).Sub(now); w > wait {
 				wait = w
 			}
 		}
 	}
-	return wait
+	return wait, nil
 }
 
 // Failed records a failed attempt.
-func (t *LoginThrottle) Failed(identity, ip string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := t.now()
-	for _, key := range []string{identityKey(identity), "ip:" + ip} {
-		t.failures[key] = append(t.recent(key, now), now)
-	}
-	// Bound memory under a spray of random identities.
-	if len(t.failures) > 10000 {
-		for key := range t.failures {
-			t.recent(key, now)
-		}
-	}
+func (t *LoginThrottle) Failed(ctx context.Context, identity, ip string) error {
+	pair, acct, ipKey := t.keys(identity, ip)
+	return t.store.record(ctx, []string{pair, acct, ipKey}, t.now())
 }
 
-// Succeeded clears the identity's failures after a correct password.
-func (t *LoginThrottle) Succeeded(identity string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.failures, identityKey(identity))
+// Succeeded clears the account's failures after a correct password (the
+// IP's count stays, so a sprayer can't reset it with one valid account).
+func (t *LoginThrottle) Succeeded(ctx context.Context, identity, ip string) error {
+	pair, acct, _ := t.keys(identity, ip)
+	return t.store.clear(ctx, []string{pair, acct})
+}
+
+// Prune forgets failures older than the window; main calls it every minute.
+func (t *LoginThrottle) Prune(ctx context.Context) error {
+	return t.store.prune(ctx, t.now().Add(-t.window))
+}
+
+// ---- database store ----
+
+type dbAttemptStore struct{ db *gorm.DB }
+
+func (s *dbAttemptStore) record(ctx context.Context, keys []string, at time.Time) error {
+	rows := make([]model.LoginFailure, len(keys))
+	for i, k := range keys {
+		rows[i] = model.LoginFailure{Key: k, At: at}
+	}
+	return s.db.WithContext(ctx).Create(&rows).Error
+}
+
+func (s *dbAttemptStore) since(ctx context.Context, key string, from time.Time) ([]time.Time, error) {
+	var times []time.Time
+	err := s.db.WithContext(ctx).Model(&model.LoginFailure{}).
+		Where("key = ? AND at > ?", key, from).Order("at").Pluck("at", &times).Error
+	return times, err
+}
+
+func (s *dbAttemptStore) clear(ctx context.Context, keys []string) error {
+	return s.db.WithContext(ctx).Where("key IN ?", keys).Delete(&model.LoginFailure{}).Error
+}
+
+func (s *dbAttemptStore) prune(ctx context.Context, before time.Time) error {
+	return s.db.WithContext(ctx).Where("at <= ?", before).Delete(&model.LoginFailure{}).Error
+}
+
+// ---- in-memory store (tests) ----
+
+type memAttemptStore struct {
+	mu sync.Mutex
+	m  map[string][]time.Time
+}
+
+func newMemAttemptStore() *memAttemptStore { return &memAttemptStore{m: map[string][]time.Time{}} }
+
+func (s *memAttemptStore) record(_ context.Context, keys []string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range keys {
+		s.m[k] = append(s.m[k], at)
+	}
+	return nil
+}
+
+func (s *memAttemptStore) since(_ context.Context, key string, from time.Time) ([]time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []time.Time
+	for _, t := range s.m[key] {
+		if t.After(from) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (s *memAttemptStore) clear(_ context.Context, keys []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, k := range keys {
+		delete(s.m, k)
+	}
+	return nil
+}
+
+func (s *memAttemptStore) prune(_ context.Context, before time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, list := range s.m {
+		var keep []time.Time
+		for _, t := range list {
+			if t.After(before) {
+				keep = append(keep, t)
+			}
+		}
+		if len(keep) == 0 {
+			delete(s.m, k)
+		} else {
+			s.m[k] = keep
+		}
+	}
+	return nil
 }

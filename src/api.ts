@@ -509,6 +509,21 @@ export async function setMemberType(userId: string, memberType: MemberType): Pro
   }));
 }
 
+// Admin only: change a user's role (e.g. make a customer counter staff).
+export async function setUserRole(userId: string, role: UserRole): Promise<User> {
+  return toUser(await request<ApiUser>(`/admin/users/${encodeURIComponent(userId)}/role`, {
+    method: 'PUT', session: 'admin', body: { role }
+  }));
+}
+
+// Admin only: suspend or reactivate an account (accounts are never deleted
+// through the API, so their booking and points history stays intact).
+export async function setUserActive(userId: string, isActive: boolean): Promise<User> {
+  return toUser(await request<ApiUser>(`/admin/users/${encodeURIComponent(userId)}/active`, {
+    method: 'PUT', session: 'admin', body: { is_active: isActive }
+  }));
+}
+
 // Manual loyalty points change; the reason is required and audit-logged.
 export async function adjustPoints(userId: string, delta: number, reason: string): Promise<number> {
   const r = await request<{ new_balance: number }>(`/admin/users/${encodeURIComponent(userId)}/adjust-points`, {
