@@ -18,6 +18,17 @@ Entry format:
 
 ---
 
+## 2026-10-21 — TODO order of work re-prioritised
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `7eaa6d3`)
+- **Changed (docs only):** basketball A/B/C and the single login were at the
+  end of the order; now basketball is step 3 (before real bookings) and
+  single login step 5 (before deploy), decided items removed from step 1.
+- **Verified:** n/a (docs).
+
+---
+
 ## 2026-10-21 — TODO: single login with roles/permissions; basketball A/B/C
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

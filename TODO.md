@@ -1,29 +1,30 @@
 # TODO (planned, not started)
 
-## Order of work (do top to bottom)
-Each step names the sections below. The order puts cheap, blocking items
-first and items that need outside accounts later.
+## Order of work (do top to bottom, by priority)
+Cheap and blocking first, then what changes what customers/staff see
+(before launch), then launch, then things that need outside accounts.
 
-1. **Owner answers the decisions** - section 0, incl. the real business
-   name / address / tax ID and whether the business is VAT-registered. Each is
-   a yes/no; several are small code changes once decided.
+1. **Owner answers the remaining decisions** - section 0: cash refunds vs
+   the drawer, login lockout policy, and the real business name / address /
+   tax ID / VAT registration.
 2. **Fix receipts and the payment screen** with those details - section 5,
-   plus "receipts show the print time and the viewer as cashier" (section 7).
-3. **Safety checks before going live** - section 7: database backstop against
-   double booking, concurrency tests and automatic retry of "busy" errors.
-4. **Deploy to a real server with HTTPS** - section 8. Needed for real-phone
-   testing, the LINE login callback and LINE webhooks.
-5. **Test on real phones** - section 6 and section 3 ("real phones / inside
-   the LINE app"); scan the PromptPay QR with two Thai banking apps.
-6. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
+   plus "receipts show who took the money and when" (section 7).
+3. **Basketball courts A, B, C, each full or half** - section 10. It changes
+   the court list and closures, so do it before real bookings exist.
+4. **Safety checks** - section 7: database backstop against double booking,
+   concurrency tests and automatic retry of "busy" errors.
+5. **One login, screens by permission, admin-defined roles** - section 9.
+   Before launch so staff learn the final sign-in once (if launch can't
+   wait, do it right after; today's separate sign-ins work).
+6. **Deploy to a real server with HTTPS** - section 8.
+7. **Test on real phones** - section 6 and section 3 (real phones, inside the
+   LINE app); scan the PromptPay QR with two Thai banking apps.
+8. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
    notifications (section 2).
-7. **Forgot password** - section 4 (needs an SMS provider, or LINE from step 6).
-8. **Staff POS and Admin on a tablet** - section 3.
-9. **Remaining small improvements** - section 7: refunds split by method,
-   report year picker, Excel import preview, rental deposit, tidy-ups.
-10. **Basketball courts A, B, C, each full or half** - section 10 (before
-    launch if basketball is sold from day one; it changes the court list).
-11. **One login, screens by permission, admin-defined roles** - section 9.
+9. **Forgot password** - section 4 (needs an SMS provider, or LINE from step 8).
+10. **Staff POS and Admin on a tablet** - section 3.
+11. **Remaining small improvements** - section 7: refunds split by method,
+    report year picker, Excel import preview, rental deposit, tidy-ups.
 
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
 Each needs a yes/no from the owner before it is built.
