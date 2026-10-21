@@ -196,7 +196,7 @@ func (h *ArenaHandler) CreateBooking(c *gin.Context) {
 func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	bookingID := c.Param("id")
 
-	payment, err := h.bookingService.CheckSlipUpload(c.Request.Context(), bookingID, currentUserID(c), isStaff(currentRole(c)))
+	payment, err := h.bookingService.CheckSlipUpload(c.Request.Context(), bookingID, currentUserID(c), seesCustomerDetails(c))
 	if err != nil {
 		respondError(c, err)
 		return

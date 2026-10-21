@@ -72,7 +72,12 @@ func (h *ArenaHandler) Me(c *gin.Context) {
 		respondError(c, service.ErrNotFound)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": u})
+	// The caller's permissions ride along so the UI can show only the
+	// screens/tabs their role allows (the server still checks every call).
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": struct {
+		*model.User
+		Permissions []model.Permission `json:"permissions"`
+	}{u, currentPermissions(c)}})
 }
 
 // GET /api/v1/courts - active courts.
@@ -99,7 +104,7 @@ func (h *ArenaHandler) ListBookings(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	if !isStaff(currentRole(c)) {
+	if !seesCustomerDetails(c) {
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": sanitizeBookings(c, list)})
 		return
 	}
@@ -129,7 +134,7 @@ func (h *ArenaHandler) ListBookings(c *gin.Context) {
 // ids and codes are withheld too: the code is what customers quote at the
 // counter, so leaking it would let a stranger claim someone's reservation.
 func sanitizeBookings(c *gin.Context, list []model.Booking) []model.Booking {
-	if isStaff(currentRole(c)) {
+	if seesCustomerDetails(c) {
 		return list
 	}
 	me := currentUserID(c)

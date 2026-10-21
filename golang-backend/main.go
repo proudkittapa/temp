@@ -105,6 +105,7 @@ func main() {
 	log.Println("Running GORM AutoMigrate for all system schemas...")
 	err = db.AutoMigrate(
 		&model.User{},
+		&model.Role{},
 		&model.Court{},
 		&model.PricingRule{},
 		&model.PricingConfig{},
@@ -153,6 +154,11 @@ func main() {
 	authService := service.NewAuthService(usrRepo, auditRepo, serverSecret, service.NewLoginThrottle(db))
 	slipSigner := handler.NewSlipSigner(serverSecret)
 	userService := service.NewUserService(db, usrRepo)
+	roleService := service.NewRoleService(db)
+	if err := roleService.SeedBuiltins(context.Background()); err != nil {
+		log.Fatalf("Could not create the built-in roles: %v\n", err)
+	}
+	roleHandler := handler.NewRoleHandler(roleService)
 	membershipService := service.NewMembershipService(db, usrRepo)
 	priceEngineService := service.NewPriceEngineService(courtRepo, membershipService)
 	paymentService, err := service.NewPaymentService(os.Getenv("PROMPTPAY_ID"))
@@ -221,11 +227,11 @@ func main() {
 
 	// 4. API Endpoints Map layout. Authenticate only parses an optional
 	// bearer token; RequireRole gates each route that needs a login.
-	api := router.Group("/api/v1", handler.LimitBody(), handler.Authenticate(authService, userService))
-	loggedIn := handler.RequireRole()
-	staffOnly := handler.RequireRole(handler.StaffRoles...)
-	managerOnly := handler.RequireRole(handler.ManagerRoles...)
-	adminOnly := handler.RequireRole(handler.AdminRoles...)
+	api := router.Group("/api/v1", handler.LimitBody(), handler.Authenticate(authService, userService, roleService))
+	// Each route checks a permission (model/permissions.go); roles are
+	// permission sets the admin edits. can(a, b) = any one of them.
+	loggedIn := handler.RequireLogin()
+	can := func(p ...model.Permission) gin.HandlerFunc { return handler.RequirePermission(p...) }
 	{
 		// Authentication Ports
 		api.POST("/auth/register", arenaHandler.Register)
@@ -240,82 +246,89 @@ func main() {
 		api.GET("/pricing", pricingHandler.Snapshot)
 
 		// Booking flows
-		api.POST("/bookings", loggedIn, arenaHandler.CreateBooking)
-		api.POST("/bookings/:id/upload-slip", loggedIn, arenaHandler.UploadSlip)
-		api.GET("/me/bookings", loggedIn, arenaHandler.MyBookings)
+		api.POST("/bookings", can(model.PermBookOnline), arenaHandler.CreateBooking)
+		api.POST("/bookings/:id/upload-slip", can(model.PermBookOnline, model.PermCounterBookings, model.PermVerifySlips), arenaHandler.UploadSlip)
+		api.GET("/me/bookings", can(model.PermBookOnline), arenaHandler.MyBookings)
 
 		// Loyalty rewards (FR-4.2/4.3)
 		api.GET("/rewards", rewardHandler.Catalog)
-		api.POST("/me/rewards/:id/redeem", loggedIn, rewardHandler.Redeem)
-		api.GET("/me/vouchers", loggedIn, rewardHandler.MyVouchers)
-		api.GET("/staff/vouchers/:code", staffOnly, rewardHandler.Lookup)
-		api.POST("/staff/vouchers/:code/dispense", staffOnly, rewardHandler.Dispense)
+		api.POST("/me/rewards/:id/redeem", can(model.PermBookOnline), rewardHandler.Redeem)
+		api.GET("/me/vouchers", can(model.PermBookOnline), rewardHandler.MyVouchers)
+		api.GET("/staff/vouchers/:code", can(model.PermSellRent, model.PermCounterBookings), rewardHandler.Lookup)
+		api.POST("/staff/vouchers/:code/dispense", can(model.PermSellRent), rewardHandler.Dispense)
 		api.GET("/slips/:name", slipSigner.Serve) // signed link; see handler.SlipSigner
 
 		// Counter walk-ins, paid on the spot
-		api.POST("/staff/bookings", staffOnly, arenaHandler.CreateWalkInBooking)
+		api.POST("/staff/bookings", can(model.PermCounterBookings), arenaHandler.CreateWalkInBooking)
 
 		// Staff slip review (FR-3.3)
-		api.GET("/staff/payments", staffOnly, arenaHandler.ListPaymentsForReview)
-		api.POST("/staff/payments/:id/verify", staffOnly, arenaHandler.VerifyPayment)
-		api.POST("/staff/payments/:id/reject", staffOnly, arenaHandler.RejectPayment)
-		api.POST("/staff/bookings/:id/no-show", staffOnly, arenaHandler.MarkNoShow)
-		api.GET("/staff/summary", staffOnly, shopHandler.DaySummary)
+		api.GET("/staff/payments", can(model.PermVerifySlips), arenaHandler.ListPaymentsForReview)
+		api.POST("/staff/payments/:id/verify", can(model.PermVerifySlips), arenaHandler.VerifyPayment)
+		api.POST("/staff/payments/:id/reject", can(model.PermVerifySlips), arenaHandler.RejectPayment)
+		api.POST("/staff/bookings/:id/no-show", can(model.PermCounterBookings), arenaHandler.MarkNoShow)
+		api.GET("/staff/summary", can(model.PermDaySummary), shopHandler.DaySummary)
 
 		// Cancellations, refunds and cash recorded by a manager (FR-6.3)
-		api.POST("/admin/bookings/:id/cancel", managerOnly, arenaHandler.CancelBooking)
-		api.POST("/admin/payments/:id/refund", managerOnly, arenaHandler.RefundPayment)
-		api.POST("/admin/payments/:id/mark-cash", managerOnly, arenaHandler.MarkPaidInCash)
-		api.POST("/admin/bookings/:id/mark-cash", managerOnly, arenaHandler.MarkBookingPaidInCash)
+		api.POST("/admin/bookings/:id/cancel", can(model.PermCancelRefund), arenaHandler.CancelBooking)
+		api.POST("/admin/payments/:id/refund", can(model.PermCancelRefund), arenaHandler.RefundPayment)
+		api.POST("/admin/payments/:id/mark-cash", can(model.PermCancelRefund), arenaHandler.MarkPaidInCash)
+		api.POST("/admin/bookings/:id/mark-cash", can(model.PermCancelRefund), arenaHandler.MarkBookingPaidInCash)
 
 		// Counter shop (FR-5.2/5.3): catalog, sales, rentals and returns
-		api.GET("/staff/products", staffOnly, shopHandler.ListProducts(false))
-		api.POST("/pos/order", staffOnly, shopHandler.Checkout)
-		api.GET("/staff/orders", staffOnly, shopHandler.ListOrders)
-		api.GET("/staff/rentals", staffOnly, shopHandler.ActiveRentals)
-		api.POST("/staff/rentals/items/:id/return", staffOnly, shopHandler.ReturnRental)
-		api.GET("/admin/products", managerOnly, shopHandler.ListProducts(true))
-		api.POST("/admin/products", managerOnly, shopHandler.CreateProducts)
-		api.PUT("/admin/products/:id", managerOnly, shopHandler.UpdateProduct)
-		api.POST("/admin/products/:id/stock", managerOnly, shopHandler.AdjustStock)
-		api.POST("/admin/orders/:id/void", managerOnly, shopHandler.VoidOrder)
+		api.GET("/staff/products", can(model.PermSellRent), shopHandler.ListProducts(false))
+		api.POST("/pos/order", can(model.PermSellRent), shopHandler.Checkout)
+		api.GET("/staff/orders", can(model.PermSellRent, model.PermCancelRefund), shopHandler.ListOrders)
+		api.GET("/staff/rentals", can(model.PermSellRent), shopHandler.ActiveRentals)
+		api.POST("/staff/rentals/items/:id/return", can(model.PermSellRent), shopHandler.ReturnRental)
+		api.GET("/admin/products", can(model.PermManageProducts), shopHandler.ListProducts(true))
+		api.POST("/admin/products", can(model.PermManageProducts), shopHandler.CreateProducts)
+		api.PUT("/admin/products/:id", can(model.PermManageProducts), shopHandler.UpdateProduct)
+		api.POST("/admin/products/:id/stock", can(model.PermManageProducts), shopHandler.AdjustStock)
+		api.POST("/admin/orders/:id/void", can(model.PermCancelRefund), shopHandler.VoidOrder)
 
 		// Cash drawer shifts (FR-6.1/6.2)
-		api.GET("/staff/shift", staffOnly, shopHandler.CurrentShift)
-		api.POST("/staff/shift/open", staffOnly, shopHandler.OpenShift)
-		api.POST("/staff/shift/close", staffOnly, shopHandler.CloseShift)
-		api.GET("/admin/shifts", managerOnly, shopHandler.ListShifts)
+		api.GET("/staff/shift", can(model.PermShifts), shopHandler.CurrentShift)
+		api.POST("/staff/shift/open", can(model.PermShifts), shopHandler.OpenShift)
+		api.POST("/staff/shift/close", can(model.PermShifts), shopHandler.CloseShift)
+		api.GET("/admin/shifts", can(model.PermViewReports), shopHandler.ListShifts)
 
 		// Reports from the database (FR-7.2-7.4)
-		api.GET("/admin/dashboard", managerOnly, shopHandler.Dashboard)
-		api.GET("/admin/report", managerOnly, shopHandler.MonthReport)
-		api.GET("/admin/audit-logs", adminOnly, shopHandler.AuditLogs)
+		api.GET("/admin/dashboard", can(model.PermViewReports), shopHandler.Dashboard)
+		api.GET("/admin/report", can(model.PermViewReports), shopHandler.MonthReport)
+		api.GET("/admin/audit-logs", can(model.PermViewAuditLog), shopHandler.AuditLogs)
 
 		// Admin & CRM managers wallets configuration
-		api.POST("/admin/users/:id/adjust-points", managerOnly, arenaHandler.ModifyPoints)
-		api.GET("/admin/users", managerOnly, arenaHandler.ListUsers)
-		api.PUT("/admin/users/:id/member-type", managerOnly, arenaHandler.SetMemberType)
-		api.PUT("/admin/users/:id/role", adminOnly, arenaHandler.SetUserRole)
-		api.PUT("/admin/users/:id/active", adminOnly, arenaHandler.SetUserActive)
+		api.POST("/admin/users/:id/adjust-points", can(model.PermAdjustPoints), arenaHandler.ModifyPoints)
+		api.GET("/admin/users", can(model.PermManageMembers, model.PermAdjustPoints, model.PermManageStaff), arenaHandler.ListUsers)
+		api.PUT("/admin/users/:id/member-type", can(model.PermManageMembers), arenaHandler.SetMemberType)
+		api.PUT("/admin/users/:id/role", can(model.PermManageStaff), arenaHandler.SetUserRole)
+		api.PUT("/admin/users/:id/active", can(model.PermManageStaff), arenaHandler.SetUserActive)
+
+		// Roles = permission sets (model/permissions.go). Anyone who assigns
+		// roles can list them; only manage_roles edits them.
+		api.GET("/admin/roles", can(model.PermManageRoles, model.PermManageStaff), roleHandler.List)
+		api.POST("/admin/roles", can(model.PermManageRoles), roleHandler.Create)
+		api.PUT("/admin/roles/:id", can(model.PermManageRoles), roleHandler.Update)
+		api.DELETE("/admin/roles/:id", can(model.PermManageRoles), roleHandler.Delete)
 
 		// Court closures (FR-1.3) - managers and admins (REQUIREMENTS.md
 		// section 3); enforced by booking creation
-		api.POST("/admin/days-off", managerOnly, dayOffHandler.Create)
-		api.DELETE("/admin/days-off/:id", managerOnly, dayOffHandler.Delete)
+		api.POST("/admin/days-off", can(model.PermManageClosures), dayOffHandler.Create)
+		api.DELETE("/admin/days-off/:id", can(model.PermManageClosures), dayOffHandler.Delete)
 
 		// Courts: admins add them and open/close them for booking; never
 		// deleted (bookings and reports point at them)
-		api.GET("/admin/courts", managerOnly, courtHandler.List)
-		api.POST("/admin/courts", adminOnly, courtHandler.Create)
-		api.PUT("/admin/courts/:id", adminOnly, courtHandler.Update)
+		api.GET("/admin/courts", can(model.PermManageClosures, model.PermManageCourts), courtHandler.List)
+		api.POST("/admin/courts", can(model.PermManageCourts), courtHandler.Create)
+		api.PUT("/admin/courts/:id", can(model.PermManageCourts), courtHandler.Update)
 
 		// Pricing engine (FR-2) - admin only; used by every booking price
-		api.POST("/admin/pricing-rules", adminOnly, pricingHandler.SaveRule)
-		api.PUT("/admin/pricing-rules/:id", adminOnly, pricingHandler.SaveRule)
-		api.DELETE("/admin/pricing-rules/:id", adminOnly, pricingHandler.DeleteRule)
-		api.PUT("/admin/member-discounts/:member_type", adminOnly, pricingHandler.UpdateMemberDiscount)
-		api.PUT("/admin/pricing-config", adminOnly, pricingHandler.UpdateConfig)
-		api.PUT("/admin/business", adminOnly, pricingHandler.UpdateBusiness)
+		api.POST("/admin/pricing-rules", can(model.PermEditPricing), pricingHandler.SaveRule)
+		api.PUT("/admin/pricing-rules/:id", can(model.PermEditPricing), pricingHandler.SaveRule)
+		api.DELETE("/admin/pricing-rules/:id", can(model.PermEditPricing), pricingHandler.DeleteRule)
+		api.PUT("/admin/member-discounts/:member_type", can(model.PermEditPricing), pricingHandler.UpdateMemberDiscount)
+		api.PUT("/admin/pricing-config", can(model.PermEditPricing), pricingHandler.UpdateConfig)
+		api.PUT("/admin/business", can(model.PermEditPricing), pricingHandler.UpdateBusiness)
 	}
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned

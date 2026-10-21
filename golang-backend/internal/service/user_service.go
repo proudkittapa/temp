@@ -67,9 +67,12 @@ func (s *UserService) FetchAllUsers(ctx context.Context, roleFilter string) ([]m
 // to make a registered customer counter staff. Role is re-read on every
 // request, so it takes effect at once.
 func (s *UserService) SetRole(ctx context.Context, userID string, role model.UserRole, actorID, actorName string) (*model.User, error) {
-	switch role {
-	case model.RoleCustomer, model.RoleStaff, model.RoleManager, model.RoleAdmin:
-	default:
+	// Any role in the roles table: the four built-ins or one the admin made.
+	var n int64
+	if err := s.db.WithContext(ctx).Model(&model.Role{}).Where("id = ?", string(role)).Count(&n).Error; err != nil {
+		return nil, err
+	}
+	if n == 0 {
 		return nil, fmt.Errorf("%w: unknown role %q", ErrInvalidBooking, role)
 	}
 	return s.updateUser(ctx, userID, actorID, actorName, "USER_ROLE_CHANGED", func(u *model.User) (map[string]any, any, any) {

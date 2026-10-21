@@ -30,9 +30,9 @@ func TestAuthenticateDuringDatabaseOutage(t *testing.T) {
 	}
 
 	r := gin.New()
-	api := r.Group("/", Authenticate(auth, service.NewUserService(db, users)))
+	api := r.Group("/", Authenticate(auth, service.NewUserService(db, users), service.NewRoleService(db)))
 	api.GET("/public", func(c *gin.Context) { c.Status(http.StatusOK) })
-	api.GET("/private", RequireRole(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	api.GET("/private", RequireLogin(), func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	get := func(path string) int {
 		w := httptest.NewRecorder()

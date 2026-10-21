@@ -15,6 +15,7 @@ const (
 	ctxRole            = "role"
 	ctxUserName        = "user_name"
 	ctxAuthError       = "auth_error"
+	ctxPermissions     = "permissions"
 )
 
 // Authenticate reads an optional "Authorization: Bearer <jwt>" header and,
@@ -27,7 +28,7 @@ const (
 // just means "anonymous", so public routes keep working for a client whose
 // session lapsed. RequireRole then decides per route, and reports a lapsed
 // session as such.
-func Authenticate(auth *service.AuthService, users *service.UserService) gin.HandlerFunc {
+func Authenticate(auth *service.AuthService, users *service.UserService, roles *service.RoleService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if header == "" {
@@ -61,19 +62,36 @@ func Authenticate(auth *service.AuthService, users *service.UserService) gin.Han
 			c.Next()
 			return
 		}
+		// Permissions come from the user's role row on every request, so a
+		// role edit (or a new role for this user) applies at once.
+		perms, err := roles.Permissions(c.Request.Context(), string(u.Role))
+		if err != nil {
+			c.Set(ctxAuthUnavailable, true)
+			c.Next()
+			return
+		}
+		set := make(map[model.Permission]bool, len(perms))
+		for _, p := range perms {
+			set[p] = true
+		}
 		c.Set(ctxUserID, u.ID)
 		c.Set(ctxRole, u.Role)
 		c.Set(ctxUserName, u.Name)
+		c.Set(ctxPermissions, set)
 		c.Next()
 	}
 }
 
-// RequireRole rejects requests without a valid session, or (when roles are
-// given) whose current role isn't one of them. RequireRole() with no roles
-// just requires being logged in.
-func RequireRole(roles ...model.UserRole) gin.HandlerFunc {
+// RequireLogin rejects requests without a valid session.
+func RequireLogin() gin.HandlerFunc {
+	return RequirePermission()
+}
+
+// RequirePermission rejects requests without a valid session, or (when
+// permissions are given) whose role has none of them - any one is enough.
+func RequirePermission(perms ...model.Permission) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		role, ok := c.Get(ctxRole)
+		_, ok := c.Get(ctxRole)
 		if !ok && c.GetBool(ctxAuthUnavailable) {
 			abortJSON(c, http.StatusServiceUnavailable, "could not check your session right now - please try again")
 			return
@@ -86,26 +104,44 @@ func RequireRole(roles ...model.UserRole) gin.HandlerFunc {
 			abortJSON(c, http.StatusUnauthorized, msg)
 			return
 		}
-		if len(roles) == 0 {
+		if len(perms) == 0 || hasPermission(c, perms...) {
 			c.Next()
 			return
-		}
-		for _, r := range roles {
-			if role == r {
-				c.Next()
-				return
-			}
 		}
 		abortJSON(c, http.StatusForbidden, "your role is not allowed to do this")
 	}
 }
 
-// Staff-side role sets, mirroring the frontend's role switcher.
-var (
-	StaffRoles   = []model.UserRole{model.RoleStaff, model.RoleManager, model.RoleAdmin}
-	ManagerRoles = []model.UserRole{model.RoleManager, model.RoleAdmin}
-	AdminRoles   = []model.UserRole{model.RoleAdmin}
-)
+// hasPermission reports whether the caller's role has any of perms.
+func hasPermission(c *gin.Context, perms ...model.Permission) bool {
+	v, _ := c.Get(ctxPermissions)
+	set, _ := v.(map[model.Permission]bool)
+	for _, p := range perms {
+		if set[p] {
+			return true
+		}
+	}
+	return false
+}
+
+// currentPermissions lists the caller's permissions (for /auth/me).
+func currentPermissions(c *gin.Context) []model.Permission {
+	v, _ := c.Get(ctxPermissions)
+	set, _ := v.(map[model.Permission]bool)
+	out := []model.Permission{}
+	for _, p := range model.AllPermissions {
+		if set[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// seesCustomerDetails: staff-side callers may see who booked a slot and act
+// on customers' bookings (e.g. upload a slip for them at the counter).
+func seesCustomerDetails(c *gin.Context) bool {
+	return hasPermission(c, model.PermCounterBookings, model.PermVerifySlips, model.PermCancelRefund, model.PermManageMembers)
+}
 
 func currentUserID(c *gin.Context) string {
 	return c.GetString(ctxUserID)
@@ -121,15 +157,6 @@ func currentRole(c *gin.Context) model.UserRole {
 // by Authenticate, so no extra lookup).
 func actor(c *gin.Context) (string, string) {
 	return currentUserID(c), c.GetString(ctxUserName)
-}
-
-func isStaff(r model.UserRole) bool {
-	for _, s := range StaffRoles {
-		if r == s {
-			return true
-		}
-	}
-	return false
 }
 
 func abortJSON(c *gin.Context, status int, msg string) {

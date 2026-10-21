@@ -256,7 +256,7 @@ func (h *ShopHandler) CurrentShift(c *gin.Context) {
 // hold (owner decision 2026-10-21) - the expected cash and the day's cash
 // totals go to managers and admins only. The close result (with the
 // difference) is shown once the count is in.
-func blindCount(c *gin.Context) bool { return currentRole(c) == model.RoleStaff }
+func blindCount(c *gin.Context) bool { return !hasPermission(c, model.PermViewReports) }
 
 func blindShift(c *gin.Context, sh *service.ShiftView) *service.ShiftView {
 	if sh == nil || !blindCount(c) {

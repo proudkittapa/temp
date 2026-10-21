@@ -18,6 +18,41 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Roles as permission sets (TODO step 5, stages 1-2: backend)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
+- **Commit(s):** this commit (on `main`, parent `e0cc9d4`)
+- **Changed:**
+  - `model/permissions.go`: 17 permissions and the built-in roles CUSTOMER /
+    STAFF / MANAGER / ADMIN with exactly the rights the fixed roles had;
+    `roles` table (`model.Role`, permissions as JSON text).
+  - `service/role_service.go`: seed built-ins (existing rows untouched;
+    ADMIN always keeps manage_roles), permissions lookup, list (with account
+    counts), create/update/delete with checks (valid permissions, unique
+    name, built-ins not deletable, roles in use not deletable, ADMIN keeps
+    manage_roles), audit-logged.
+  - Middleware: `Authenticate` loads the role's permissions every request
+    (edits apply at once); `RequirePermission(any of...)` / `RequireLogin`
+    replace the fixed role groups; all 51 protected routes in `main.go` map
+    to permissions; in-handler role checks became permission checks (blind
+    cash count = no view_reports; customer details = counter/slip/refund/
+    member permissions). `/auth/me` returns `permissions`. New
+    `/admin/roles` (list: manage_roles or manage_staff; edit: manage_roles).
+    Giving a user a role accepts any role in the table.
+- **Verified:** new `route_access_test.go` reads `main.go` and checks every
+  old protected route keeps exactly its old access for each built-in role
+  (mutation-tested: a wrong permission fails it). `go test ./...` passes;
+  `TestLoginThrottleBurstOnlyLetsFiveThrough` failed once and then passed
+  20/20 runs with and without this change (timing-sensitive, pre-existing).
+  Against Postgres: permission matrix for the 4 demo accounts identical to
+  before; custom "cashier" role (sell_rent + shifts) reaches exactly those
+  routes; editing it applies on the next request; bad permission 400,
+  duplicate name 409, manager can't create roles 403, delete built-in /
+  in-use 409, ADMIN without manage_roles 409. Found and fixed: saving
+  permissions through a column map skipped the JSON serializer (500).
+- **Not done / follow-ups:** stages 3-5 (one login + screens by permission
+  in the frontend, roles screen, docs) - next commits.
+
 ## 2026-10-21 — Court counts from env (BASKETBALL_COURT_COUNT etc.)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
