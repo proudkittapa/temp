@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift
 } from '../types';
-import { StorageService, findClosure, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf, formatDate, formatDateTime } from '../mockData';
+import { StorageService, findClosure, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf, formatDate, formatDateTime, businessInfo, formatTaxId } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import { notify, ask, askText, dialog } from './Dialog';
@@ -1423,6 +1423,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // The open receipt: a booking's whole group (one receipt per payment),
   // how it was paid, and whether it is paid at all - an unpaid booking
   // gets no receipt.
+  // Local mode stores a user id (older rows a name) as who took the money.
+  const nameOfUser = (idOrName?: string) => idOrName ? StorageService.get<User[]>('users', []).find(u => u.id === idOrName)?.name ?? idOrName : undefined;
+  const shop = businessInfo();
   const receipt = (() => {
     const b = selectedReceiptBooking;
     if (b) {
@@ -1431,11 +1434,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       const rows = (group.length ? group : [b]).sort((x, y) => (x.startTime + x.courtId).localeCompare(y.startTime + y.courtId));
       const paidRows = rows.filter(isPaidBooking);
       const ids = new Set(bookingGroupOf(b, pool).map(x => x.id));
-      const method = api.USE_BACKEND ? b.paymentMethod : payments.find(p => ids.has(p.bookingId))?.method;
-      return { code: b.bookingCode, rows: paidRows.length ? paidRows : rows, total: roundBaht(paidRows.reduce((n, x) => n + x.totalAmount, 0)), method, paid: paidRows.length > 0 };
+      const pay = api.USE_BACKEND ? undefined : payments.find(p => ids.has(p.bookingId) && p.verifiedAt);
+      const method = api.USE_BACKEND ? b.paymentMethod : (pay ?? payments.find(p => ids.has(p.bookingId)))?.method;
+      const cashier = api.USE_BACKEND ? b.paymentVerifiedByName : nameOfUser(pay?.verifiedBy);
+      const paidAt = api.USE_BACKEND ? b.paymentVerifiedAt : pay?.verifiedAt;
+      return { code: b.bookingCode, rows: paidRows.length ? paidRows : rows, total: roundBaht(paidRows.reduce((n, x) => n + x.totalAmount, 0)), method, paid: paidRows.length > 0, cashier, paidAt };
     }
     const o = selectedReceiptOrder;
-    if (o) return { code: o.orderCode, rows: [] as Booking[], total: o.totalAmount, method: o.paymentMethod, paid: o.status !== OrderStatus.CANCELLED };
+    if (o) return { code: o.orderCode, rows: [] as Booking[], total: o.totalAmount, method: o.paymentMethod, paid: o.status !== OrderStatus.CANCELLED,
+      cashier: (o as api.OrderWithNames).createdByName || nameOfUser(o.createdBy), paidAt: o.createdAt };
     return null;
   })();
   const METHOD_LABEL: Partial<Record<PaymentMethod, string>> = {
@@ -2798,11 +2805,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               
               {/* Receipt Header logo */}
               <div className="text-center space-y-1 pb-3 border-b border-slate-200">
-                <h2 className="text-xs font-black tracking-tight text-slate-900 uppercase">🏆 SMART SPORT COMPLEX CLUB</h2>
-                <p className="text-[8.5px] text-slate-500 font-mono">168 Ramkhamhaeng Rd, Bang Kapi, Bangkok 10240</p>
-                <p className="text-[8.5px] text-slate-500">เลขประจำตัวผู้เสียภาษี (TAX ID): 0-1055-59092-49-0 </p>
-                <p className="text-[10px] font-bold text-slate-800 underline uppercase mt-2">ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ</p>
-                <p className="text-[9px] font-semibold text-slate-600 bg-slate-200/60 inline-block px-1.5 py-0.5 rounded mt-0.5 font-mono">RECEIPT / TAX INVOICE (ABB.)</p>
+                {shop.name
+                  ? <h2 id="receipt-shop-name" className="text-xs font-black tracking-tight text-slate-900 uppercase">{shop.name}</h2>
+                  : <h2 id="receipt-shop-name" className="text-xs font-bold text-rose-600">ยังไม่ได้ตั้งชื่อร้าน (ผู้ดูแลตั้งได้ที่แท็บราคา)</h2>}
+                {shop.address && <p className="text-[8.5px] text-slate-500">{shop.address}</p>}
+                {shop.phone && <p className="text-[8.5px] text-slate-500 font-mono">โทร {shop.phone}</p>}
+                {shop.vatRegistered && shop.taxId && <p className="text-[8.5px] text-slate-500">เลขประจำตัวผู้เสียภาษี (TAX ID): <span className="font-mono">{formatTaxId(shop.taxId)}</span></p>}
+                <p id="receipt-title" className="text-[10px] font-bold text-slate-800 underline uppercase mt-2">{shop.vatRegistered ? 'ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ' : 'ใบเสร็จรับเงิน'}</p>
+                <p className="text-[9px] font-semibold text-slate-600 bg-slate-200/60 inline-block px-1.5 py-0.5 rounded mt-0.5 font-mono">{shop.vatRegistered ? 'RECEIPT / TAX INVOICE (ABB.)' : 'RECEIPT'}</p>
               </div>
 
               {/* Receipt metadata info */}
@@ -2819,6 +2829,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     {formatDateTime(Date.now())} น.
                   </span>
                 </div>
+                {receipt?.paid && receipt.paidAt && (
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-slate-500">วันที่รับเงิน (Paid):</span>
+                    <span id="receipt-paid-at" className="font-mono">{formatDateTime(receipt.paidAt)} น.</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="font-semibold text-slate-500">ชื่อผู้ซื้อ (Customer):</span>
                   <span className="font-bold text-slate-800">
@@ -2833,7 +2849,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 )}
                 <div className="flex justify-between">
                   <span className="font-semibold text-slate-500">ผู้รับชำระ (Cashier):</span>
-                  <span className="italic">{staffUser?.name || 'เคาน์เตอร์'}</span>
+                  <span id="receipt-cashier" className="italic">{receipt?.cashier || '-'}</span>
                 </div>
               </div>
 
@@ -2884,18 +2900,20 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
               {/* Financial Calculation footer */}
               <div className="space-y-0.5 text-[9.5px] text-slate-700">
-                <div className="flex justify-between">
-                  <span>ฐานภาษี (VATAble Base):</span>
-                  <span className="font-mono">
-                    {((receipt?.total || 0) / 1.07).toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>ภาษีมูลค่าเพิ่ม (VAT 7%):</span>
-                  <span className="font-mono mr-1">
-                    {((receipt?.total || 0) * 0.07 / 1.07).toFixed(2)}
-                  </span>
-                </div>
+                {shop.vatRegistered && (() => {
+                  const total = receipt?.total || 0;
+                  const vat = Math.round(total * 7 / 107 * 100) / 100;
+                  return (<>
+                    <div className="flex justify-between">
+                      <span>ฐานภาษี (VATAble Base):</span>
+                      <span className="font-mono">{(total - vat).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>ภาษีมูลค่าเพิ่ม (VAT 7%):</span>
+                      <span id="receipt-vat" className="font-mono mr-1">{vat.toFixed(2)}</span>
+                    </div>
+                  </>);
+                })()}
                 <div className="flex justify-between font-black text-slate-900 border-t border-slate-200 pt-1.5 text-[11px]">
                   <span>ยอดชำระสุทธิ (Grand Total):</span>
                   <span className="font-mono text-emerald-700 text-[11.5px]">

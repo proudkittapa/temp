@@ -51,6 +51,12 @@ describe('thaiErrorText', () => {
     expect(thaiErrorText('too many sign-ups from this network - try again later')).toBe('สมัครสมาชิกจากเครือข่ายนี้บ่อยเกินไป กรุณาลองใหม่ภายหลัง');
   });
 
+  it('translates the business-details messages', () => {
+    expect(thaiErrorText('invalid booking request: the tax ID must have 13 digits')).toBe('เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก');
+    expect(thaiErrorText('invalid booking request: a VAT-registered business needs its name, address and tax ID'))
+      .toBe('ถ้าจด VAT ต้องใส่ชื่อ ที่อยู่ และเลขประจำตัวผู้เสียภาษี');
+  });
+
   it('passes unknown and already-Thai messages through', () => {
     expect(thaiErrorText('something new happened')).toBe('something new happened');
     expect(thaiErrorText('ไม่พบสินค้านี้')).toBe('ไม่พบสินค้านี้');

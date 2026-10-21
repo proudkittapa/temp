@@ -205,6 +205,14 @@ type PricingConfig struct {
 	// hours each sport is open (an hour no rule covers can't be booked).
 	OpenHour  int `json:"open_hour" db:"open_hour" gorm:"column:open_hour;default:7"`
 	CloseHour int `json:"close_hour" db:"close_hour" gorm:"column:close_hour;default:23"`
+	// The business as printed on receipts and shown on the payment screen
+	// (admin setting). VatRegistered: receipts are abbreviated tax invoices
+	// with a VAT 7% breakdown; otherwise plain receipts without VAT lines.
+	BusinessName    string `json:"business_name" db:"business_name" gorm:"column:business_name"`
+	BusinessAddress string `json:"business_address" db:"business_address" gorm:"column:business_address"`
+	BusinessPhone   string `json:"business_phone" db:"business_phone" gorm:"column:business_phone"`
+	BusinessTaxID   string `json:"business_tax_id" db:"business_tax_id" gorm:"column:business_tax_id"`
+	VatRegistered   bool   `json:"vat_registered" db:"vat_registered" gorm:"column:vat_registered"`
 }
 
 // MemberDiscount mirrors the frontend's MemberDiscountRule - one row per

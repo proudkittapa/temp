@@ -789,25 +789,35 @@ func (s *BookingService) ListByDate(ctx context.Context, date string) ([]model.B
 type GroupPayment struct {
 	Method model.PaymentMethod `json:"method"`
 	Status model.PaymentStatus `json:"status"`
+	// Who took the money and when (approved slip or cash at the counter).
+	VerifiedAt     *time.Time `json:"verified_at,omitempty"`
+	VerifiedByName string     `json:"verified_by_name,omitempty"`
 }
 
 // PaymentsByGroupOnDate maps "booking_code|user_id" to the payment of every
 // booking group on a date (a group's rows all share its date).
 func (s *BookingService) PaymentsByGroupOnDate(ctx context.Context, date string) (map[string]GroupPayment, error) {
 	var rows []struct {
-		BookingCode string
-		UserID      string
-		Method      model.PaymentMethod
-		Status      model.PaymentStatus
+		BookingCode    string
+		UserID         string
+		Method         model.PaymentMethod
+		Status         model.PaymentStatus
+		VerifiedAt     *time.Time
+		VerifiedByName *string
 	}
 	err := s.db.WithContext(ctx).Table("payments p").
-		Select("b.booking_code, b.user_id, p.method, p.status").
+		Select("b.booking_code, b.user_id, p.method, p.status, p.verified_at, v.name AS verified_by_name").
 		Joins("JOIN bookings b ON b.id = p.booking_id").
+		Joins("LEFT JOIN users v ON v.id = p.verified_by").
 		Where("b.date = ?", date).
 		Scan(&rows).Error
 	out := make(map[string]GroupPayment, len(rows))
 	for _, r := range rows {
-		out[r.BookingCode+"|"+r.UserID] = GroupPayment{Method: r.Method, Status: r.Status}
+		gp := GroupPayment{Method: r.Method, Status: r.Status, VerifiedAt: r.VerifiedAt}
+		if r.VerifiedByName != nil {
+			gp.VerifiedByName = *r.VerifiedByName
+		}
+		out[r.BookingCode+"|"+r.UserID] = gp
 	}
 	return out, err
 }

@@ -323,6 +323,17 @@ export const DEFAULT_MEMBER_DISCOUNTS: MemberDiscountRule[] = [
 
 // FR-2.4: half-court rate as a percent of the full-court rate, applied before
 // membership discounts. The only place this coefficient should live.
+// The business details the admin set (Pricing tab). In API mode they come
+// from the cached pricing config, so the receipt works offline too.
+export const businessInfo = () => {
+  const c = StorageService.get<Partial<PricingConfig>>('pricing_config', {});
+  return { name: c.businessName ?? '', address: c.businessAddress ?? '', phone: c.businessPhone ?? '',
+    taxId: c.businessTaxId ?? '', vatRegistered: !!c.vatRegistered };
+};
+// 0105559092490 -> 0-1055-59092-49-0 (the usual Thai layout).
+export const formatTaxId = (id: string) =>
+  /^\d{13}$/.test(id) ? `${id[0]}-${id.slice(1, 5)}-${id.slice(5, 10)}-${id.slice(10, 12)}-${id[12]}` : id;
+
 export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   id: 'global',
   halfCourtRatePercent: 50,

@@ -315,6 +315,7 @@ func main() {
 		api.DELETE("/admin/pricing-rules/:id", adminOnly, pricingHandler.DeleteRule)
 		api.PUT("/admin/member-discounts/:member_type", adminOnly, pricingHandler.UpdateMemberDiscount)
 		api.PUT("/admin/pricing-config", adminOnly, pricingHandler.UpdateConfig)
+		api.PUT("/admin/business", adminOnly, pricingHandler.UpdateBusiness)
 	}
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned

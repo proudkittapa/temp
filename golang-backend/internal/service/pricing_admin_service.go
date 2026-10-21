@@ -260,3 +260,50 @@ func (s *PricingAdminService) audit(tx *gorm.DB, actorID, actorName, action, tar
 		CreatedAt:   s.now(),
 	}).Error
 }
+
+// BusinessInfo is the business shown on receipts and the payment screen.
+type BusinessInfo struct {
+	Name          string `json:"business_name"`
+	Address       string `json:"business_address"`
+	Phone         string `json:"business_phone"`
+	TaxID         string `json:"business_tax_id"`
+	VatRegistered bool   `json:"vat_registered"`
+}
+
+// UpdateBusiness saves the business details (admin). A VAT-registered
+// business must give its name, address and 13-digit tax ID - what an
+// abbreviated tax invoice has to show.
+func (s *PricingAdminService) UpdateBusiness(ctx context.Context, in BusinessInfo, actorID, actorName string) (*model.PricingConfig, error) {
+	in.Name, in.Address, in.Phone = strings.TrimSpace(in.Name), strings.TrimSpace(in.Address), strings.TrimSpace(in.Phone)
+	in.TaxID = strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, in.TaxID)
+	switch {
+	case len(in.Name) > 200 || len(in.Address) > 500 || len(in.Phone) > 30:
+		return nil, fmt.Errorf("%w: business name, address or phone is too long", ErrInvalidBooking)
+	case in.TaxID != "" && len(in.TaxID) != 13:
+		return nil, fmt.Errorf("%w: the tax ID must have 13 digits", ErrInvalidBooking)
+	case in.VatRegistered && (in.Name == "" || in.Address == "" || in.TaxID == ""):
+		return nil, fmt.Errorf("%w: a VAT-registered business needs its name, address and tax ID", ErrInvalidBooking)
+	}
+	var cfg model.PricingConfig
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cfg, "id = ?", "global").Error; err != nil {
+			return err
+		}
+		before := cfg
+		cfg.BusinessName, cfg.BusinessAddress, cfg.BusinessPhone, cfg.BusinessTaxID, cfg.VatRegistered =
+			in.Name, in.Address, in.Phone, in.TaxID, in.VatRegistered
+		if err := tx.Save(&cfg).Error; err != nil {
+			return err
+		}
+		return s.audit(tx, actorID, actorName, "BUSINESS_INFO_UPDATED", "PricingConfig", cfg.ID, before, cfg)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}

@@ -125,3 +125,20 @@ func (h *PricingHandler) UpdateConfig(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": cfg})
 }
+
+// PUT /api/v1/admin/business - admin: business details for receipts and
+// the payment screen (name, address, phone, tax ID, VAT registered).
+func (h *PricingHandler) UpdateBusiness(c *gin.Context) {
+	var in service.BusinessInfo
+	if err := c.ShouldBindJSON(&in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	actorID, actorName := actor(c)
+	cfg, err := h.pricing.UpdateBusiness(c.Request.Context(), in, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": cfg})
+}

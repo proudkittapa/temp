@@ -60,6 +60,8 @@ const MaxIdempotencyKeyLen = 64
 type OrderView struct {
 	model.Order
 	Items []OrderItemView `json:"items"`
+	// The staff member who made the sale (for the receipt's cashier line).
+	CreatedByName string `json:"created_by_name,omitempty"`
 	// Void only: rewards cancelled because their points came from this sale.
 	CancelledVouchers []string `json:"cancelled_vouchers,omitempty"`
 }
@@ -603,9 +605,27 @@ func (s *POSService) views(db *gorm.DB, orders []model.Order) ([]OrderView, erro
 	for _, l := range lines {
 		byOrder[l.OrderID] = append(byOrder[l.OrderID], OrderItemView{OrderItem: l, ProductName: names[l.ProductID]})
 	}
+	// Who rang up each sale, for the receipt.
+	staffNames := map[string]string{}
+	staffIDs := make([]string, 0, len(orders))
+	for _, o := range orders {
+		if _, seen := staffNames[o.CreatedBy]; !seen && o.CreatedBy != "" {
+			staffNames[o.CreatedBy] = ""
+			staffIDs = append(staffIDs, o.CreatedBy)
+		}
+	}
+	if len(staffIDs) > 0 {
+		var staff []model.User
+		if err := db.Select("id, name").Where("id IN ?", staffIDs).Find(&staff).Error; err != nil {
+			return nil, err
+		}
+		for _, u := range staff {
+			staffNames[u.ID] = u.Name
+		}
+	}
 	out := make([]OrderView, len(orders))
 	for i, o := range orders {
-		out[i] = OrderView{Order: o, Items: byOrder[o.ID]}
+		out[i] = OrderView{Order: o, Items: byOrder[o.ID], CreatedByName: staffNames[o.CreatedBy]}
 		if out[i].Items == nil {
 			out[i].Items = []OrderItemView{}
 		}

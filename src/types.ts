@@ -124,6 +124,13 @@ export interface PricingConfig {
   // open.
   openHour?: number;
   closeHour?: number;
+  // The business on receipts and the payment screen (admin setting).
+  // vatRegistered: receipts are abbreviated tax invoices with VAT 7%.
+  businessName?: string;
+  businessAddress?: string;
+  businessPhone?: string;
+  businessTaxId?: string;
+  vatRegistered?: boolean;
 }
 
 export interface User {
@@ -167,9 +174,12 @@ export interface Booking {
   createdAt: string;
   createdBy: string; // userId or 'customer'
   cancellationReason?: string;
-  // API mode, staff views only: how the booking's group was paid.
+  // API mode, staff views only: how the booking's group was paid, and who
+  // took the money when.
   paymentMethod?: PaymentMethod;
   paymentStatus?: PaymentStatus;
+  paymentVerifiedAt?: string;
+  paymentVerifiedByName?: string;
 }
 
 export interface Payment {

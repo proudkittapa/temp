@@ -145,7 +145,7 @@ interface ApiBooking {
   start_time: string; end_time: string; is_half_court: boolean; price_type: string;
   total_amount: number; status: string; is_event_block: boolean; event_name?: string;
   notes?: string; created_by: string; cancellation_reason?: string; created_at: string;
-  payment?: { method: string; status: string }; // staff date list: the group's payment
+  payment?: { method: string; status: string; verified_at?: string; verified_by_name?: string }; // staff date list: the group's payment
 }
 interface ApiPayment {
   id: string; booking_id: string; amount: number; method: string; status: string;
@@ -201,7 +201,9 @@ const toBooking = (b: ApiBooking, user?: { name: string; phone: string }): Booki
   createdBy: b.created_by,
   cancellationReason: b.cancellation_reason,
   paymentMethod: b.payment?.method as PaymentMethod | undefined,
-  paymentStatus: b.payment?.status as PaymentStatus | undefined
+  paymentStatus: b.payment?.status as PaymentStatus | undefined,
+  paymentVerifiedAt: b.payment?.verified_at,
+  paymentVerifiedByName: b.payment?.verified_by_name
 });
 
 const toPayment = (p: ApiPayment): Payment => ({
@@ -398,14 +400,30 @@ export interface PricingSnapshot {
   memberDiscounts: MemberDiscountRule[];
 }
 
+interface ApiPricingConfig {
+  half_court_rate_percent: number; max_advance_days: number; open_hour?: number; close_hour?: number;
+  business_name?: string; business_address?: string; business_phone?: string; business_tax_id?: string; vat_registered?: boolean;
+}
+const toPricingConfig = (c: ApiPricingConfig): PricingConfig => ({
+  id: 'global', halfCourtRatePercent: c.half_court_rate_percent, maxAdvanceDays: c.max_advance_days,
+  openHour: c.open_hour ?? 7, closeHour: c.close_hour ?? 23,
+  businessName: c.business_name || '', businessAddress: c.business_address || '', businessPhone: c.business_phone || '',
+  businessTaxId: c.business_tax_id || '', vatRegistered: !!c.vat_registered
+});
+
+// Admin: the business on receipts and the payment screen.
+export async function updateBusiness(b: { name: string; address: string; phone: string; taxId: string; vatRegistered: boolean }): Promise<PricingConfig> {
+  return toPricingConfig(await request<ApiPricingConfig>('/admin/business', {
+    method: 'PUT', session: 'admin',
+    body: { business_name: b.name, business_address: b.address, business_phone: b.phone, business_tax_id: b.taxId, vat_registered: b.vatRegistered }
+  }));
+}
+
 export async function getPricing(): Promise<PricingSnapshot> {
-  const d = await request<{ rules: ApiPricingRule[]; config: { half_court_rate_percent: number; max_advance_days: number; open_hour?: number; close_hour?: number }; member_discounts: ApiMemberDiscount[] }>('/pricing');
+  const d = await request<{ rules: ApiPricingRule[]; config: ApiPricingConfig; member_discounts: ApiMemberDiscount[] }>('/pricing');
   return {
     rules: d.rules.map(toRule),
-    config: {
-      id: 'global', halfCourtRatePercent: d.config.half_court_rate_percent, maxAdvanceDays: d.config.max_advance_days,
-      openHour: d.config.open_hour ?? 7, closeHour: d.config.close_hour ?? 23
-    },
+    config: toPricingConfig(d.config),
     memberDiscounts: d.member_discounts.map(toDiscount)
   };
 }
@@ -752,7 +770,7 @@ interface ApiOrderItem {
 interface ApiOrder {
   id: string; order_code: string; user_id?: string; customer_name: string; court_id?: string; type: string;
   status: string; total_amount: number; paid_amount: number; payment_method: string; created_by: string;
-  created_at: string; items: ApiOrderItem[]; voided_at?: string; void_reason?: string;
+  created_at: string; items: ApiOrderItem[]; voided_at?: string; void_reason?: string; created_by_name?: string;
 }
 
 const toProduct = (p: ApiProduct): Product => ({
@@ -764,12 +782,12 @@ const toProduct = (p: ApiProduct): Product => ({
 });
 
 // Orders carry each line's product name, so lists don't need the catalog.
-export type OrderWithNames = Order & { items: (OrderItem & { productName: string })[] };
+export type OrderWithNames = Order & { items: (OrderItem & { productName: string })[]; createdByName?: string };
 
 const toOrder = (o: ApiOrder): OrderWithNames => ({
   id: o.id, orderCode: o.order_code, userId: o.user_id, customerName: o.customer_name, courtId: o.court_id,
   type: o.type as OrderType, status: o.status as OrderStatus, totalAmount: o.total_amount, paidAmount: o.paid_amount,
-  paymentMethod: o.payment_method as PaymentMethod, createdAt: o.created_at, createdBy: o.created_by,
+  paymentMethod: o.payment_method as PaymentMethod, createdAt: o.created_at, createdBy: o.created_by, createdByName: o.created_by_name,
   voidedAt: o.voided_at, voidReason: o.void_reason,
   items: (o.items || []).map(i => ({
     id: i.id, orderId: i.order_id, productId: i.product_id, productName: i.product_name, variantId: i.variant_id,

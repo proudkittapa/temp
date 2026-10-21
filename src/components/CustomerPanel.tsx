@@ -4,7 +4,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayOff,
   User, UserRole, LedgerEntryType
 } from '../types';
-import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime } from '../mockData';
+import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime, businessInfo } from '../mockData';
 import * as api from '../api';
 import { notify, ask } from './Dialog';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
@@ -1946,7 +1946,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 <div className="text-center space-y-1">
                   <p className="text-xs font-semibold text-slate-500">สแกนด้วยแอปธนาคาร ยอดเงินจะขึ้นให้อัตโนมัติ</p>
                   <p className="text-sm font-black text-slate-800">รหัสจอง {currentBooking.bookingCode}</p>
-                  <p className="text-xs text-slate-500">ตรวจชื่อผู้รับในแอปธนาคารก่อนกดโอน</p>
+                  {businessInfo().name
+                    ? <p id="payee-name" className="text-xs text-slate-600">ชื่อบัญชีผู้รับ: <b className="text-slate-800">{businessInfo().name}</b> — ตรวจให้ตรงในแอปธนาคารก่อนกดโอน</p>
+                    : <p className="text-xs text-slate-500">ตรวจชื่อผู้รับในแอปธนาคารก่อนกดโอน</p>}
                   <p className="text-xs font-extrabold text-slate-800 text-lg mt-1">ยอดโอน: {formatBaht(currentPayment?.amount ?? currentBooking.totalAmount)} บาท</p>
                   {currentPayment?.status === PaymentStatus.PENDING && (() => {
                     // Capped: server and browser clocks can differ slightly.

@@ -63,6 +63,7 @@ database from the Go Backend section below):
 | Staff walk-in bookings (PromptPay ones wait for staff to confirm the transfer) + the staff booking grid | `POST /staff/bookings`, `GET /bookings?date=` |
 | Court closures / days off (Admin panel; enforced on every booking) | `GET /days-off`, `POST /admin/days-off`, `DELETE /admin/days-off/:id` |
 | Pricing rules + member-tier discounts, opening hours, booking window (Admin panel; what every booking is charged) | `GET /pricing`, `POST`/`PUT`/`DELETE /admin/pricing-rules`, `PUT /admin/member-discounts/:type`, `PUT /admin/pricing-config` |
+| Business details on receipts and the payment screen: name, address, phone, tax ID, VAT registered (Admin panel → Pricing → ข้อมูลร้าน) | `PUT /admin/business` (read back in `GET /pricing`) |
 | Courts: add, rename, open/close for booking (admin; never deleted) | `GET /courts`, `GET /admin/courts`, `POST /admin/courts`, `PUT /admin/courts/:id` |
 | Cancel / refund (manager), record a cash payment (manager), no-show (staff), day's cash-drawer totals | `POST /admin/bookings/:id/cancel`, `POST /admin/payments/:id/refund`, `POST /admin/bookings/:id/mark-cash`, `POST /staff/bookings/:id/no-show`, `GET /staff/summary` |
 | Loyalty rewards: redeem points online, voucher check at the counter | `GET /rewards`, `POST /me/rewards/:id/redeem`, `GET /me/vouchers`, `GET`/`POST /staff/vouchers/:code[/dispense]` |

@@ -18,6 +18,40 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Receipts: business details setting, real cashier and paid time
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `caf84fe`)
+- **Changed:** TODO step 2 (step 1, the owner's real details, skipped - so
+  it is a setting the owner fills in).
+  - Backend: `pricing_config` gains business_name/address/phone/tax_id and
+    vat_registered (AutoMigrate adds the columns); `PUT /admin/business`
+    (admin only) validates (13-digit tax ID; VAT needs name, address, tax
+    ID), locks the row, audits BUSINESS_INFO_UPDATED. Staff booking lists'
+    `payment` now carries verified_at / verified_by_name; counter orders carry
+    created_by_name. (`models.go`, `pricing_admin_service.go`,
+    `pricing_api.go`, `main.go`, `booking_service.go`, `pos.go`)
+  - Admin → Pricing: "ข้อมูลร้าน" card (both modes). `AdminPanel.tsx`
+  - Receipt: header from the setting (red "not set" note when empty);
+    VAT-registered → tax ID, ใบกำกับภาษีอย่างย่อ title and VAT lines (VAT
+    rounded, base = total − VAT); otherwise plain ใบเสร็จรับเงิน, no VAT.
+    Cashier = who verified the payment / sold the order, plus "paid" time;
+    print time kept. `StaffPOS.tsx`, `mockData.ts` (businessInfo, formatTaxId)
+  - Customer payment screen shows "ชื่อบัญชีผู้รับ: <name>" when set.
+    `CustomerPanel.tsx`
+  - Thai texts for the new errors (`errorText.ts` + test).
+- **Verified:** go vet + go test, tsc, vitest 40/40. Live on arena_fresh:
+  bad tax ID / VAT without address refused, staff PUT 403, saved + audited,
+  `GET /pricing` returns it, public `/bookings` has no payment info, staff
+  list has verified_by_name. Playwright (API mode): receipt shows the shop,
+  tax ID, VAT 19.63 on 300, cashier "วิชัย ผู้จัดการ" and paid time;
+  unticking VAT in the admin card → title ใบเสร็จรับเงิน and no VAT lines.
+  Local mode was only type-checked, not clicked through.
+- **Not done / follow-ups:** running tax-invoice number and full tax invoice
+  (TODO section 5); the owner must enter the real details.
+
+---
+
 ## 2026-10-21 — TODO order of work re-prioritised
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

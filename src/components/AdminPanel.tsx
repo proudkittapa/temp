@@ -388,6 +388,39 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
     done();
   };
 
+  // Business details printed on receipts and shown on the payment screen.
+  const emptyBusiness = { name: '', address: '', phone: '', taxId: '', vatRegistered: false };
+  const businessFrom = (c: Partial<PricingConfig>) => ({
+    name: c.businessName ?? '', address: c.businessAddress ?? '', phone: c.businessPhone ?? '',
+    taxId: c.businessTaxId ?? '', vatRegistered: !!c.vatRegistered,
+  });
+  const [business, setBusiness] = useState(() => ({ ...emptyBusiness, ...businessFrom(StorageService.get<Partial<PricingConfig>>('pricing_config', {})) }));
+  const handleSaveBusiness = () => {
+    const b = { name: business.name.trim(), address: business.address.trim(), phone: business.phone.trim(),
+      taxId: business.taxId.replace(/\D/g, ''), vatRegistered: business.vatRegistered };
+    if (b.taxId && b.taxId.length !== 13) {
+      notify('เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก');
+      return;
+    }
+    if (b.vatRegistered && (!b.name || !b.address || !b.taxId)) {
+      notify('ถ้าจด VAT ต้องใส่ชื่อ ที่อยู่ และเลขประจำตัวผู้เสียภาษี');
+      return;
+    }
+    const before = businessFrom(StorageService.get<Partial<PricingConfig>>('pricing_config', {}));
+    const done = () => {
+      onAddAuditLog('BUSINESS_INFO_UPDATED', 'PricingConfig', 'global', before, b);
+      setBusiness(b);
+      onRefreshAll();
+      notify('บันทึกข้อมูลร้านแล้ว');
+    };
+    if (api.USE_BACKEND) {
+      return api.updateBusiness(b).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+    }
+    StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), businessName: b.name, businessAddress: b.address,
+      businessPhone: b.phone, businessTaxId: b.taxId, vatRegistered: b.vatRegistered });
+    done();
+  };
+
   // Pricing CRUD functions
   const handleSavePricingRule = (e: React.FormEvent) => {
     e.preventDefault();
@@ -654,6 +687,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         setCloseHourSetting(pricing.config.closeHour ?? 23);
         setAuditLogs(logs);
         setMaxAdvanceDays(pricing.config.maxAdvanceDays ?? 30);
+        setBusiness(businessFrom(pricing.config));
         setPricingRules(pricing.rules);
         setMemberDiscounts(pricing.memberDiscounts);
         setAdminApiError(null);
@@ -1846,6 +1880,20 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                 </select>
                 <button type="button" disabled={busy} onClick={guarded(handleSaveOpeningHours)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
                 <span className="text-[10px] text-slate-500 w-full">ในช่วงนี้ ชั่วโมงที่มีกฎราคาเท่านั้นที่จองได้ (เช่น ไม่มีเรท 06:00 = กีฬานั้นยังไม่เปิด 06:00)</span>
+              </div>
+              <div id="business-setting" className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 max-w-2xl">
+                <span className="text-slate-600 font-bold sm:col-span-2">ข้อมูลร้าน (พิมพ์บนใบเสร็จ และแสดงเป็นชื่อบัญชีผู้รับตอนลูกค้าโอน)</span>
+                <label className="flex flex-col gap-1"><span className="text-slate-600">ชื่อร้าน / ชื่อบัญชีรับเงิน</span>
+                  <input maxLength={200} value={business.name} onChange={e => setBusiness({ ...business, name: e.target.value })} className="border border-slate-300 rounded px-2 py-1" /></label>
+                <label className="flex flex-col gap-1"><span className="text-slate-600">เบอร์โทร</span>
+                  <input maxLength={50} value={business.phone} onChange={e => setBusiness({ ...business, phone: e.target.value })} className="border border-slate-300 rounded px-2 py-1" /></label>
+                <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-slate-600">ที่อยู่</span>
+                  <input maxLength={500} value={business.address} onChange={e => setBusiness({ ...business, address: e.target.value })} className="border border-slate-300 rounded px-2 py-1" /></label>
+                <label className="flex flex-col gap-1"><span className="text-slate-600">เลขประจำตัวผู้เสียภาษี (13 หลัก)</span>
+                  <input inputMode="numeric" maxLength={17} value={business.taxId} onChange={e => setBusiness({ ...business, taxId: e.target.value })} className="border border-slate-300 rounded px-2 py-1" /></label>
+                <label className="flex items-center gap-2 self-end pb-1"><input type="checkbox" checked={business.vatRegistered} onChange={e => setBusiness({ ...business, vatRegistered: e.target.checked })} />
+                  <span className="text-slate-600">จดทะเบียน VAT (ใบเสร็จแสดงภาษี 7%)</span></label>
+                <div className="sm:col-span-2"><button type="button" disabled={busy} onClick={guarded(handleSaveBusiness)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึกข้อมูลร้าน</button></div>
               </div>
               <p className="text-xs text-slate-500">คุณสามารถกำหนดค่า ราคาปกติ, ราคา Peak ยิ่งเร่งด่วนตามเงื่อนไขช่วงชั่วโมง, และชนิดวันธรรมดา/เสาร์อาทิตย์</p>
             </div>
