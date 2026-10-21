@@ -191,13 +191,13 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] Slip upload: type check and downscale to ≤1600 px JPEG when not JPG/PNG/WebP or over 1.5 MB (`src/slipImage.ts`); CSV formula guard covers leading spaces/tab/CR and leaves numbers alone. Done 2026-10-21.
 - [ ] Small: token in localStorage + no CSP; 7-9 px text; unused deps (`@google/genai`, `express`, `dotenv`, `motion`); cash refunds don't reduce the drawer (section 0).
 
-## 12. No-show: free the court and re-sell it (decided 2026-10-21)
+## 12. No-show: free the court and re-sell it (all decided 2026-10-21)
 Today a no-show keeps the money (no refund, the hour's point is taken back) but the hour stays blocked: only CANCELLED bookings free a court (`repository.CheckOverlapTx` and the unique index in `ensureIndexes`, main.go). So nobody else can play that hour.
 - [ ] **Grace period 15 minutes:** the 🚫 ไม่มาใช้สนาม button (and `POST /staff/bookings/:id/no-show`) works only from 15 minutes after the hour's start (today: from the start). Make it an env value, `NO_SHOW_GRACE_MINUTES=15`.
 - [ ] **No-show frees the court:** a NO_SHOW hour no longer blocks that court (and its basketball group) in the overlap check, the unique index (`WHERE status NOT IN ('CANCELLED','NO_SHOW')`, rebuilt in `ensureIndexes`) and the availability grid. The no-show customer's payment stays kept and counts as income.
 - [ ] **Re-sell at a discount:** another customer (online or walk-in at the counter) can book the freed hour for **half price** by default - env `NO_SHOW_RESALE_PRICE_PERCENT=50` (100 = full price). The server computes the price; the grid shows the freed hour with the discounted price and a label (e.g. "ว่าง (ลูกค้าไม่มา) ราคาพิเศษ").
-- [ ] The discount applies only to the freed hour and only while it is still that hour (it has already started, so normally a counter walk-in); the usual member/half-court rules on top - decide the order (simplest: the resale percent replaces other discounts).
+- [ ] The discount applies only to the freed hour and only while it is still that hour (it has already started, so normally a counter walk-in); decided: the resale percent **replaces** other discounts (member discount, half-court rate) - the price is the court's normal hourly price × the percent.
 - [ ] If the original customer arrives late after the hour was re-sold, the counter shows the hour as taken by the new booking; the no-show stays recorded (no refund).
 - [ ] Reports/day summary: both the kept no-show payment and the resale booking count as income; audit log records who marked the no-show and the resale.
 - [ ] Browser-only mode: same rules in `mockData.ts` / StaffPOS; add to `TESTING_CHECKLIST.md`.
-- [ ] Open question for the owner: should marking a no-show **always** free the court (assumed above), or only when staff press a separate "เปิดให้จองต่อ" (open for re-booking) button?
+- Decided: marking a no-show **always** frees the court (no separate button).
