@@ -6,3 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_DATA_SOURCE?: 'api' | 'local';
   readonly VITE_API_BASE_URL?: string;
 }
+
+// Court counts for the browser-only seed, read by vite.config.ts from
+// BASKETBALL_COURT_COUNT etc. (see parseCourtCounts in mockData.ts).
+declare const __COURT_COUNTS__: { basketball?: string; badminton?: string; pickleball?: string; meetingRoom?: string };

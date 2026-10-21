@@ -385,31 +385,14 @@ func seedDefaults(db *gorm.DB) {
 	// DEFAULT_PRICING_RULES, so a booking priced through this backend gives
 	// the same number the frontend would show for the same slot - useful for
 	// actually exercising the API locally instead of just seeing it boot.
-	// Basketball: three courts A, B and C, each bookable as the full court
-	// or as either half. Each court is one mutex group (full blocks both
-	// halves, a half blocks the full court, the two halves don't block each
-	// other). A keeps the original ids - b_half_b / b_half_c were its two
-	// halves all along (once misnamed "B"/"C") - so existing bookings stay
-	// valid; B and C are new groups.
-	bballA, bballB, bballC := "bball-court-1", "bball-court-2", "bball-court-3"
-	courts := []model.Court{
-		{ID: "b_full_a", Name: "สนามบาสเกตบอล A (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballA, ShareOfGroup: 1, IsActive: true},
-		{ID: "b_half_b", Name: "สนามบาสเกตบอล A (ครึ่งซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballA, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "b_half_c", Name: "สนามบาสเกตบอล A (ครึ่งขวา)", Type: model.CourtBasketball, MutexGroupID: &bballA, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "bb-b-full", Name: "สนามบาสเกตบอล B (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballB, ShareOfGroup: 1, IsActive: true},
-		{ID: "bb-b-left", Name: "สนามบาสเกตบอล B (ครึ่งซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballB, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "bb-b-right", Name: "สนามบาสเกตบอล B (ครึ่งขวา)", Type: model.CourtBasketball, MutexGroupID: &bballB, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "bb-c-full", Name: "สนามบาสเกตบอล C (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballC, ShareOfGroup: 1, IsActive: true},
-		{ID: "bb-c-left", Name: "สนามบาสเกตบอล C (ครึ่งซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballC, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "bb-c-right", Name: "สนามบาสเกตบอล C (ครึ่งขวา)", Type: model.CourtBasketball, MutexGroupID: &bballC, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "meet-1", Name: "ห้องประชุมเอนกประสงค์ 1", Type: model.CourtMeetingRoom, ShareOfGroup: 1, IsActive: true},
+	// Courts per type from BASKETBALL_COURT_COUNT etc. (default 3 basketball
+	// courts A-C each full + two halves, 12 badminton, 3 pickleball, 1
+	// meeting room) - see seed_courts.go.
+	counts, warnings := courtCountsFromEnv(os.Getenv)
+	for _, w := range warnings {
+		log.Printf("WARNING: %s\n", w)
 	}
-	for i := 1; i <= 12; i++ {
-		courts = append(courts, model.Court{ID: fmt.Sprintf("bad-%d", i), Name: fmt.Sprintf("สนามแบดมินตัน %d", i), Type: model.CourtBadminton, ShareOfGroup: 1, IsActive: true})
-	}
-	for i := 1; i <= 3; i++ {
-		courts = append(courts, model.Court{ID: fmt.Sprintf("pick-%d", i), Name: fmt.Sprintf("สนามพิคเคิลบอล %d", i), Type: model.CourtPickleball, ShareOfGroup: 1, IsActive: true})
-	}
+	courts := seededCourts(counts)
 	for _, c := range courts {
 		check("court "+c.ID, db.Where(model.Court{ID: c.ID}).FirstOrCreate(&c).Error)
 	}
@@ -431,6 +414,9 @@ func seedDefaults(db *gorm.DB) {
 			check("court name "+c.ID, db.Model(&model.Court{}).Where("id = ? AND name IN ?", c.ID, old).Update("name", c.Name).Error)
 		}
 	}
+	warnAboutExtraSeededCourts(db, counts)
+	log.Printf("Courts: %d basketball (each full + 2 halves), %d badminton, %d pickleball, %d meeting room.\n",
+		counts.Basketball, counts.Badminton, counts.Pickleball, counts.MeetingRoom)
 
 	pricingRules := []model.PricingRule{
 		{ID: "p-bad-wd-op", CourtType: model.CourtBadminton, DayType: "WEEKDAY", StartHour: 7, EndHour: 17, PricePerHour: 180, PriceType: "OFFPEAK", Label: "แบดมินตัน วันธรรมดาช่วง Off-Peak", IsActive: true},

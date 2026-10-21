@@ -28,28 +28,62 @@ import {
 } from './types';
 
 // Default initial seeds
-const basketballCourt = (id: string, letter: string, part: 'full' | 'left' | 'right', group: string): Court => ({
-  id,
-  name: `สนามบาสเกตบอล ${letter} (${part === 'full' ? 'เต็มสนาม' : part === 'left' ? 'ครึ่งซ้าย' : 'ครึ่งขวา'})`,
-  type: CourtType.BASKETBALL,
-  mutexGroupId: group,
-  shareOfGroup: part === 'full' ? 1 : 0.5,
-  ...(part === 'full' ? {} : { offPeakOnly: true }),
-  isActive: true,
-  createdAt: '2026-01-01T00:00:00.000Z'
-});
 
-const BASKETBALL_COURTS: Court[] = [
-  basketballCourt('b_full_a', 'A', 'full', 'bball-court-1'),
-  basketballCourt('b_half_b', 'A', 'left', 'bball-court-1'),
-  basketballCourt('b_half_c', 'A', 'right', 'bball-court-1'),
-  basketballCourt('bb-b-full', 'B', 'full', 'bball-court-2'),
-  basketballCourt('bb-b-left', 'B', 'left', 'bball-court-2'),
-  basketballCourt('bb-b-right', 'B', 'right', 'bball-court-2'),
-  basketballCourt('bb-c-full', 'C', 'full', 'bball-court-3'),
-  basketballCourt('bb-c-left', 'C', 'left', 'bball-court-3'),
-  basketballCourt('bb-c-right', 'C', 'right', 'bball-court-3')
-];
+// How many courts of each type the browser-only seed creates. Set with
+// BASKETBALL_COURT_COUNT, BADMINTON_COURT_COUNT, PICKLEBALL_COURT_COUNT and
+// MEETING_ROOM_COUNT in the root .env (vite.config.ts passes them in as
+// __COURT_COUNTS__); same names, defaults and limits as the Go backend's
+// golang-backend/seed_courts.go. In API mode courts come from the backend,
+// so only golang-backend/.env matters there.
+export interface CourtCounts { basketball: number; badminton: number; pickleball: number; meetingRoom: number }
+
+export const DEFAULT_COURT_COUNTS: CourtCounts = { basketball: 3, badminton: 12, pickleball: 3, meetingRoom: 1 };
+
+// Out-of-range or non-numeric values fall back to the default, as on the server.
+export function parseCourtCounts(raw: Partial<Record<keyof CourtCounts, string>>): CourtCounts {
+  const read = (key: keyof CourtCounts, max: number): number => {
+    const v = (raw[key] ?? '').trim();
+    if (!/^\d+$/.test(v) || Number(v) > max) return DEFAULT_COURT_COUNTS[key];
+    return Number(v);
+  };
+  return { basketball: read('basketball', 26), badminton: read('badminton', 50), pickleball: read('pickleball', 50), meetingRoom: read('meetingRoom', 50) };
+}
+
+// Basketball court n (1 = A): full court + left half + right half, one
+// mutex group. Court A keeps its original ids (its halves were once
+// misnamed "B"/"C"), so old bookings stay valid. Same as the server's
+// basketballCourtIDs.
+function basketballCourtIds(n: number): { full: string; left: string; right: string; group: string } {
+  const group = `bball-court-${n}`;
+  if (n === 1) return { full: 'b_full_a', left: 'b_half_b', right: 'b_half_c', group };
+  const l = String.fromCharCode(96 + n);
+  return { full: `bb-${l}-full`, left: `bb-${l}-left`, right: `bb-${l}-right`, group };
+}
+
+// Every seeded court for these counts. Basketball: each court is one mutex
+// group, so availability/conflict checks stay generic (see
+// isCourtSlotAvailable): the full court blocks both halves, a half blocks
+// the full court, the two halves don't block each other. Half courts are
+// off-peak only per FR-1.2. Same ids and names as the Go backend's seed.
+export function buildDefaultCourts(counts: CourtCounts): Court[] {
+  const base = { shareOfGroup: 1, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' };
+  const courts: Court[] = [];
+  for (let n = 1; n <= counts.basketball; n++) {
+    const ids = basketballCourtIds(n);
+    const letter = String.fromCharCode(64 + n);
+    courts.push(
+      { ...base, id: ids.full, name: `สนามบาสเกตบอล ${letter} (เต็มสนาม)`, type: CourtType.BASKETBALL, mutexGroupId: ids.group },
+      { ...base, id: ids.left, name: `สนามบาสเกตบอล ${letter} (ครึ่งซ้าย)`, type: CourtType.BASKETBALL, mutexGroupId: ids.group, shareOfGroup: 0.5, offPeakOnly: true },
+      { ...base, id: ids.right, name: `สนามบาสเกตบอล ${letter} (ครึ่งขวา)`, type: CourtType.BASKETBALL, mutexGroupId: ids.group, shareOfGroup: 0.5, offPeakOnly: true }
+    );
+  }
+  for (let i = 1; i <= counts.badminton; i++) courts.push({ ...base, id: `bad-${i}`, name: `สนามแบดมินตัน ${i}`, type: CourtType.BADMINTON });
+  for (let i = 1; i <= counts.pickleball; i++) courts.push({ ...base, id: `pick-${i}`, name: `สนามพิคเคิลบอล ${i}`, type: CourtType.PICKLEBALL });
+  for (let i = 1; i <= counts.meetingRoom; i++) courts.push({ ...base, id: `meet-${i}`, name: `ห้องประชุมเอนกประสงค์ ${i}`, type: CourtType.MEETING_ROOM });
+  return courts;
+}
+
+const DEFAULT_COURTS: Court[] = buildDefaultCourts(parseCourtCounts(typeof __COURT_COUNTS__ !== 'undefined' ? __COURT_COUNTS__ : {}));
 
 // Names earlier versions seeded for court A's halves, renamed on upgrade only
 // if still unchanged (see initializeState).
@@ -57,37 +91,6 @@ const OLD_BASKETBALL_NAMES: Record<string, string> = {
   b_half_b: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)',
   b_half_c: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)'
 };
-
-const DEFAULT_COURTS: Court[] = [
-  // Basketball: three courts A, B and C, each bookable as the full court or
-  // as either half. Each court is one mutex group, so availability/conflict
-  // checks stay generic (see isCourtSlotAvailable): the full court blocks
-  // both halves, a half blocks the full court, the two halves don't block
-  // each other. A keeps the original ids (b_half_b / b_half_c were always
-  // its halves, once misnamed "B"/"C"). Half courts are off-peak only per
-  // FR-1.2. Same ids and names as the Go backend's seed.
-  ...BASKETBALL_COURTS,
-  // Badminton (12 courts)
-  ...Array.from({ length: 12 }, (_, i) => ({
-    id: `bad-${i + 1}`,
-    name: `สนามแบดมินตัน ${i + 1}`,
-    type: CourtType.BADMINTON,
-    shareOfGroup: 1,
-    isActive: true,
-    createdAt: '2026-01-01T00:00:00.000Z'
-  })),
-  // Pickleball (3 courts)
-  ...Array.from({ length: 3 }, (_, i) => ({
-    id: `pick-${i + 1}`,
-    name: `สนามพิคเคิลบอล ${i + 1}`,
-    type: CourtType.PICKLEBALL,
-    shareOfGroup: 1,
-    isActive: true,
-    createdAt: '2026-01-01T00:00:00.000Z'
-  })),
-  // Meeting Room (1)
-  { id: 'meet-1', name: 'ห้องประชุมเอนกประสงค์ 1', type: CourtType.MEETING_ROOM, shareOfGroup: 1, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' }
-];
 
 const DEFAULT_PRICING_RULES: PricingRule[] = [
   // Badminton
@@ -786,18 +789,23 @@ export function initializeState() {
     const courts = StorageService.get<Court[]>('courts', []);
     if (!courts.some(c => c.mutexGroupId === 'bball-court-1')) {
       const filtered = courts.filter(c => c.type !== CourtType.BASKETBALL);
-      filtered.push(...BASKETBALL_COURTS);
+      filtered.push(...DEFAULT_COURTS.filter(c => c.type === CourtType.BASKETBALL));
       StorageService.set('courts', filtered.map(c => ({ ...c, shareOfGroup: c.shareOfGroup ?? 1 })));
-    } else if (!courts.some(c => c.mutexGroupId === 'bball-court-2')) {
-      // Basketball became three courts (A, B, C): rename A's halves if their
-      // old "B"/"C" names are unchanged, and add courts B and C.
+    } else {
+      // Add any seeded court that's missing (basketball became courts A-C;
+      // a raised *_COURT_COUNT adds more), and rename A's halves if their
+      // old "B"/"C" names are unchanged. Never removes a court: lowering a
+      // count leaves existing courts for the admin to close.
+      const seededById = new Map(DEFAULT_COURTS.map(c => [c.id, c]));
       const migrated = courts.map(c => {
-        const seeded = BASKETBALL_COURTS.find(b => b.id === c.id);
+        const seeded = seededById.get(c.id);
         return seeded && OLD_BASKETBALL_NAMES[c.id] === c.name ? { ...c, name: seeded.name } : c;
       });
       const have = new Set(migrated.map(c => c.id));
-      migrated.push(...BASKETBALL_COURTS.filter(b => !have.has(b.id)));
-      StorageService.set('courts', migrated);
+      const missing = DEFAULT_COURTS.filter(c => !have.has(c.id));
+      if (missing.length > 0 || migrated.some((c, i) => c !== courts[i])) {
+        StorageService.set('courts', [...migrated, ...missing]);
+      }
     }
     // Migration check for member_discounts
     if (!localStorage.getItem('sports_complex_member_discounts')) {

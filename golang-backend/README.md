@@ -104,6 +104,15 @@ cat .env
 # TRUSTED_PROXIES=        # reverse proxy IPs whose X-Forwarded-For is believed
 # CORS_ALLOWED_ORIGINS=   # e.g. https://book.example.com; empty = any origin
 ```
+**Court counts.** `BASKETBALL_COURT_COUNT` (default 3), `BADMINTON_COURT_COUNT`
+(12), `PICKLEBALL_COURT_COUNT` (3) and `MEETING_ROOM_COUNT` (1) set how many
+courts exist; the server checks on every start (`seed_courts.go`). Each
+basketball court is lettered (A, B, C, ...) and is a full court plus a left
+and a right half. Raising a count adds the missing courts; lowering it never
+deletes one (bookings and reports point at it) - the log warns, and the
+admin closes the extra courts in Admin → บริหารสนาม. Courts can also be added,
+renamed and closed in the Admin panel.
+
 A variable already set in the environment wins over `.env`, so
 `npm run dev:api` (which sets `PORT=8080` and `SEED_DEMO_USERS=true`) works
 whatever `.env` says. `PROMPTPAY_ID` may be a mobile number (`0812345678`,

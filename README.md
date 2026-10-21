@@ -72,6 +72,13 @@ database from the Go Backend section below):
 | Admin dashboard, monthly CSV exports (bookings, counter sales), audit log (admin only) | `GET /admin/dashboard?date=`, `GET /admin/report?month=`, `GET /admin/audit-logs` |
 | Users list, a customer's membership tier, manual points; staff roles and suspending accounts (admin) (Admin panel → users) | `GET /admin/users`, `PUT /admin/users/:id/member-type`, `POST /admin/users/:id/adjust-points`, `PUT /admin/users/:id/role`, `PUT /admin/users/:id/active` |
 
+**How many courts:** set `BASKETBALL_COURT_COUNT` (default 3),
+`BADMINTON_COURT_COUNT` (12), `PICKLEBALL_COURT_COUNT` (3) and
+`MEETING_ROOM_COUNT` (1) in `golang-backend/.env` (API mode) or the root `.env`
+(browser-only mode). Raising a number adds courts on the next start; lowering
+it never deletes any - close extra courts in Admin → บริหารสนาม. Each
+basketball court (A, B, C, ...) is a full court plus left and right halves.
+
 `dev-runner.js` starts the backend with `SEED_DEMO_USERS=true`, which creates
 the same demo accounts as `DEFAULT_USERS` (all password `123456`) on every
 start: customers `0845678901` (member) and `0856789012` (student), staff

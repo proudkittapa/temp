@@ -18,6 +18,38 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Court counts from env (BASKETBALL_COURT_COUNT etc.)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
+- **Commit(s):** this commit (on `main`, parent `f0c61ec`)
+- **Changed:** court counts per type are settings instead of code.
+  - Backend: new `golang-backend/seed_courts.go` - `BASKETBALL_COURT_COUNT`
+    (default 3), `BADMINTON_COURT_COUNT` (12), `PICKLEBALL_COURT_COUNT` (3),
+    `MEETING_ROOM_COUNT` (1); bad values (not a whole number, < 0, > 26 for
+    basketball / > 50 otherwise) fall back to the default with a warning.
+    Basketball court n is lettered A-Z, each a mutex group of full + left +
+    right half (A keeps `b_full_a`/`b_half_b`/`b_half_c`; others
+    `bb-<letter>-full|left|right`, group `bball-court-<n>`). The seed adds
+    missing courts on every start; lowering a count never deletes a court -
+    it logs each still-open court beyond the count. `main.go` uses it and
+    logs the counts.
+  - Frontend (browser-only mode): `mockData.ts` `parseCourtCounts` /
+    `buildDefaultCourts` with the same names, defaults, limits and ids;
+    `vite.config.ts` reads the un-prefixed names from the root `.env` or the
+    environment into `__COURT_COUNTS__`; the upgrade path in
+    `initializeState` now adds any missing seeded court.
+  - Docs: both `.env.example` files, README.md, golang-backend/README.md.
+- **Verified:** `go test .` (new `seed_courts_test.go`: default = today's 25
+  courts with the same ids, count 5 -> A-E each full + 2 halves, bad values);
+  `npx vitest run` 49/49 (new court-count tests); `tsc`; `vite build`.
+  Against Postgres: `BASKETBALL_COURT_COUNT=5` added courts D and E
+  (15 rows, 5 groups); back to 3 logged a warning per still-open D/E court
+  and kept them; `abc` fell back to 3 with a warning; after closing D/E no
+  warning. Browser-only with `BASKETBALL_COURT_COUNT=5 MEETING_ROOM_COUNT=2`:
+  fresh seed 15 basketball + 2 meeting rooms.
+- **Not done / follow-ups:** none for this change. (The test DB used here
+  keeps courts D/E closed; that's local to this session.)
+
 ## 2026-10-21 — Basketball courts A, B, C; closures by court group; court rename
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner

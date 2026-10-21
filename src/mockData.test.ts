@@ -17,6 +17,9 @@ import {
   findClosure,
   initializeState,
   StorageService,
+  parseCourtCounts,
+  buildDefaultCourts,
+  DEFAULT_COURT_COUNTS,
 } from './mockData';
 import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType, DayOff } from './types';
 
@@ -351,5 +354,34 @@ describe('basketball courts A, B, C (seed and upgrade)', () => {
     expect(byId.get('b_half_c')?.name).toBe('ฝั่งประตูหลัง');
     expect(byId.size).toBe(9);
     expect(byId.get('bb-c-right')?.mutexGroupId).toBe('bball-court-3');
+  });
+});
+
+// Same names, defaults, limits and ids as the Go backend's seed_courts.go.
+describe('court counts (BASKETBALL_COURT_COUNT etc.)', () => {
+  it('defaults to 3 basketball (each full + 2 halves), 12 badminton, 3 pickleball, 1 meeting room', () => {
+    expect(parseCourtCounts({})).toEqual(DEFAULT_COURT_COUNTS);
+    const courts = buildDefaultCourts(DEFAULT_COURT_COUNTS);
+    expect(courts).toHaveLength(9 + 12 + 3 + 1);
+    expect(courts.filter(c => c.type === CourtType.BASKETBALL).map(c => c.id)).toEqual(
+      ['b_full_a', 'b_half_b', 'b_half_c', 'bb-b-full', 'bb-b-left', 'bb-b-right', 'bb-c-full', 'bb-c-left', 'bb-c-right']);
+  });
+
+  it('BASKETBALL_COURT_COUNT=5 gives courts A-E, each its own group of full + 2 halves', () => {
+    const courts = buildDefaultCourts(parseCourtCounts({ basketball: '5', badminton: '8', pickleball: '0', meetingRoom: '2' }));
+    const bball = courts.filter(c => c.type === CourtType.BASKETBALL);
+    expect(bball).toHaveLength(15);
+    expect(new Set(bball.map(c => c.mutexGroupId)).size).toBe(5);
+    expect(bball.find(c => c.id === 'bb-e-right')?.name).toBe('สนามบาสเกตบอล E (ครึ่งขวา)');
+    expect(courts.filter(c => c.type === CourtType.BADMINTON)).toHaveLength(8);
+    expect(courts.filter(c => c.type === CourtType.PICKLEBALL)).toHaveLength(0);
+    expect(courts.filter(c => c.type === CourtType.MEETING_ROOM).map(c => c.id)).toEqual(['meet-1', 'meet-2']);
+  });
+
+  it('falls back to the default for values that are not a whole number in range', () => {
+    for (const bad of ['three', '-1', '27', '2.5']) {
+      expect(parseCourtCounts({ basketball: bad }).basketball).toBe(3);
+    }
+    expect(parseCourtCounts({ badminton: '51' }).badminton).toBe(12);
   });
 });
