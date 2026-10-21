@@ -573,6 +573,7 @@ type Shift struct {
 	// The cash taken during the shift, frozen at close (with ExpectedCash).
 	CashBookingsAtClose *float64 `json:"-" db:"cash_bookings_at_close" gorm:"column:cash_bookings_at_close"`
 	CashOrdersAtClose   *float64 `json:"-" db:"cash_orders_at_close" gorm:"column:cash_orders_at_close"`
+	CashDepositsAtClose *float64 `json:"-" db:"cash_deposits_at_close" gorm:"column:cash_deposits_at_close"`
 	// Who counted the drawer at the end (may differ from who opened it).
 	ClosedByID   *string `json:"closed_by_id,omitempty" db:"closed_by_id" gorm:"column:closed_by_id"`
 	ClosedByName *string `json:"closed_by_name,omitempty" db:"closed_by_name" gorm:"column:closed_by_name"`

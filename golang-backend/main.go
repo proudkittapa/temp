@@ -113,7 +113,14 @@ func main() {
 
 	// 1b. GORM AutoMigrate to guarantee database schema is 100% complete!
 	log.Println("Running GORM AutoMigrate for all system schemas...")
-	err = db.AutoMigrate(
+	// Schema setup (migrations, index builds, data fixes) can take longer
+	// than the request time limits on a big database, so it runs on its own
+	// connection without them, closed once the setup is done.
+	setupDB, err := gorm.Open(postgres.Open(pgConnString), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Critical error opening the setup connection: %v\n", err)
+	}
+	err = setupDB.AutoMigrate(
 		&model.IdempotencyKey{},
 		&model.User{},
 		&model.Role{},
@@ -141,15 +148,18 @@ func main() {
 		log.Fatalf("Database initial migration failed: %v\n", err)
 	}
 	log.Println("Database schemas verified and migrated successfully!")
-	ensureUserUniqueIndexes(db)
-	runDataMigrations(db) // before ensureIndexes: the slip index needs slip_released filled in
-	ensureIndexes(db)
-	warnDuplicatePhones(db)
+	ensureUserUniqueIndexes(setupDB)
+	runDataMigrations(setupDB) // before ensureIndexes: the slip index needs slip_released filled in
+	ensureIndexes(setupDB)
+	warnDuplicatePhones(setupDB)
 
 	// 1c. Seed the config rows the pricing engine needs to not error on a
 	// fresh database - AutoMigrate only creates schema, not data. FirstOrCreate
 	// makes this idempotent, so it's safe to run on every startup.
-	seedDefaults(db)
+	seedDefaults(setupDB)
+	if sqlSetup, err := setupDB.DB(); err == nil {
+		sqlSetup.Close()
+	}
 
 	// 2. Initialize Repositories & Services Slices
 	bkRepo := repository.NewBookingRepository(db)
@@ -844,14 +854,15 @@ func warnDuplicatePhones(db *gorm.DB) {
 
 // withDBTimeouts adds server-side limits to the connection string unless it
 // already sets them: a statement running longer than DB_STATEMENT_TIMEOUT_MS
-// (default 15 s) or waiting for a row lock longer than DB_LOCK_TIMEOUT_MS
+// (default 90 s, a backstop: each request's own deadline - 30 s, 90 s for
+// reports - cancels its queries first) or waiting for a row lock longer than DB_LOCK_TIMEOUT_MS
 // (default 5 s) is cancelled, and a transaction left idle is closed. One
 // stuck request then fails on its own instead of piling every request up
 // behind its locks. pgx sends unknown connection parameters to the server
 // as runtime settings.
 func withDBTimeouts(dsn string) string {
 	params := [][2]string{
-		{"statement_timeout", strconv.Itoa(envInt("DB_STATEMENT_TIMEOUT_MS", 15000))},
+		{"statement_timeout", strconv.Itoa(envInt("DB_STATEMENT_TIMEOUT_MS", 90000))},
 		{"lock_timeout", strconv.Itoa(envInt("DB_LOCK_TIMEOUT_MS", 5000))},
 		{"idle_in_transaction_session_timeout", "30000"},
 	}

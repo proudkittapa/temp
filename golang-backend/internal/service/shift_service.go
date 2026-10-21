@@ -85,6 +85,9 @@ func (s *ShiftService) view(db *gorm.DB, sh model.Shift) (*ShiftView, error) {
 	if sh.CashBookingsAtClose != nil && sh.CashOrdersAtClose != nil {
 		v.CashBookings, v.CashOrders = *sh.CashBookingsAtClose, *sh.CashOrdersAtClose
 	}
+	if sh.CashDepositsAtClose != nil {
+		v.CashDeposits = *sh.CashDepositsAtClose
+	}
 	return v, nil
 }
 
@@ -199,7 +202,7 @@ func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffI
 			return fmt.Errorf("%w: the count is %.2f THB off - add a note explaining it", ErrInvalidBooking, variance)
 		}
 		sh.CountedCash, sh.ExpectedCash, sh.VarianceCash = &counted, &v.Expected, &variance
-		sh.CashBookingsAtClose, sh.CashOrdersAtClose = &v.CashBookings, &v.CashOrders
+		sh.CashBookingsAtClose, sh.CashOrdersAtClose, sh.CashDepositsAtClose = &v.CashBookings, &v.CashOrders, &v.CashDeposits
 		sh.ClosedByID, sh.ClosedByName = &staffID, &staffName
 		if notes != "" {
 			sh.Notes = &notes

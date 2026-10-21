@@ -84,6 +84,22 @@ func Idempotency(db *gorm.DB) gin.HandlerFunc {
 			}
 			return
 		}
+		release := func() {
+			if err := store(func(tx *gorm.DB) *gorm.DB {
+				return tx.Where("key = ? AND NOT completed", key).Delete(&model.IdempotencyKey{})
+			}).Error; err != nil {
+				log.Printf("WARNING: could not release Idempotency-Key for %s: %v", c.FullPath(), err)
+			}
+		}
+		// A panic is answered 500 by gin's recovery further out; the key is
+		// released first so the client's retry isn't refused as "still
+		// being processed".
+		defer func() {
+			if r := recover(); r != nil {
+				release()
+				panic(r)
+			}
+		}()
 		w := &recordingWriter{ResponseWriter: c.Writer}
 		c.Writer = w
 		c.Next()
@@ -97,11 +113,7 @@ func Idempotency(db *gorm.DB) gin.HandlerFunc {
 			}
 			return
 		}
-		if err := store(func(tx *gorm.DB) *gorm.DB {
-			return tx.Where("key = ? AND NOT completed", key).Delete(&model.IdempotencyKey{})
-		}).Error; err != nil {
-			log.Printf("WARNING: could not release Idempotency-Key for %s: %v", c.FullPath(), err)
-		}
+		release()
 	}
 }
 

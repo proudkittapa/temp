@@ -18,6 +18,32 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Fixes to today's review fixes (self-review)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `a9026ac`)
+- **Changed:**
+  - Idempotency: a panic inside a request released no key, so every
+    retry got "still being processed" for 24 h - the key is now released
+    before the panic is re-raised to gin's recovery. (`handler/idempotency.go`)
+  - Startup schema work (AutoMigrate, index builds, data migrations,
+    seeds) ran under the new statement/lock timeouts and could fail to
+    start on a big database - it now runs on a separate connection
+    without them, closed afterwards. (`main.go`)
+  - `statement_timeout` default 15 s → 90 s (backstop only): it cut
+    reports off before their 90 s request deadline; each request's own
+    context deadline (30 s / 90 s) cancels its queries first.
+    (`main.go`, `.env.example`)
+  - Closed shifts showed a live-recomputed deposit total next to the
+    frozen expected cash - now frozen at close (`shifts.cash_deposits_at_close`).
+    (`models.go`, `shift_service.go`)
+- **Verified:** go vet + go test; server restarts cleanly on arena_fresh,
+  setup connection closed (2 app connections left).
+- **Not done / follow-ups:** an independent bug review of today's changes
+  is running; its findings follow in the next commit.
+
+---
+
 ## 2026-10-21 — Review batch B: retry protection, reward clawback on cancel
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
