@@ -18,6 +18,18 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Feature guide: screenshots embedded
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `aafdad8`)
+- **Changed (docs only):** screenshots showed as broken images when the
+  page was opened outside the repo folder. They are now embedded as base64
+  in `docs/features.html` (one ~800 KB self-contained file); `docs/img/`
+  removed.
+- **Verified:** no `img/` references left; 7 images embedded.
+
+---
+
 ## 2026-10-21 — Feature guide: login, all settings, screenshots
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
