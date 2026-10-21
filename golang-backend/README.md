@@ -122,7 +122,7 @@ anything else.
 ### 6. Launch Server
 Compile and start the engine using the Go toolchain:
 ```bash
-go run main.go
+go run .
 ```
 The server will boot up and signal readiness:
 ```

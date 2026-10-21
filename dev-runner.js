@@ -99,7 +99,7 @@ if (apiMode) {
   // matches the Vite proxy in vite.config.ts. DATABASE_URL is deliberately
   // not set: the backend reads it from .env (or .env.example).
   console.log('[Orchestrator] Starting Go Backend on port 8080...');
-  start('Go Backend', 'go', ['run', 'main.go'], {
+  start('Go Backend', 'go', ['run', '.'], {
     cwd: path.join(__dirname, 'golang-backend'),
     shell: isWindows,
     env: {

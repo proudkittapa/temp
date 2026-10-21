@@ -18,6 +18,19 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Fix `npm run dev:api`: backend didn't compile
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, reported by the owner
+- **Commit(s):** this commit (on `main`, parent `9f886d8`)
+- **Changed:** `dev-runner.js` ran `go run main.go`, which compiles only that
+  file, so the functions in `seed_courts.go` (court counts from env) were
+  "undefined". It now runs `go run .` (the whole package); README and
+  golang-backend/README say the same.
+- **Verified:** `node dev-runner.js --api` starts the backend (logs the court
+  counts, seeds demo users) and Vite; `/api/v1/courts` returns 200.
+- **Not done / follow-ups:** none. `go test ./...` never caught this because
+  it builds the whole package; only the single-file `go run` broke.
+
 ## 2026-10-21 — One login, screens by permission, roles tab (TODO step 5, stages 3-5: frontend + docs)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
