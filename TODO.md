@@ -18,7 +18,8 @@ Cheap and blocking first, then what changes what customers/staff see
 5. ~~**One login, screens by permission, admin-defined roles**~~ - done 2026-10-21 (section 9).
    Before launch so staff learn the final sign-in once (if launch can't
    wait, do it right after; today's separate sign-ins work).
-6. **Deploy to a real server with HTTPS** - section 8.
+6. **Deploy to a real server with HTTPS** - section 8 (8a: free tunnel from
+   the Mac for testers now; 8b: VPS + Docker + Caddy for customers).
 7. **Test on real phones** - section 6 and section 3 (real phones, inside the
    LINE app); scan the PromptPay QR with two Thai banking apps.
 8. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
@@ -91,9 +92,30 @@ Each needs a yes/no from the owner before it is built.
 - [ ] Tidy-ups: drop `export` from symbols used only inside their file (api.ts, mockData.ts, Dialog.tsx); `bangkokNow` and `localDateOf` each build their own date formatter.
 
 ## 8. Deploy (production)
-- [ ] A server or managed host for the Go backend + Postgres, the frontend built with `VITE_DATA_SOURCE=api npm run build`, served over HTTPS.
-- [ ] Production settings in `golang-backend/.env` (never in the repo): `GIN_MODE=release`, a long random `JWT_SECRET` (the server refuses to start without it in release mode), `DATABASE_URL`, `PROMPTPAY_ID`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES` behind a reverse proxy, and **no** `SEED_DEMO_USERS`.
-- [ ] Create the real admin account and remove/disable demo accounts; daily database backups and a tested restore; a place to keep slip images (`uploads/`) that survives redeploys.
+
+### 8a. Quick demo for testers (free, from the owner's Mac) - before 8b if needed
+- [ ] Add `allowedHosts: ['.trycloudflare.com']` to `server` in `vite.config.ts` (Vite blocks unknown host names: "Blocked request. This host is not allowed").
+- [ ] Run `npm run dev:api` and `cloudflared tunnel --url http://localhost:3000` (`brew install cloudflared`), send the printed `https://...trycloudflare.com` address. From China the tunnel may need the VPN on.
+- Limits: works only while the Mac is on; the address changes on every restart; demo accounts (password `123456`) and the ⚡ demo login buttons are open to anyone with the link - test data only.
+
+### 8b. Real server
+- [ ] **Host:** a small Linux VPS in Singapore (DigitalOcean / Vultr / AWS Lightsail, about US$6-12/month) + optionally a domain (about US$10-15/year). A VPS rather than Render/Railway because slip images are saved on the server's disk (`golang-backend/uploads/`), which their cheaper plans wipe on restart, and Postgres there is a separate paid service.
+- [ ] **Deployment files in the repo** (not written yet):
+  - `docker-compose.yml`: Postgres (data in a volume), the Go backend (`uploads/` in a volume), Caddy.
+  - `golang-backend/Dockerfile`: builds the whole package (`go build .`, not `main.go` alone - see WORKLOG 2026-10-21).
+  - Frontend build: `VITE_DATA_SOURCE=api npm run build` → `dist/` (demo login buttons are left out of production builds).
+  - `Caddyfile`: serve `dist/`, send `/api/*` to the backend on port 8080, automatic HTTPS for the domain.
+  - `DEPLOY.md`: step-by-step for a fresh server (install Docker, copy `.env`, `docker compose up -d`, update, backup, restore).
+- [ ] **Production settings** in `golang-backend/.env` on the server only (never in the repo or chat):
+  - `GIN_MODE=release`; a long random `JWT_SECRET` (`openssl rand -hex 32`; the server refuses to start without it in release mode);
+  - `DATABASE_URL` with a strong Postgres password;
+  - `PROMPTPAY_ID` = the shop's real PromptPay number (the default `0105561008012` is only an example - payments would go to the wrong account);
+  - `TRUSTED_PROXIES=` Caddy's address (otherwise every customer looks like one IP to the login limit); `CORS_ALLOWED_ORIGINS=` the site's address;
+  - `SEED_DEMO_USERS=false`; court counts (`BASKETBALL_COURT_COUNT` etc.) if not the defaults.
+- [ ] **First start:** create the real admin account (and staff accounts with their roles); no demo accounts; type the business details in Admin → Pricing → ข้อมูลร้าน (section 0).
+- [ ] **Backups:** daily Postgres dump + copy of `uploads/` off the server (e.g. to object storage), kept ~30 days; test a restore once before launch.
+- [ ] **Running it:** the backend restarts by itself after a crash or reboot (`restart: unless-stopped`); simple uptime check (e.g. UptimeRobot, free) that alerts the owner; how to update = `git pull` + rebuild + restart, written in `DEPLOY.md`.
+- [ ] After deploy: run `TESTING_CHECKLIST.md` against the real address (step 7), and use this address for the LINE callback/webhook (section 1-2 prerequisites).
 
 ## 9. One login for everyone; screens by permission; roles set by the admin
 Done 2026-10-21 (see WORKLOG.md).
