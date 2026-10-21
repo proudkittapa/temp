@@ -25,10 +25,10 @@ first and items that need outside accounts later.
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
 Each needs a yes/no from the owner before it is built.
 - [x] **Cash with no shift open:** decided 2026-10-21 - cash is refused until a shift is open (server and screen).
-- [ ] **Blind cash count:** staff see the expected drawer total before counting. Hide it until the counted amount is entered?
+- [x] **Blind cash count:** decided 2026-10-21 - counter staff don't see the expected cash (server withholds it); they confirm their count first, then explain any difference. Managers/admins still see it.
 - [ ] **Manager permissions vs. REQUIREMENTS.md:** what managers may do with manual point changes and the dashboard differs from the spec. Which is right - the app or the spec?
 - [ ] **Basketball closure:** a closure on the full court doesn't block half courts B/C (and vice versa). Should a closure cover the whole court group?
-- [ ] **Voiding a sale whose points were already spent:** the points come back only as far as the balance allows (a customer who bought, earned 25 points and redeemed them keeps the reward). Refuse such voids, cancel the reward, or allow a negative balance?
+- [x] **Voiding a sale whose points were already spent:** decided 2026-10-21 - the customer's unused rewards are cancelled to cover the points; if the reward was already received, the sale can't be voided.
 - [ ] **Cash refunds and the drawer:** refunds are treated as bank transfers (the shift's expected cash ignores them). If staff ever refund cash from the drawer, the shift must subtract them.
 - [ ] **Login lockout policy:** 20 wrong passwords from anywhere lock an account for 15 minutes (someone who knows a staff phone number can keep it locked). Keep, or switch to a delay/CAPTCHA? Behind a proxy, `TRUSTED_PROXIES` must be set (the server now warns in release mode).
 - [ ] **Business details:** the real business name and PromptPay account name for the payment screen and receipts (the payment screen now just says "check the recipient name in your banking app"). See also item 5.

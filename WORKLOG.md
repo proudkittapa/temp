@@ -18,10 +18,49 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Blind cash count; voided sales cancel rewards bought with their points
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `f887d02`)
+- **Background:** Owner decisions: "cash count - yes" (staff count without
+  seeing the expected amount) and "reward should be cancelled once the sale
+  is voided and points used".
+- **Changed:**
+  - Blind count, backend (`shop_api.go` `blindCount`/`blindShift`): STAFF
+    get the current shift with cash figures zeroed and `blind: true`; the
+    day summary zeroes cash and the totals it could be derived from.
+    Frontend (`StaffPOS.tsx`): staff see the float and an instruction instead
+    of the expected amount, day-report cash shows "—"; closing asks to
+    confirm the count, then locks it; a difference brings up a note dialog
+    showing short/over, and the same count is resubmitted with the note.
+    Managers keep the old view. Browser-only mode: blind for the STAFF role.
+  - Void with spent points, backend (`pos.go` `VoidOrder`): if the balance
+    can't cover this sale's points, the customer's ACTIVE vouchers are
+    cancelled newest first (new status `CANCELLED`, points back as ledger
+    `VOUCHER_CANCELLED`) and the full reversal applied; if used rewards
+    can't be cancelled, the void is refused ("...already spent on a reward
+    that was handed over..."). Response lists `cancelled_vouchers`.
+    Frontend: void message names cancelled vouchers; customer voucher list
+    shows "ยกเลิก"; browser-only mode does the same before undoing the sale;
+    Thai translations (incl. a shortfall in the count message, which was
+    shown in English).
+- **Verified:** `go vet`, `go test`, `tsc`, vitest 39/39. Live: staff shift
+  view expected 0/blind, manager 1000; staff summary cash withheld; sale
+  +26 pts, redeem 25, void -> voucher CANCELLED, balance 27->2->1; with the
+  reward already used the void is refused and the order stays DELIVERED.
+  Browser: staff opens a shift, sees the blind note and "—", counts 990,
+  confirms, gets "ยอดนับขาด... 10 บาท" note dialog with the count locked,
+  closes; DB has counted 990 / expected 1000 / variance -10 / the note.
+- **Not done:** remaining owner decisions (manager permissions,
+  basketball closure, cash refunds vs drawer, lockout policy, business
+  details).
+
+---
+
 ## 2026-10-21 — Cash only with an open shift
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `ff4fa47`)
+- **Commit(s):** `f887d02` (on `main`, parent `ff4fa47`)
 - **Background:** Owner decision ("make sure they open the shift"): cash
   taken with no drawer shift open is in no shift's count, so it is refused
   instead of only warned.

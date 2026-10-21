@@ -33,7 +33,9 @@ describe('thaiErrorText', () => {
     expect(thaiErrorText('invalid state for this action: REC20261021-7473EF was paid in a shift that is already closed - it can\'t be voided now'))
       .toBe('บิลเงินสดนี้อยู่ในกะที่ปิดไปแล้ว ยกเลิกไม่ได้');
     expect(thaiErrorText('invalid booking request: the count is 25.50 THB off - add a note explaining it'))
-      .toBe('ยอดนับต่างจากที่ควรมี 25.5 บาท กรุณาใส่หมายเหตุอธิบาย');
+      .toBe('ยอดนับเกินจากที่ควรมี 25.5 บาท กรุณาใส่หมายเหตุอธิบาย');
+    expect(thaiErrorText('invalid booking request: the count is -10.00 THB off - add a note explaining it'))
+      .toBe('ยอดนับขาดจากที่ควรมี 10 บาท กรุณาใส่หมายเหตุอธิบาย');
     expect(thaiErrorText('out of stock: น้ำดื่ม 600ml: only 2 in stock')).toBe('น้ำดื่ม 600ml: เหลือในคลัง 2 ชิ้น');
     expect(thaiErrorText('invalid booking request: overlaps the active rule "แบด เย็น" (17:00-22:00) - adjust or deactivate it first'))
       .toBe('ช่วงเวลาซ้อนกับกติกา "แบด เย็น" (17:00-22:00) — แก้ไขหรือปิดกติกานั้นก่อน');

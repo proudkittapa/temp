@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"arena-backend/internal/model"
 	"arena-backend/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -162,12 +163,20 @@ func (h *ShopHandler) DaySummary(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+	data := gin.H{
 		"date": sum.Date, "cash_received": sum.CashReceived, "promptpay_verified": sum.PromptPayVerified,
 		"refunded": sum.Refunded, "paid_bookings": sum.PaidBookings,
 		"orders_cash": orders.Cash, "orders_promptpay": orders.PromptPay, "fb_sales": orders.FB,
 		"equipment_sales": orders.EquipmentSales, "rental_income": orders.Rentals, "orders_count": orders.Count,
-	}})
+	}
+	if blindCount(c) {
+		// Anything the cash could be worked out from is withheld too.
+		for _, k := range []string{"cash_received", "orders_cash", "fb_sales", "equipment_sales", "rental_income"} {
+			data[k] = 0
+		}
+		data["blind"] = true
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": data})
 }
 
 // GET /api/v1/admin/dashboard?date=YYYY-MM-DD - managers (FR-7.2).
@@ -240,7 +249,22 @@ func (h *ShopHandler) CurrentShift(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": sh})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": blindShift(c, sh)})
+}
+
+// blindCount: counter staff count the drawer without knowing what it should
+// hold (owner decision 2026-10-21) - the expected cash and the day's cash
+// totals go to managers and admins only. The close result (with the
+// difference) is shown once the count is in.
+func blindCount(c *gin.Context) bool { return currentRole(c) == model.RoleStaff }
+
+func blindShift(c *gin.Context, sh *service.ShiftView) *service.ShiftView {
+	if sh == nil || !blindCount(c) {
+		return sh
+	}
+	cp := *sh
+	cp.CashBookings, cp.CashOrders, cp.Expected, cp.Blind = 0, 0, 0, true
+	return &cp
 }
 
 // POST /api/v1/staff/shift/open {"opening_float": 2000} - staff (FR-6.1).
@@ -258,7 +282,7 @@ func (h *ShopHandler) OpenShift(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": sh})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": blindShift(c, sh)})
 }
 
 // POST /api/v1/staff/shift/close {"counted_cash": 5230, "notes": "..."} -

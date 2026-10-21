@@ -93,13 +93,14 @@ const RULES: Rule[] = [
   [/a shift is already open/i, 'มีกะที่เปิดอยู่แล้ว ปิดกะเดิมก่อน'],
   [/open the cash drawer shift before taking cash/i, 'ต้องเปิดกะลิ้นชักก่อนรับเงินสด (แท็บ "ยอดลิ้นชักวันนี้")'],
   [/no shift is open/i, 'ยังไม่ได้เปิดกะ'],
-  [/the count is ([\d.]+) THB off - add a note/i, m => `ยอดนับต่างจากที่ควรมี ${baht(m[1])} บาท กรุณาใส่หมายเหตุอธิบาย`],
+  [/the count is (-?[\d.]+) THB off - add a note/i, m => `ยอดนับ${Number(m[1]) > 0 ? 'เกิน' : 'ขาด'}จากที่ควรมี ${baht(String(Math.abs(Number(m[1]))))} บาท กรุณาใส่หมายเหตุอธิบาย`],
   [/opening float must be between/i, 'เงินทอนตั้งต้นต้องอยู่ระหว่าง 0 - 1,000,000 บาท'],
   [/counted cash must be 0 or more|counted_cash is required/i, 'กรุณาใส่ยอดเงินสดที่นับได้ (0 ขึ้นไป)'],
 
   // Counter sales, rentals, stock
   [/only today's sales can be voided/i, 'ยกเลิกได้เฉพาะบิลของวันนี้'],
   [/is already voided/i, 'บิลนี้ถูกยกเลิกไปแล้ว'],
+  [/already spent on a reward that was handed over/i, 'ลูกค้านำแต้มจากบิลนี้ไปแลกของรางวัลและรับของไปแล้ว — ยกเลิกบิลไม่ได้'],
   [/was paid in a shift that is already closed/i, 'บิลเงินสดนี้อยู่ในกะที่ปิดไปแล้ว ยกเลิกไม่ได้'],
   [/was voided - its items are already back in stock/i, 'บิลนี้ถูกยกเลิกแล้ว ของกลับเข้าสต๊อกแล้ว'],
   [/already returned on/i, 'รายการนี้คืนของแล้ว'],

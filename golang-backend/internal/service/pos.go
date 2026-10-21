@@ -60,6 +60,8 @@ const MaxIdempotencyKeyLen = 64
 type OrderView struct {
 	model.Order
 	Items []OrderItemView `json:"items"`
+	// Void only: rewards cancelled because their points came from this sale.
+	CancelledVouchers []string `json:"cancelled_vouchers,omitempty"`
 }
 
 type OrderItemView struct {
@@ -800,6 +802,7 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 			}
 		}
 		taken := 0
+		var cancelledVouchers []string
 		if order.UserID != nil {
 			var earned int64
 			if err := tx.Model(&model.PointsLedgerEntry{}).Select("COALESCE(SUM(points), 0)").
@@ -814,8 +817,37 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 					return err
 				}
 				taken = int(earned)
-				if u.Points < taken {
-					taken = u.Points // never below zero (points may be spent already)
+				// The customer already spent some of these points: cancel
+				// their unused rewards (newest first) to cover them, giving
+				// those rewards' points back first (owner decision
+				// 2026-10-21). A reward already handed over can't be taken
+				// back, so then the sale can't be voided.
+				if short := taken - u.Points; short > 0 {
+					var active []model.Voucher
+					if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+						Where("user_id = ? AND status = ?", u.ID, model.VoucherActive).
+						Order("created_at DESC").Find(&active).Error; err != nil {
+						return err
+					}
+					for _, v := range active {
+						if short <= 0 {
+							break
+						}
+						if err := tx.Model(&model.Voucher{}).Where("id = ? AND status = ?", v.ID, model.VoucherActive).
+							Update("status", model.VoucherCancelled).Error; err != nil {
+							return err
+						}
+						refType, note := "Voucher", fmt.Sprintf("Voucher %s cancelled: sale %s voided", v.Code, order.OrderCode)
+						if _, err := s.usrRepo.AddPointsEntry(ctx, tx, u.ID, model.LedgerVoucherCancelled, v.PointsSpent, actorID, &refType, &v.ID, &note); err != nil {
+							return err
+						}
+						u.Points += v.PointsSpent
+						short -= v.PointsSpent
+						cancelledVouchers = append(cancelledVouchers, v.Code)
+					}
+					if short > 0 {
+						return fmt.Errorf("%w: the points from %s were already spent on a reward that was handed over - the sale can't be voided", ErrInvalidState, order.OrderCode)
+					}
 				}
 				if taken > 0 {
 					refType, note := "Order", fmt.Sprintf("Sale %s voided: %s", order.OrderCode, reason)
@@ -833,7 +865,7 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 		if err := tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: actorID, UserName: actorName, Action: "ORDER_VOIDED", TargetType: "Order", TargetID: order.ID,
 			BeforeState: model.AuditJSON(map[string]any{"status": before, "total": order.TotalAmount}),
-			AfterState:  model.AuditJSON(map[string]any{"status": order.Status, "points_reversed": taken}),
+			AfterState:  model.AuditJSON(map[string]any{"status": order.Status, "points_reversed": taken, "vouchers_cancelled": cancelledVouchers}),
 			Reason:      &reason, CreatedAt: now,
 		}).Error; err != nil {
 			return err
@@ -843,6 +875,7 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 			return err
 		}
 		view = &views[0]
+		view.CancelledVouchers = cancelledVouchers
 		return nil
 	})
 	return view, err

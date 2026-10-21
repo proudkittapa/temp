@@ -412,7 +412,14 @@ One drawer, so one shift is open at a time. Expected cash = opening float +
 cash booking payments approved + non-voided cash counter sales while the
 shift was open (refunds are transfers, not from the drawer). Cash (walk-ins,
 sales, rentals, mark-cash) is refused with 409 "open the cash drawer shift
-before taking cash" while no shift is open; PromptPay is not affected. Closing stores
+before taking cash" while no shift is open; PromptPay is not affected.
+Blind count: for the STAFF role, `GET /staff/shift` (and the open response)
+returns `blind: true` with the cash figures zeroed, and `/staff/summary`
+withholds the cash totals; managers and admins get the real numbers.
+Voiding a sale whose points were already spent cancels the customer's
+ACTIVE vouchers (newest first, status `CANCELLED`, points back as
+`VOUCHER_CANCELLED`) to cover them, listed in `cancelled_vouchers`; if a
+used reward can't be cancelled the void is refused. Closing stores
 expected, counted and variance (counted - expected); a note is required
 when they differ.
 ```bash

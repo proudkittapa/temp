@@ -924,25 +924,30 @@ export async function auditLogs(opts: { search?: string; targetType?: string; li
 }
 
 // Managers (staff session of a manager): cancel today's counter sale.
-export async function voidOrder(orderId: string, reason: string): Promise<OrderWithNames> {
-  return toOrder(await request<ApiOrder>(`/admin/orders/${encodeURIComponent(orderId)}/void`, { method: 'POST', session: 'staff', body: { reason } }));
+// cancelledVouchers: rewards cancelled because the customer had already
+// spent this sale's points on them.
+export async function voidOrder(orderId: string, reason: string): Promise<OrderWithNames & { cancelledVouchers: string[] }> {
+  const r = await request<ApiOrder & { cancelled_vouchers?: string[] }>(`/admin/orders/${encodeURIComponent(orderId)}/void`, { method: 'POST', session: 'staff', body: { reason } });
+  return { ...toOrder(r), cancelledVouchers: r.cancelled_vouchers || [] };
 }
 
 // ---- cash drawer shifts (FR-6.1/6.2) ----
 
 // A shift with the cash taken while it was open.
-export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; expected: number }
+// blind: the cash figures are withheld from counter staff (blind count).
+export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; expected: number; blind?: boolean }
 
 interface ApiShift {
   id: string; staff_id: string; staff_name: string; opened_at: string; opening_float: number; closed_at?: string;
   counted_cash?: number; expected_cash?: number; variance_cash?: number; notes?: string; closed_by_name?: string;
-  cash_bookings: number; cash_orders: number; expected: number;
+  cash_bookings: number; cash_orders: number; expected: number; blind?: boolean;
 }
 
 const toShift = (s: ApiShift): ShiftView => ({
   id: s.id, staffId: s.staff_id, staffName: s.staff_name, openedAt: s.opened_at, openingFloat: s.opening_float,
   closedAt: s.closed_at, countedCash: s.counted_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
-  notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, expected: s.expected
+  notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, expected: s.expected,
+  blind: s.blind
 });
 
 export async function currentShift(): Promise<ShiftView | null> {

@@ -31,7 +31,7 @@ interface Reward {
 
 interface Redemption {
   id: string;
-  status?: 'ACTIVE' | 'REDEEMED' | 'EXPIRED';
+  status?: 'ACTIVE' | 'REDEEMED' | 'EXPIRED' | 'CANCELLED';
   userId: string;
   userName: string;
   rewardId: string;
@@ -1278,7 +1278,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                               <span className="text-xs text-slate-500 font-mono shrink-0">
                                 {voucher.redeemedAt}
                                 {voucher.status && voucher.status !== 'ACTIVE' && (
-                                  <span className="ml-1 font-bold text-slate-300">{voucher.status === 'REDEEMED' ? '· รับแล้ว' : '· หมดอายุ'}</span>
+                                  <span className="ml-1 font-bold text-slate-300">{voucher.status === 'REDEEMED' ? '· รับแล้ว' : voucher.status === 'CANCELLED' ? '· ยกเลิก (บิลที่ได้แต้มถูกยกเลิก)' : '· หมดอายุ'}</span>
                                 )}
                               </span>
                             </div>

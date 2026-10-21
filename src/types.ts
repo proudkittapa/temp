@@ -304,7 +304,8 @@ export enum LedgerEntryType {
   REDEEM = 'REDEEM',
   ADJUST_MANUAL = 'ADJUST_MANUAL',
   REVERSE_BOOKING = 'REVERSE_BOOKING',
-  REVERSE_PURCHASE = 'REVERSE_PURCHASE' // points of a voided counter sale
+  REVERSE_PURCHASE = 'REVERSE_PURCHASE', // points of a voided counter sale
+  VOUCHER_CANCELLED = 'VOUCHER_CANCELLED' // a reward's points given back when its sale was voided
 }
 
 // Append-only loyalty history (FR-4.1/FR-4.3, AC-6/AC-7). User.points is a

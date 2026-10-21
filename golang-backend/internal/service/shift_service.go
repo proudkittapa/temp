@@ -34,6 +34,9 @@ type ShiftView struct {
 	CashBookings float64 `json:"cash_bookings"`
 	CashOrders   float64 `json:"cash_orders"`
 	Expected     float64 `json:"expected"` // opening float + cash bookings + cash orders
+	// Blind: the cash figures above are withheld (counter staff, see
+	// handler.blindCount).
+	Blind bool `json:"blind,omitempty"`
 }
 
 // cashBetween sums cash taken in [from, to): approved cash payments for

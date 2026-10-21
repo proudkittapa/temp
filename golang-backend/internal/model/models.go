@@ -453,6 +453,8 @@ const (
 	LedgerReverseBooking LedgerEntryType = "REVERSE_BOOKING"
 	// Points taken back when a counter sale is voided.
 	LedgerReversePurchase LedgerEntryType = "REVERSE_PURCHASE"
+	// Points given back when a voucher is cancelled (its sale was voided).
+	LedgerVoucherCancelled LedgerEntryType = "VOUCHER_CANCELLED"
 )
 
 // 11. Append-only loyalty history (FR-4.1/FR-4.3, AC-6/AC-7). users.points is
@@ -495,6 +497,8 @@ const (
 	VoucherActive   VoucherStatus = "ACTIVE"
 	VoucherRedeemed VoucherStatus = "REDEEMED"
 	VoucherExpired  VoucherStatus = "EXPIRED"
+	// Cancelled because the sale whose points paid for it was voided.
+	VoucherCancelled VoucherStatus = "CANCELLED"
 )
 
 // 13. A claimed reward (FR-4.3): created when a customer redeems points,
