@@ -9,6 +9,7 @@ import (
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
+	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -74,7 +75,7 @@ func (s *CourtAdminService) Create(ctx context.Context, in CourtInput, actorID, 
 	if in.HalfCourt && strings.TrimSpace(in.HalfOf) == "" {
 		return nil, fmt.Errorf("%w: a half court must be part of a full court - choose which court it is half of", ErrInvalidBooking)
 	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if in.HalfCourt {
 			// Join the full court's group (giving it one if it has none), so
 			// the half and the full court block each other.
@@ -131,7 +132,7 @@ type CourtUpdateResult struct {
 // bookings depend on them).
 func (s *CourtAdminService) Update(ctx context.Context, id string, in CourtInput, actorID, actorName string) (*CourtUpdateResult, error) {
 	out := &CourtUpdateResult{}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var c model.Court
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&c, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

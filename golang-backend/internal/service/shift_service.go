@@ -9,6 +9,7 @@ import (
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
+	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -128,7 +129,7 @@ func (s *ShiftService) Open(ctx context.Context, openingFloat float64, staffID, 
 		return nil, fmt.Errorf("%w: opening float must be between 0 and 1,000,000 THB", ErrInvalidBooking)
 	}
 	var out *ShiftView
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", shiftLockKey).Error; err != nil {
 			return err
 		}
@@ -164,7 +165,7 @@ func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffI
 	}
 	notes = strings.TrimSpace(notes)
 	var out *ShiftView
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", shiftLockKey).Error; err != nil {
 			return err
 		}

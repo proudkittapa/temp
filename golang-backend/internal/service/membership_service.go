@@ -60,7 +60,7 @@ func (s *MembershipService) SetMemberType(ctx context.Context, userID string, ne
 		return nil, fmt.Errorf("%w: unknown member_type %q", ErrInvalidBooking, newTier)
 	}
 	var u model.User
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.First(&u, "id = ?", userID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound

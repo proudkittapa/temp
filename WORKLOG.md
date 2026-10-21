@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Automatic retry of deadlocks / serialization failures
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `8a4c5bf`)
+- **Changed:** new `repository.RetryTx(db, fn)` runs a transaction up to 3
+  times when Postgres aborts it with 40P01/40001 (25-250 ms jittered pause,
+  stops if the request is cancelled). All 35 `db.Transaction` calls in
+  services/repositories now use it. Closures that fill outer results reset
+  them per attempt (`pos.go` bulk product import `out`, `booking_service.go`
+  CreateBooking `result`); a scan found no other outer appends/counters.
+  The client only sees "busy" if all 3 attempts collide.
+- **Verified:** go vet + go test. Live: 4 simultaneous 2-court bookings of
+  the same slot by different customers → one 201, three 409 "already
+  booked", 2 rows, no server errors.
+- **Not done / follow-ups:** automated concurrency tests on real Postgres
+  (TODO section 7).
+
+---
+
 ## 2026-10-21 — Frontend tidy-up (no behaviour change)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

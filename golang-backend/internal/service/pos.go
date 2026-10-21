@@ -188,7 +188,8 @@ func (s *POSService) CreateProducts(ctx context.Context, inputs []ProductInput, 
 		}
 	}
 	out := make([]model.Product, 0, len(inputs))
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		out = out[:0] // a retried attempt starts over
 		now := s.now()
 		for _, in := range inputs {
 			p := model.Product{
@@ -221,7 +222,7 @@ func (s *POSService) UpdateProduct(ctx context.Context, id string, in ProductInp
 		return nil, err
 	}
 	var p model.Product
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound
@@ -259,7 +260,7 @@ func (s *POSService) AdjustStock(ctx context.Context, productID string, variantI
 		return nil, fmt.Errorf("%w: a reason is required for a stock change", ErrInvalidBooking)
 	}
 	var view *ProductView
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var p model.Product
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "id = ?", productID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -428,7 +429,7 @@ func lineLockKey(in POSOrderItemInput) string {
 
 func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, customer *model.User) (*CheckoutResult, error) {
 	var result *CheckoutResult
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		// Lock order everywhere: customer, then the cash drawer, then stock
 		// rows (bookings take the customer before the drawer too).
 		if customer != nil {
@@ -682,7 +683,7 @@ func (s *POSService) ActiveRentals(ctx context.Context) ([]OrderView, error) {
 // and closes the rental once every item is back. Returning twice fails.
 func (s *POSService) ReturnRentalItem(ctx context.Context, itemID, actorID, actorName string) (*OrderView, error) {
 	var view *OrderView
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var item model.OrderItem
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ?", itemID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -757,7 +758,7 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 		return nil, fmt.Errorf("%w: a reason is required to void a sale", ErrInvalidBooking)
 	}
 	var view *OrderView
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var order model.Order
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", orderID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

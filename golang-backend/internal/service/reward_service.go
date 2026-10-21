@@ -70,7 +70,7 @@ func (s *RewardService) Redeem(ctx context.Context, userID, rewardID string) (*V
 
 func (s *RewardService) redeemTx(ctx context.Context, userID, rewardID string) (*VoucherView, error) {
 	var out *VoucherView
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var item model.RewardCatalogItem
 		if err := tx.First(&item, "id = ? AND is_active = ?", rewardID, true).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -202,7 +202,7 @@ func (s *RewardService) Lookup(ctx context.Context, code string) (*VoucherView, 
 // unexpired voucher can be dispensed, and only once.
 func (s *RewardService) Dispense(ctx context.Context, code, staffID, staffName string) (*VoucherView, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var v model.Voucher
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&v, "code = ?", code).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

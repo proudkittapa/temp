@@ -277,7 +277,7 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 		return nil, fmt.Errorf("%w: a cancellation reason is required", ErrInvalidBooking)
 	}
 	res := &CancelResult{}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		p, root, err := s.groupPayment(tx, bookingID, true)
 		if err != nil {
 			return err
@@ -426,7 +426,7 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 		return nil, fmt.Errorf("%w: a refund reason is required", ErrInvalidBooking)
 	}
 	var p *model.Payment
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var err error
 		if p, err = lockPayment(tx, paymentID); err != nil {
 			return err
@@ -502,7 +502,7 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 // free.
 func (s *BookingService) MarkPaidInCash(ctx context.Context, paymentID, actorID, actorName string) (*ReviewResult, error) {
 	var res *ReviewResult
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		p, err := lockPayment(tx, paymentID)
 		if err != nil {
 			return err
@@ -574,7 +574,7 @@ func (s *BookingService) PaymentForBooking(ctx context.Context, bookingID string
 // played. The payment is kept (no refund for a no-show).
 func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, actorName string) (*model.Booking, error) {
 	var b model.Booking
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&b, "id = ?", bookingID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound

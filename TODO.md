@@ -13,8 +13,8 @@ Cheap and blocking first, then what changes what customers/staff see
    invoice (section 5); the owner still has to type in the real details.
 3. ~~**Basketball courts A, B, C, each full or half**~~ - done 2026-10-21
    (section 10).
-4. **Safety checks** - section 7: concurrency tests and automatic retry of
-   "busy" errors (the database backstop against double booking is done).
+4. **Safety checks** - section 7: automated concurrency tests (the
+   double-booking backstop and automatic retry are done).
 5. ~~**One login, screens by permission, admin-defined roles**~~ - done 2026-10-21 (section 9).
    Before launch so staff learn the final sign-in once (if launch can't
    wait, do it right after; today's separate sign-ins work).
@@ -83,7 +83,8 @@ Each needs a yes/no from the owner before it is built.
 
 ## 7. Smaller improvements found in the 2026-10-21 code review (not done)
 - [ ] Day summary: split refunds by method and count only refunds of money counted as received.
-- [ ] Backend concurrency tests on a real Postgres (verify vs cancel, expiry vs slip upload, void vs shift close) and an automatic retry of deadlock/serialization errors instead of "busy, try again".
+- [x] Automatic retry of deadlock/serialization errors: every transaction runs through `repository.RetryTx` (3 attempts). Done 2026-10-21.
+- [ ] Backend concurrency tests on a real Postgres (verify vs cancel, expiry vs slip upload, void vs shift close) - only a manual parallel-booking check was done.
 - [x] Database backstop against double booking: partial unique index `idx_bookings_live_slot` on (court_id, date, start_time) for non-cancelled rows; a hit returns 409 "slot already booked". Done 2026-10-21.
 - [x] Receipts show who took the money and when (payment verified_by/verified_at for bookings, the seller for counter sales), plus the print time. Done 2026-10-21.
 - [x] Reports year picker: next year down to 5 years back. Done 2026-10-21.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -37,6 +38,26 @@ func IsUniqueViolation(err error) bool {
 func IsRetryableConflict(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
+}
+
+// RetryTx runs fn in a transaction and, when Postgres aborts it as a
+// deadlock or serialization failure (IsRetryableConflict), runs it again -
+// up to 3 attempts, after a short pause - instead of sending the client
+// "busy, try again". The aborted attempt was rolled back, so fn must only
+// change the database, or reset anything it fills outside itself.
+func RetryTx(db *gorm.DB, fn func(tx *gorm.DB) error) error {
+	var err error
+	for attempt := 1; ; attempt++ {
+		err = db.Transaction(fn)
+		if err == nil || attempt == 3 || !IsRetryableConflict(err) {
+			return err
+		}
+		select {
+		case <-db.Statement.Context.Done():
+			return err
+		case <-time.After(time.Duration(attempt*attempt*25+rand.IntN(25)) * time.Millisecond):
+		}
+	}
 }
 
 // Create inserts a brand new customer or staff member user profile row.
@@ -204,7 +225,7 @@ func (r *UserRepository) AddPointsEntry(
 // name and the reason, as FR-7.3 requires for manual point changes.
 func (r *UserRepository) UpdatePoints(ctx context.Context, userID string, delta int, actorID, actorName, reason string) (int, error) {
 	var newBalance int
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := RetryTx(r.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var err error
 		newBalance, err = r.AddPointsEntry(ctx, tx, userID, model.LedgerAdjustManual, delta, actorID, nil, nil, &reason)
 		if err != nil {

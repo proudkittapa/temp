@@ -296,7 +296,8 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 	}
 
 	result := &CreateBookingResult{}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		*result = CreateBookingResult{} // a retried attempt starts over
 		// Lock the customer's row first (before any court rows, the same
 		// order AddPointsEntry follows later in this transaction), so two
 		// bookings sent at the same moment by one customer run one after
@@ -738,7 +739,7 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 	reason := fmt.Sprintf("Expired: no payment slip within %d minutes", int(PaymentHoldDuration.Minutes()))
 	for _, p := range stale {
 		cancelled := false
-		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 			locked, err := lockPayment(tx, p.ID)
 			if err != nil {
 				return err
@@ -1079,7 +1080,7 @@ func slipAcceptable(p *model.Payment) error {
 // slip URL it replaced, if any (the file is kept as evidence).
 func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash, actorID string) (string, error) {
 	var previous string
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		p, err := lockPayment(tx, paymentID)
 		if err != nil {
 			return err
@@ -1169,7 +1170,7 @@ type ReviewResult struct {
 // retried click can't award them twice.
 func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, seenSlipAt *time.Time, staffID, staffName string) (*ReviewResult, error) {
 	var res *ReviewResult
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		p, err := lockPayment(tx, paymentID)
 		if err != nil {
 			return err
@@ -1241,7 +1242,7 @@ func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, se
 		return nil, fmt.Errorf("%w: a rejection reason is required", ErrInvalidBooking)
 	}
 	var res *ReviewResult
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		p, err := lockPayment(tx, paymentID)
 		if err != nil {
 			return err

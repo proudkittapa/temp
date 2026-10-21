@@ -9,6 +9,7 @@ import (
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
+	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 )
 
@@ -84,7 +85,7 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 	}
 
 	res := &CreateDayOffResult{AffectedBookings: []model.Booking{}}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		// Wait for bookings on this date that are mid-transaction (they
 		// hold the lock shared) and keep new ones out until this closure
 		// is committed - otherwise a booking that checked closures a moment
@@ -163,7 +164,7 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 
 // Delete removes a closure (reopening the court), audit-logged.
 func (s *DayOffService) Delete(ctx context.Context, id, actorID, actorName string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var d model.DayOff
 		if err := tx.First(&d, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

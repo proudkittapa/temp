@@ -134,7 +134,7 @@ func (s *UserService) updateUser(ctx context.Context, userID, actorID, actorName
 		return nil, fmt.Errorf("%w: you cannot change your own role or status", ErrForbidden)
 	}
 	var u model.User
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.First(&u, "id = ?", userID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound

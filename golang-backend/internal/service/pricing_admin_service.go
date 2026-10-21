@@ -9,6 +9,7 @@ import (
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
+	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -106,7 +107,7 @@ func (s *PricingAdminService) SaveRule(ctx context.Context, r model.PricingRule,
 	if err := validateRule(&r); err != nil {
 		return nil, err
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		// Serialize rule edits so two concurrent saves can't both pass the
 		// overlap check.
 		if err := tx.Exec("LOCK TABLE pricing_rules IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
@@ -141,7 +142,7 @@ func (s *PricingAdminService) SaveRule(ctx context.Context, r model.PricingRule,
 }
 
 func (s *PricingAdminService) DeleteRule(ctx context.Context, id, actorID, actorName string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var existing model.PricingRule
 		if err := tx.First(&existing, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -167,7 +168,7 @@ func (s *PricingAdminService) UpdateMemberDiscount(ctx context.Context, d model.
 	if d.DiscountPercent < 0 || d.DiscountPercent >= 100 {
 		return nil, fmt.Errorf("%w: discount_percent must be at least 0 and below 100", ErrInvalidBooking)
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var existing model.MemberDiscount
 		if err := tx.First(&existing, "member_type = ?", d.MemberType).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -206,7 +207,7 @@ func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent
 		return nil, fmt.Errorf("%w: max_advance_days must be between 1 and %d", ErrInvalidBooking, MaxAdvanceDaysLimit)
 	}
 	var cfg model.PricingConfig
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		// Locked: two admins saving at once each change their own fields,
 		// and Save writes every column - unlocked, the second would put
 		// back the first one's old values.
@@ -290,7 +291,7 @@ func (s *PricingAdminService) UpdateBusiness(ctx context.Context, in BusinessInf
 		return nil, fmt.Errorf("%w: a VAT-registered business needs its name, address and tax ID", ErrInvalidBooking)
 	}
 	var cfg model.PricingConfig
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cfg, "id = ?", "global").Error; err != nil {
 			return err
 		}

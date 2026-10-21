@@ -9,6 +9,7 @@ import (
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
+	"arena-backend/internal/repository"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -133,7 +134,7 @@ func (s *RoleService) Create(ctx context.Context, in RoleInput, actorID, actorNa
 		return nil, err
 	}
 	r := model.Role{ID: ids.New("role"), Name: in.Name, Permissions: in.Permissions, CreatedAt: s.now(), UpdatedAt: s.now()}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := s.checkNameFree(tx, "", in.Name); err != nil {
 			return err
 		}
@@ -154,7 +155,7 @@ func (s *RoleService) Update(ctx context.Context, id string, in RoleInput, actor
 		return nil, err
 	}
 	var r model.Role
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&r, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound
@@ -183,7 +184,7 @@ func (s *RoleService) Update(ctx context.Context, id string, in RoleInput, actor
 
 // Delete removes a custom role nobody has. Built-in roles can't be deleted.
 func (s *RoleService) Delete(ctx context.Context, id, actorID, actorName string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var r model.Role
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&r, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
