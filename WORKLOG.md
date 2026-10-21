@@ -18,6 +18,31 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Points only from court bookings
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `65fcdd8`)
+- **Changed:** owner decision: points come only from paid court hours (1
+  per hour); counter sales - F&B, equipment and rentals - earn none (they
+  earned 1 per 100 THB). The member-phone box stays (links the sale to
+  the member's name), relabelled "👤 เบอร์โทรสมาชิก (เว้นได้ — ผูกบิลกับ
+  สมาชิก ไม่ได้แต้ม)".
+  - Server: `ProcessCheckout` no longer writes EARN_PURCHASE entries;
+    `points_earned` stays in the response (0, or the old points on a
+    replay of an older sale). VoidOrder still takes back purchase points of
+    older sales (it reads the ledger). (`pos.go`)
+  - Browser-only mode: `StorageService.addPoints` removed; sale/rental
+    messages no longer mention points. (`StaffPOS.tsx`, `mockData.ts`)
+  - Docs: REQUIREMENTS FR-4.1 / AC-6, TESTING_CHECKLIST 4b.2, feature guide
+    (points rule, sale/void/rental lines; sale + rental screenshots
+    retaken with the new label).
+- **Verified:** go vet + go test, tsc, vitest 54/54. Live: 150-baht sale
+  with a member's phone → order in the member's name, points_earned 0,
+  balance unchanged; 2-hour booking paid → +2. Feature guide: 9/9 images,
+  no sideways scroll at phone width.
+
+---
+
 ## 2026-10-21 — Feature guide brought up to date
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

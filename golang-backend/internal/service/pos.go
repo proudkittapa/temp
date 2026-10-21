@@ -28,8 +28,8 @@ type POSOrderItemInput struct {
 }
 
 type CheckoutInput struct {
-	// CustomerPhone credits a registered customer with the purchase points
-	// (FR-4.1); unknown numbers are a plain walk-in sale.
+	// CustomerPhone links the sale to a registered customer (their name on
+	// the order); unknown numbers are a plain walk-in sale. No points.
 	CustomerPhone string              `json:"customer_phone,omitempty"`
 	CustomerName  string              `json:"customer_name"`
 	CourtID       *string             `json:"court_id,omitempty"` // populated if linking snacks to physical courts
@@ -329,8 +329,8 @@ func (s *POSService) AdjustStock(ctx context.Context, productID string, variantI
 
 // ProcessCheckout sells or rents out the items: prices come from the
 // catalog (never from the client), stock is locked and decremented in the
-// same transaction, a registered customer earns 1 point per 100 THB
-// (FR-4.1). A rental stays open (PREPARING) until every item is returned.
+// same transaction; a registered customer is linked to the order (counter
+// sales earn no points). A rental stays open (PREPARING) until every item is returned.
 // With an idempotency key, a repeat of the same checkout (double submit,
 // network retry) returns the first order instead of selling again.
 func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (*CheckoutResult, error) {
@@ -608,14 +608,9 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 			return err
 		}
 
-		points := 0
-		if customer != nil && total >= 100 {
-			points = int(total / 100)
-			refType, note := "Order", fmt.Sprintf("Purchase of %.2f THB (order %s)", total, code)
-			if _, err := s.usrRepo.AddPointsEntry(ctx, tx, customer.ID, model.LedgerEarnPurchase, points, input.CreatedBy, &refType, &orderID, &note); err != nil {
-				return fmt.Errorf("failed to credit loyalty points: %w", err)
-			}
-		}
+		// Counter sales earn no points - only paid court hours do (owner
+		// decision 2026-10-21). Old sales' purchase points still come back
+		// on void (VoidOrder reads the ledger).
 		view := OrderView{Order: order, Items: items}
 		if err := tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: input.CreatedBy, UserName: input.CreatedByName, Action: "ORDER_CREATED",
@@ -623,7 +618,7 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 		}).Error; err != nil {
 			return err
 		}
-		result = &CheckoutResult{Order: view, PointsEarned: points}
+		result = &CheckoutResult{Order: view}
 		return nil
 	})
 	if err != nil {

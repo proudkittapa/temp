@@ -443,13 +443,6 @@ export class StorageService {
     return applied;
   }
 
-  // FR-4.1: 1 point per 100 THB spent on POS retail/F&B.
-  static addPoints(userId: string | undefined, amount: number): number {
-    const pointsToAdd = Math.floor(amount / 100);
-    if (pointsToAdd <= 0) return 0;
-    return this.addLedgerEntry(userId, LedgerEntryType.EARN_PURCHASE, pointsToAdd, 'system', { note: `Purchase of ${amount} THB` });
-  }
-
   // FR-4.1: 1 point per 1 hour of confirmed court reservation.
   static addPointsHour(userId: string | undefined, hours: number): number {
     if (hours <= 0) return 0;

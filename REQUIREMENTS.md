@@ -148,7 +148,7 @@ The **Sports Complex Management System** is a mission-critical management platfo
 ### FR-4: Customer Loyalty, Gamification & Rewards Club
 - **FR-4.1 Point Accrual Rules**:
   - **1 Point per 1 hour** of confirmed court reservations (awarded automatically upon staff slip verification or counter payment).
-  - **1 Point per 100 THB** spent on POS retail merchandise or F&B purchases.
+  - ~~1 Point per 100 THB spent on POS retail merchandise or F&B purchases.~~ Removed 2026-10-21 (owner): counter sales (F&B, equipment, rentals) earn no points; only paid court hours do.
 - **FR-4.2 Rewards Catalog**:
   - `🥤 Mineral Water`: 5 Points (Free chilled bottled mineral water).
   - `⚡ Sponsor Energy Drink`: 8 Points (Free sports electrolyte drink).
@@ -306,7 +306,7 @@ function isSlotBlockedByDayOff(courtId: string, date: string, hourNumber: number
 - [x] **AC-3**: Special Day-Off closures support whole-day and specified hour-range blocks, preventing conflicts.
 - [x] **AC-4**: PromptPay QR generator produces valid payloads with verified EMVCo CRC-16 checksums.
 - [x] **AC-5**: Uploaded payment slips appear in the Staff POS queue and trigger confirmed status and loyalty accrual upon approval.
-- [x] **AC-6**: Confirmed booking hours award 1 loyalty point per hour; retail purchases award 1 point per 100 THB.
+- [x] **AC-6**: Confirmed booking hours award 1 loyalty point per hour; counter sales award none (changed 2026-10-21).
 - [x] **AC-7**: Loyalty point redemption deducts points, generates a unique `RW-XXXXXX` claim code, and simulates a LINE OA message.
 - [x] **AC-8**: Equipment rental tracks badminton rackets and court shoes with sizes (36–45) and return timestamps.
 - [x] **AC-9**: Shift cash drawer tracks opening float, receipts, and cash variance upon register close.

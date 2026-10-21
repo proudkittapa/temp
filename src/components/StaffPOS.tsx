@@ -101,7 +101,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [cartCourtId, setCartCourtId] = useState<string>('');
   const [cartPayMethod, setCartPayMethod] = useState<PaymentMethod>(PaymentMethod.PROMPTPAY);
   const [cartSuccessAlert, setCartSuccessAlert] = useState<string | null>(null);
-  // A registered customer's phone: the sale earns them points (1 per 100 THB).
+  // A registered customer's phone links the sale to them (name on the bill,
+  // their history). Counter sales earn no points - only court bookings do.
   const [cartCustomerPhone, setCartCustomerPhone] = useState<string>('');
 
   // Rental items list
@@ -1131,13 +1132,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
     if (cartPayMethod === PaymentMethod.CASH && !(await confirmCashWithoutShift())) return;
     const type = cartItems.every(i => i.product.category === ProductCat.EQUIPMENT) ? OrderType.EQUIPMENT_SALE : OrderType.FB;
-    const done = (orderCode: string, total: number, pts: number) => {
+    const done = (orderCode: string, total: number) => {
       setCartItems([]);
       setCartCustomerName('');
       setCartCourtId('');
       setCartCustomerPhone('');
       setCartMember(null);
-      setCartSuccessAlert(`ใบเสร็จ ${orderCode} ตัดสต๊อกเรียบร้อย! ชำระผ่าน ${cartPayMethod === PaymentMethod.CASH ? 'เงินสด' : 'โอน/พร้อมเพย์'} ยอดเงิน ${formatBaht(total)} บาท ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
+      setCartSuccessAlert(`ใบเสร็จ ${orderCode} ตัดสต๊อกเรียบร้อย! ชำระผ่าน ${cartPayMethod === PaymentMethod.CASH ? 'เงินสด' : 'โอน/พร้อมเพย์'} ยอดเงิน ${formatBaht(total)} บาท`);
       onRefreshAll();
     };
 
@@ -1153,7 +1154,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         .then(r => {
           cartActionId.current = '';
           onAddAuditLog('ORDER_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode, total: r.order.totalAmount });
-          done(r.order.orderCode, r.order.totalAmount, r.pointsEarned);
+          done(r.order.orderCode, r.order.totalAmount);
         })
         .catch(err => { notify(`ขายไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
     }
@@ -1200,9 +1201,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return match ? { ...p, stock: p.stock - match.qty } : p;
     }));
     StorageService.set('orders', [...StorageService.get<Order[]>('orders', []), newOrder]);
-    const ptsAdded = customer ? StorageService.addPoints(customer.id, totalAmount) : 0;
     onAddAuditLog('ORDER_CREATED_BY_STAFF', 'Order', orderId, null, newOrder);
-    done(orderCode, totalAmount, ptsAdded);
+    done(orderCode, totalAmount);
   };
 
   // Equipment rental (FR-5.3): the catalog price, one item; shoes by size.
@@ -1229,13 +1229,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (!(await confirmCashWithoutShift())) return; // rentals are paid in cash
     const sizeNote = variant ? ` (รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label})` : '';
     // Fee and deposit as recorded (the server's, in API mode).
-    const done = (orderCode: string, pts: number, fee = prodObj.price, dep = roundBaht(prodObj.deposit ?? 0)) => {
+    const done = (orderCode: string, fee = prodObj.price, dep = roundBaht(prodObj.deposit ?? 0)) => {
       setRentalCourtId('');
       setRentalCustomerPhone('');
       setRentalMember(null);
       setRentalVariantId('');
       onRefreshAll();
-      notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote}${dep > 0 ? `\nเก็บเงินสด ${formatBaht(fee + dep)} บาท (ค่าเช่า ${formatBaht(fee)} + มัดจำ ${formatBaht(dep)} คืนตอนคืนของ)` : ''} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
+      notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote}${dep > 0 ? `\nเก็บเงินสด ${formatBaht(fee + dep)} บาท (ค่าเช่า ${formatBaht(fee)} + มัดจำ ${formatBaht(dep)} คืนตอนคืนของ)` : ''}`);
     };
 
     if (api.USE_BACKEND) {
@@ -1249,7 +1249,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         .then(r => {
           rentalActionId.current = '';
           onAddAuditLog('RENTAL_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode });
-          done(r.order.orderCode, r.pointsEarned, r.order.totalAmount, r.order.depositAmount ?? 0);
+          done(r.order.orderCode, r.order.totalAmount, r.order.depositAmount ?? 0);
         })
         .catch(err => { notify(`ปล่อยเช่าไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
     }
@@ -1290,9 +1290,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       variants: p.variants?.map(v => v.id === variant?.id ? { ...v, stock: v.stock - 1 } : v)
     }));
     StorageService.set('orders', [...StorageService.get<Order[]>('orders', []), newOrder]);
-    const ptsAdded = customer ? StorageService.addPoints(customer.id, prodObj.price) : 0;
     onAddAuditLog('RENTAL_CREATED_BY_STAFF', 'Order', orderId, null, newOrder);
-    done(orderCode, ptsAdded);
+    done(orderCode);
   };
 
   // A rented item is back: restock it (its size, for shoes); the rental
@@ -2435,7 +2434,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 {cartItems.length > 0 && (
                   <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
                     <div>
-                      <label className="block text-[10px] text-amber-400 font-bold mb-1">🎁 เบอร์โทรสมาชิก (สะสมแต้ม 1 แต้ม / 100 บาท, เว้นได้):</label>
+                      <label className="block text-[10px] text-amber-400 font-bold mb-1">👤 เบอร์โทรสมาชิก (เว้นได้ — ผูกบิลกับสมาชิก ไม่ได้แต้ม):</label>
                       <MemberPhoneInput
                         id="cart-member-phone"
                         dark
@@ -2535,12 +2534,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               <div className="space-y-4">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">บันทึกจ่ายปล่อยเช่าแร็กเก็ตและอุปกรณ์กีฬา</h3>
-                  <p className="text-xs text-slate-500">เลือกอุปกรณ์ ใส่เบอร์สมาชิกถ้ามี (เพื่อสะสมแต้ม) แล้วเก็บค่าเช่าเป็นเงินสด</p>
+                  <p className="text-xs text-slate-500">เลือกอุปกรณ์ ใส่เบอร์สมาชิกถ้ามี แล้วเก็บค่าเช่าเป็นเงินสด (ค่าเช่าไม่ได้แต้ม)</p>
                 </div>
 
                 <form onSubmit={e => { e.preventDefault(); void guarded(handleRentalRentSubmit)(e); }} className="space-y-4 text-xs">
                   <div>
-                    <label className="block text-amber-600 font-bold mb-1.5">🎁 เบอร์โทรสมาชิก (สะสมแต้ม, เว้นได้):</label>
+                    <label className="block text-amber-600 font-bold mb-1.5">👤 เบอร์โทรสมาชิก (เว้นได้):</label>
                     <MemberPhoneInput
                       id="rental-member-phone"
                       value={rentalCustomerPhone}
