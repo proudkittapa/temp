@@ -18,6 +18,29 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Feature guide brought up to date
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `7ce4967`)
+- **Changed (docs only, `docs/features.html`):** points rule corrected
+  (bookings 1 point per paid hour, counter 1 per 100 baht - it said 1 per
+  100 baht for both); added: 30-min hold only for customers' own bookings,
+  max 3 unpaid, slip file rules/auto-shrink, points/rewards taken back on
+  cancel/no-show, walk-in transfer waits for staff (never auto-cancelled),
+  grid loading state, rental without a name + cash fee/deposit, day ledger
+  refund split, a cash-drawer card (open, expected = float + cash bookings
+  + cash sales/rentals + deposits held, refunds = transfers, blind close),
+  a "network dropped" card (retry is safe, what the busy/in-progress
+  messages mean), manager cancel reward rule, deposit setting row, new
+  server variables (DB_MAX_OPEN_CONNS, DB_LOCK_TIMEOUT_MS,
+  DB_STATEMENT_TIMEOUT_MS, TRUSTED_PROXIES), two rules cards, a "current
+  limitations" section, phone/tablet note. Screenshots retaken (9, adds
+  rental form and shift box), still embedded (~1 MB).
+- **Verified:** opened at phone width: 9/9 images load, no sideways
+  scroll, no page errors.
+
+---
+
 ## 2026-10-21 — Fixes from the independent bug review of today's changes
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
