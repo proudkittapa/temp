@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Frontend tidy-up (no behaviour change)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `fdcefb1`)
+- **Changed:** TODO section 7 tidy-ups.
+  - Dropped `export` from 18 symbols used only inside their own file:
+    api.ts (API_BASE_URL, SessionKind, assetUrl, CreatedBookingGroup,
+    PricingSnapshot, getPricing, WalkInInput, ReviewResult, CancelResult,
+    RewardItem, CheckoutInput), mockData.ts (CourtCounts,
+    DEFAULT_PRICING_CONFIG, PAID_BOOKING_STATUSES, normalizePromptPayId,
+    bangkokNow), Dialog.tsx (DialogOptions, DialogResult).
+  - `bangkokNow` no longer builds a new Intl formatter per call: it reuses
+    `BKK_DATE` and a module-level `BKK_HOUR`, from one `Date` (midnight
+    gives hour 0, checked).
+- **Verified:** tsc (noUnusedLocals), vitest 53/53, `vite build` OK.
+- **Not done / follow-ups:** none.
+
+---
+
 ## 2026-10-21 — Rental form without group name; report years; double-booking backstop
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

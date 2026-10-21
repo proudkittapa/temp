@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 // dialog ask several things at once (reason + choice + checkbox). Callers
 // await the answer; <DialogHost/> (mounted once in App) renders the queue.
 
-export interface DialogOptions {
+interface DialogOptions {
   title?: string;
   message: string;
   input?: { label?: string; placeholder?: string; defaultValue?: string; required?: boolean; type?: 'text' | 'number' };
@@ -16,7 +16,7 @@ export interface DialogOptions {
   danger?: boolean;
 }
 
-export interface DialogResult { text: string; choice?: string; checked: boolean }
+interface DialogResult { text: string; choice?: string; checked: boolean }
 
 interface Pending { id: number; opts: DialogOptions; resolve: (r: DialogResult | null) => void }
 

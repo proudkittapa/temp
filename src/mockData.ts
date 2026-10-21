@@ -35,7 +35,7 @@ import {
 // __COURT_COUNTS__); same names, defaults and limits as the Go backend's
 // golang-backend/seed_courts.go. In API mode courts come from the backend,
 // so only golang-backend/.env matters there.
-export interface CourtCounts { basketball: number; badminton: number; pickleball: number; meetingRoom: number }
+interface CourtCounts { basketball: number; badminton: number; pickleball: number; meetingRoom: number }
 
 export const DEFAULT_COURT_COUNTS: CourtCounts = { basketball: 3, badminton: 12, pickleball: 3, meetingRoom: 1 };
 
@@ -368,7 +368,7 @@ export const businessInfo = () => {
 export const formatTaxId = (id: string) =>
   /^\d{13}$/.test(id) ? `${id[0]}-${id.slice(1, 5)}-${id.slice(5, 10)}-${id.slice(10, 12)}-${id[12]}` : id;
 
-export const DEFAULT_PRICING_CONFIG: PricingConfig = {
+const DEFAULT_PRICING_CONFIG: PricingConfig = {
   id: 'global',
   halfCourtRatePercent: 50,
   maxAdvanceDays: 30,
@@ -550,7 +550,7 @@ export function formatBaht(x: number): string {
 // Booking statuses whose money was received (or whose hour was played):
 // what revenue, occupancy and cancellation care about. COMPLETED (the hour
 // is over) and NO_SHOW (paid but didn't come) count like CONFIRMED.
-export const PAID_BOOKING_STATUSES: BookingStatus[] = [BookingStatus.CONFIRMED, BookingStatus.COMPLETED, BookingStatus.NO_SHOW];
+const PAID_BOOKING_STATUSES: BookingStatus[] = [BookingStatus.CONFIRMED, BookingStatus.COMPLETED, BookingStatus.NO_SHOW];
 export const isPaidBooking = (b: { status: BookingStatus }) => PAID_BOOKING_STATUSES.includes(b.status);
 
 // The last date customers may book online: today + maxAdvanceDays
@@ -575,12 +575,10 @@ export function normalizePhone(phone: string | undefined): string {
 
 // The current date and hour at the venue (Asia/Bangkok), whatever the
 // browser's own time zone.
-export function bangkokNow(): { date: string; hour: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23'
-  }).formatToParts(new Date());
-  const get = (t: string) => parts.find(p => p.type === t)?.value || '';
-  return { date: `${get('year')}-${get('month')}-${get('day')}`, hour: parseInt(get('hour'), 10) };
+const BKK_HOUR = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', hour: '2-digit', hourCycle: 'h23' });
+function bangkokNow(): { date: string; hour: number } {
+  const now = new Date();
+  return { date: BKK_DATE.format(now), hour: parseInt(BKK_HOUR.format(now), 10) };
 }
 
 // Whether the hour starting at `startTime` on `date` has already started
@@ -737,7 +735,7 @@ export function crc16(data: string): string {
 // 01 = mobile (0066 + 9 digits), 02 = 13-digit tax/national ID, 03 =
 // 15-digit e-wallet. Decided from the number as given, before the mobile
 // number is rewritten as 0066XXXXXXXXX (which is also 13 characters).
-export function normalizePromptPayId(id: string): { subTag: string; value: string } {
+function normalizePromptPayId(id: string): { subTag: string; value: string } {
   if (/[^0-9 +-]/.test(id)) throw new Error(`Invalid PromptPay ID: ${id}`);
   const d = id.replace(/[^0-9]/g, '');
   if (d.length === 10 && d.startsWith('0')) return { subTag: '01', value: '0066' + d.slice(1) };

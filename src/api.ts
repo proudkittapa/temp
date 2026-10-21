@@ -21,12 +21,12 @@ import { StorageService } from './mockData';
 import { thaiErrorText } from './errorText';
 
 export const USE_BACKEND = import.meta.env.VITE_DATA_SOURCE === 'api';
-export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 // One login per browser: customers, counter staff and admins all sign in
 // the same way and share one stored session. SessionKind is kept as a label
 // on calls (which screen makes them) but every kind reads the same session.
-export type SessionKind = 'customer' | 'staff' | 'admin';
+type SessionKind = 'customer' | 'staff' | 'admin';
 
 interface StoredSession {
   token: string;
@@ -137,7 +137,7 @@ async function request<T>(
 // Resolves a server-relative path like "/api/v1/slips/x.png?exp=..&sig=.."
 // (a signed slip link) against the API's origin, so slip images load
 // whether or not the Vite proxy is used.
-export function assetUrl(path?: string): string | undefined {
+function assetUrl(path?: string): string | undefined {
   if (!path || /^https?:/.test(path)) return path;
   try {
     return new URL(path, new URL(API_BASE_URL, window.location.href)).toString();
@@ -306,7 +306,7 @@ export async function listMyBookings(): Promise<{ bookings: Booking[]; payments:
   };
 }
 
-export interface CreatedBookingGroup {
+interface CreatedBookingGroup {
   bookingCode: string;
   totalAmount: number;
   promptPayPayload: string;
@@ -414,7 +414,7 @@ const toDiscount = (d: ApiMemberDiscount): MemberDiscountRule => ({
   isActive: d.is_active
 });
 
-export interface PricingSnapshot {
+interface PricingSnapshot {
   rules: PricingRule[];
   config: PricingConfig;
   memberDiscounts: MemberDiscountRule[];
@@ -439,7 +439,7 @@ export async function updateBusiness(b: { name: string; address: string; phone: 
   }));
 }
 
-export async function getPricing(): Promise<PricingSnapshot> {
+async function getPricing(): Promise<PricingSnapshot> {
   const d = await request<{ rules: ApiPricingRule[]; config: ApiPricingConfig; member_discounts: ApiMemberDiscount[] }>('/pricing');
   return {
     rules: d.rules.map(toRule),
@@ -486,7 +486,7 @@ export async function updateMemberDiscount(d: MemberDiscountRule): Promise<void>
 
 // ---- staff walk-ins ----
 
-export interface WalkInInput {
+interface WalkInInput {
   date: string;
   slots: { courtId: string; startTime: string }[];
   customerName: string;
@@ -556,7 +556,7 @@ export async function listPaymentsForReview(status: PaymentStatus = PaymentStatu
   }));
 }
 
-export interface ReviewResult {
+interface ReviewResult {
   bookingCode: string;
   bookingsCount: number;
   pointsAwarded: number;
@@ -655,7 +655,7 @@ export async function adjustPoints(userId: string, delta: number, reason: string
 
 // ---- booking lifecycle: cancel / refund / cash / no-show (FR-6.3) ----
 
-export interface CancelResult {
+interface CancelResult {
   bookingCode: string;
   cancelled: number;
   refundAmount: number;
@@ -766,7 +766,7 @@ export async function updateCourt(id: string, patch: { name?: string; isActive?:
 
 // kind FREE_OFFPEAK_HOUR: the voucher pays for one off-peak hour, booked by
 // staff at the counter; ITEM: a thing handed over at the counter.
-export interface RewardItem { id: string; name: string; emoji: string; pointsCost: number; kind: string }
+interface RewardItem { id: string; name: string; emoji: string; pointsCost: number; kind: string }
 
 export interface VoucherInfo {
   id: string;
@@ -860,7 +860,7 @@ export async function listProducts(): Promise<Product[]> {
   return (await request<ApiProduct[]>('/staff/products', { session: 'staff' })).map(toProduct);
 }
 
-export interface CheckoutInput {
+interface CheckoutInput {
   type: OrderType;
   paymentMethod: PaymentMethod;
   items: { productId: string; variantId?: string; qty: number }[];

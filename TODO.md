@@ -89,7 +89,7 @@ Each needs a yes/no from the owner before it is built.
 - [x] Reports year picker: next year down to 5 years back. Done 2026-10-21.
 - [ ] Excel import: show a preview of parsed rows before saving; read files with `readAsArrayBuffer`.
 - [ ] Rental security deposit (FR-5.3) is not modelled.
-- [ ] Tidy-ups: drop `export` from symbols used only inside their file (api.ts, mockData.ts, Dialog.tsx); `bangkokNow` and `localDateOf` each build their own date formatter.
+- [x] Tidy-ups: `export` dropped from symbols used only inside their file (api.ts, mockData.ts, Dialog.tsx); `bangkokNow` reuses shared formatters. Done 2026-10-21.
 
 ## 8. Deploy (production)
 
