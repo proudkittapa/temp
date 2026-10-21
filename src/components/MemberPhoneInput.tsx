@@ -43,6 +43,10 @@ export default function MemberPhoneInput({ id, value, onChange, onPick, placehol
           .map(u => ({ id: u.id, name: u.name, phone: normalizePhone(u.phone), memberType: u.memberType, points: u.points ?? 0 }));
       }
       if (stale) return;
+      // A full phone number that belongs to a member links them even
+      // without picking from the list.
+      const exact = q && list.find(m => m.phone === normalizePhone(q));
+      if (exact) onPick?.(exact);
       setMatches(list);
       setSearched(q);
       setActive(list.length ? 0 : -1);

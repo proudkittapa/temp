@@ -366,12 +366,11 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 			customer = u
 		}
 	}
-	if input.CustomerName == "" {
-		if customer != nil {
-			input.CustomerName = customer.Name
-		} else {
-			input.CustomerName = "ลูกค้าทั่วไป (Walk-in)"
-		}
+	// A member's name comes from their account, whatever was typed.
+	if customer != nil {
+		input.CustomerName = customer.Name
+	} else if input.CustomerName == "" {
+		input.CustomerName = "ลูกค้าทั่วไป (Walk-in)"
 	}
 
 	// A unique violation means either the same key raced in from another

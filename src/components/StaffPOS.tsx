@@ -53,6 +53,19 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [walkinSlot, setWalkinSlot] = useState<string>('');
   const [walkinName, setWalkinName] = useState<string>('');
   const [walkinPhone, setWalkinPhone] = useState<string>('');
+  // The member picked in each phone box: their name comes from the
+  // database, so the name box is locked while one is linked.
+  const [walkinMember, setWalkinMember] = useState<api.MemberMatch | null>(null);
+  const [cartMember, setCartMember] = useState<api.MemberMatch | null>(null);
+  const [rentalMember, setRentalMember] = useState<api.MemberMatch | null>(null);
+  const memberPhoneHandlers = (member: api.MemberMatch | null, setMember: (m: api.MemberMatch | null) => void,
+    setPhone: (p: string) => void, setName: (n: string) => void) => ({
+    onChange: (phone: string) => {
+      setPhone(phone);
+      if (member && normalizePhone(phone) !== member.phone) { setMember(null); setName(''); }
+    },
+    onPick: (m: api.MemberMatch) => { setMember(m); setName(m.name); },
+  });
   const [walkinPayMethod, setWalkinPayMethod] = useState<PaymentMethod>(PaymentMethod.PROMPTPAY);
   // RW-XXXXXX code of a free off-peak hour reward, when paying with one
   const [walkinVoucherCode, setWalkinVoucherCode] = useState<string>('');
@@ -424,6 +437,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           setWalkinSlot('');
           setWalkinName('');
           setWalkinPhone('');
+          setWalkinMember(null);
           setWalkinVoucherCode('');
           if (useVoucher) resetVoucherCheck();
           onRefreshAll();
@@ -538,6 +552,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setWalkinSlot('');
     setWalkinName('');
     setWalkinPhone('');
+    setWalkinMember(null);
     setWalkinVoucherCode('');
     if (useVoucher) resetVoucherCheck();
     onRefreshAll();
@@ -1088,6 +1103,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       setCartCustomerName('');
       setCartCourtId('');
       setCartCustomerPhone('');
+      setCartMember(null);
       setCartSuccessAlert(`ใบเสร็จ ${orderCode} ตัดสต๊อกเรียบร้อย! ชำระผ่าน ${cartPayMethod === PaymentMethod.CASH ? 'เงินสด' : 'โอน/พร้อมเพย์'} ยอดเงิน ${formatBaht(total)} บาท ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
       onRefreshAll();
     };
@@ -1180,6 +1196,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       setRentalRenterName('');
       setRentalCourtId('');
       setRentalCustomerPhone('');
+      setRentalMember(null);
       setRentalVariantId('');
       onRefreshAll();
       notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
@@ -1706,7 +1723,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       placeholder="เช่น สมศักดิ์, พี่แบงค์" 
                       value={walkinName} 
                       onChange={(e) => setWalkinName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 py-2 px-3 rounded-lg text-xs"
+                      readOnly={!!walkinMember}
+                      title={walkinMember ? 'ชื่อจากข้อมูลสมาชิก (แก้ไม่ได้)' : undefined}
+                      className={`w-full bg-slate-50 border border-slate-200 py-2 px-3 rounded-lg text-xs${walkinMember ? ' opacity-70 cursor-not-allowed' : ''}`}
                     />
                   </div>
                   <div>
@@ -1716,8 +1735,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       required
                       placeholder="พิมพ์เบอร์หรือชื่อสมาชิก เช่น 089xxxxxxx"
                       value={walkinPhone}
-                      onChange={setWalkinPhone}
-                      onPick={m => { if (!walkinName.trim()) setWalkinName(m.name); }}
+                      {...memberPhoneHandlers(walkinMember, setWalkinMember, setWalkinPhone, setWalkinName)}
                       className="w-full bg-slate-50 border border-slate-200 py-2 px-3 rounded-lg text-xs"
                     />
                   </div>
@@ -2330,8 +2348,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         id="cart-member-phone"
                         dark
                         value={cartCustomerPhone}
-                        onChange={setCartCustomerPhone}
-                        onPick={m => { if (!cartCustomerName.trim()) setCartCustomerName(m.name); }}
+                        {...memberPhoneHandlers(cartMember, setCartMember, setCartCustomerPhone, setCartCustomerName)}
                         placeholder="พิมพ์เบอร์หรือชื่อ เช่น 0812345678"
                         className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white"
                       />
@@ -2344,7 +2361,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         value={cartCustomerName}
                         onChange={(e) => setCartCustomerName(e.target.value)}
                         placeholder="เช่น โต๊ะแบดสนาม 3, พี่แดงซอย 5"
-                        className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white"
+                        readOnly={!!cartMember}
+                        title={cartMember ? 'ชื่อจากข้อมูลสมาชิก (แก้ไม่ได้)' : undefined}
+                        className={`w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white${cartMember ? ' opacity-70 cursor-not-allowed' : ''}`}
                       />
                     </div>
 
@@ -2433,8 +2452,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     <MemberPhoneInput
                       id="rental-member-phone"
                       value={rentalCustomerPhone}
-                      onChange={setRentalCustomerPhone}
-                      onPick={m => { if (!rentalRenterName.trim()) setRentalRenterName(m.name); }}
+                      {...memberPhoneHandlers(rentalMember, setRentalMember, setRentalCustomerPhone, setRentalRenterName)}
                       placeholder="พิมพ์เบอร์หรือชื่อ เช่น 0812345678"
                       className="w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-xs"
                     />
@@ -2448,7 +2466,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       placeholder="เช่น คุณเอก แบดกบฏ เช่า 2 ไม้"
                       value={rentalRenterName}
                       onChange={(e) => setRentalRenterName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-slate-800"
+                      readOnly={!!rentalMember}
+                      title={rentalMember ? 'ชื่อจากข้อมูลสมาชิก (แก้ไม่ได้)' : undefined}
+                      className={`w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-slate-800${rentalMember ? ' opacity-70 cursor-not-allowed' : ''}`}
                     />
                   </div>
 

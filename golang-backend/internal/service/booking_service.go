@@ -606,7 +606,9 @@ func customerContact(u *model.User, w *WalkInDetails) (*string, *string) {
 		name, phone = u.Name, u.Phone
 	}
 	if w != nil {
-		if strings.TrimSpace(w.CustomerName) != "" {
+		// A member's name comes from their account; the typed name is for
+		// walk-ins without one.
+		if u == nil && strings.TrimSpace(w.CustomerName) != "" {
 			name = strings.TrimSpace(w.CustomerName)
 		}
 		if p := repository.NormalizePhone(w.CustomerPhone); p != "" {

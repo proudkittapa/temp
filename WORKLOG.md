@@ -18,6 +18,32 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Member's name comes from the database (locked)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `1b3a29f`)
+- **Changed:** the user said the customer-name box must not be editable
+  once a member is linked, since the name comes from the database.
+  - Staff POS (F&B cart, rental, walk-in): picking a member - or typing a
+    member's full phone - fills the name box with their name and makes it
+    read-only; changing the phone unlinks and clears it. Non-members still
+    type a name. (`StaffPOS.tsx` memberPhoneHandlers, `MemberPhoneInput.tsx`
+    exact-match auto-link)
+  - Server: a counter sale or walk-in booking for a registered member
+    always stores the member's account name, ignoring a typed one.
+    (`pos.go` Checkout, `booking_service.go` customerContact)
+- **Verified:** go vet + go test, tsc. curl: sale with member phone + typed
+  name stored the member's name, sale without phone kept "โต๊ะ 3"; walk-in
+  with member phone stored the member's name, non-member kept the typed
+  name. Playwright (cart): pick → name filled, not editable; backspace on
+  phone → name cleared, editable; typing 085-678-9012 links that member;
+  no page errors.
+- **Not done / follow-ups:** rental "renter / group name" is also locked to
+  the member's name when a member is linked (same rule) - say if rentals
+  should keep a free-text group name instead.
+
+---
+
 ## 2026-10-21 — Member dropdown opens on click
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
