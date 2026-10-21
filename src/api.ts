@@ -826,7 +826,7 @@ export async function dispenseVoucher(code: string): Promise<VoucherInfo> {
 interface ApiVariant { id: string; product_id: string; label: string; gender?: string; stock: number }
 interface ApiProduct {
   id: string; name: string; category: string; sub_category?: string; price: number; is_rental: boolean;
-  stock: number; is_active: boolean; variants?: ApiVariant[];
+  deposit?: number; stock: number; is_active: boolean; variants?: ApiVariant[];
 }
 interface ApiOrderItem {
   id: string; order_id: string; product_id: string; product_name: string; variant_id?: string; qty: number;
@@ -836,11 +836,12 @@ interface ApiOrder {
   id: string; order_code: string; user_id?: string; customer_name: string; court_id?: string; type: string;
   status: string; total_amount: number; paid_amount: number; payment_method: string; created_by: string;
   created_at: string; items: ApiOrderItem[]; voided_at?: string; void_reason?: string; created_by_name?: string;
+  deposit_amount?: number; deposit_returned?: number; deposit_kept?: number; deposit_note?: string; deposit_settled_at?: string;
 }
 
 const toProduct = (p: ApiProduct): Product => ({
   id: p.id, name: p.name, category: p.category as ProductCat, subCategory: p.sub_category, price: p.price,
-  isRental: p.is_rental, stock: p.stock, isActive: p.is_active,
+  isRental: p.is_rental, deposit: p.deposit ?? 0, stock: p.stock, isActive: p.is_active,
   variants: p.variants?.length
     ? p.variants.map(v => ({ id: v.id, productId: v.product_id, label: v.label, gender: v.gender as ProductVariant['gender'], stock: v.stock }))
     : undefined
@@ -854,6 +855,8 @@ const toOrder = (o: ApiOrder): OrderWithNames => ({
   type: o.type as OrderType, status: o.status as OrderStatus, totalAmount: o.total_amount, paidAmount: o.paid_amount,
   paymentMethod: o.payment_method as PaymentMethod, createdAt: o.created_at, createdBy: o.created_by, createdByName: o.created_by_name,
   voidedAt: o.voided_at, voidReason: o.void_reason,
+  depositAmount: o.deposit_amount ?? 0, depositReturned: o.deposit_returned ?? 0, depositKept: o.deposit_kept ?? 0,
+  depositNote: o.deposit_note, depositSettledAt: o.deposit_settled_at,
   items: (o.items || []).map(i => ({
     id: i.id, orderId: i.order_id, productId: i.product_id, productName: i.product_name, variantId: i.variant_id,
     qty: i.qty, unitPrice: i.unit_price, returnedAt: i.returned_at, shoeSize: i.shoe_size,
@@ -902,8 +905,12 @@ export async function activeRentals(): Promise<OrderWithNames[]> {
   return (await request<ApiOrder[]>('/staff/rentals', { session: 'staff' })).map(toOrder);
 }
 
-export async function returnRentalItem(itemId: string): Promise<OrderWithNames> {
-  return toOrder(await request<ApiOrder>(`/staff/rentals/items/${encodeURIComponent(itemId)}/return`, { method: 'POST', session: 'staff' }));
+// keepDeposit: the part of the deposit kept for damage or loss (with a
+// note) - only when this is the rental's last item out.
+export async function returnRentalItem(itemId: string, keepDeposit = 0, note = ''): Promise<OrderWithNames> {
+  return toOrder(await request<ApiOrder>(`/staff/rentals/items/${encodeURIComponent(itemId)}/return`, {
+    method: 'POST', session: 'staff', body: keepDeposit > 0 ? { keep_deposit: keepDeposit, note } : undefined
+  }));
 }
 
 // Managers/admins (Admin panel session): the catalog incl. inactive items.
@@ -911,12 +918,19 @@ export async function adminListProducts(): Promise<Product[]> {
   return (await request<ApiProduct[]>('/admin/products', { session: 'admin' })).map(toProduct);
 }
 
-export interface ProductInput { name: string; category: ProductCat; subCategory?: string; price: number; isRental: boolean; stock?: number; isActive?: boolean }
+export interface ProductInput { name: string; category: ProductCat; subCategory?: string; price: number; isRental: boolean; deposit?: number; stock?: number; isActive?: boolean }
 
 const productBody = (p: ProductInput) => ({
   name: p.name, category: p.category, sub_category: p.subCategory || undefined, price: p.price,
-  is_rental: p.isRental, stock: p.stock ?? 0, is_active: p.isActive
+  is_rental: p.isRental, deposit: p.deposit ?? 0, stock: p.stock ?? 0, is_active: p.isActive
 });
+
+// Edits a product's details (not its stock - see adjustStock).
+export async function updateProduct(p: Product, changes: Partial<ProductInput>): Promise<Product> {
+  const body = productBody({ name: p.name, category: p.category, subCategory: p.subCategory, price: p.price, isRental: p.isRental,
+    deposit: p.deposit, isActive: p.isActive, ...changes });
+  return toProduct(await request<ApiProduct>(`/admin/products/${encodeURIComponent(p.id)}`, { method: 'PUT', session: 'admin', body }));
+}
 
 export async function createProducts(list: ProductInput[]): Promise<Product[]> {
   return (await request<ApiProduct[]>('/admin/products', { method: 'POST', session: 'admin', body: { products: list.map(productBody) } })).map(toProduct);
@@ -1018,18 +1032,18 @@ export async function voidOrder(orderId: string, reason: string): Promise<OrderW
 
 // A shift with the cash taken while it was open.
 // blind: the cash figures are withheld from counter staff (blind count).
-export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; expected: number; blind?: boolean }
+export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; cashDeposits: number; expected: number; blind?: boolean }
 
 interface ApiShift {
   id: string; staff_id: string; staff_name: string; opened_at: string; opening_float: number; closed_at?: string;
   counted_cash?: number; expected_cash?: number; variance_cash?: number; notes?: string; closed_by_name?: string;
-  cash_bookings: number; cash_orders: number; expected: number; blind?: boolean;
+  cash_bookings: number; cash_orders: number; cash_deposits?: number; expected: number; blind?: boolean;
 }
 
 const toShift = (s: ApiShift): ShiftView => ({
   id: s.id, staffId: s.staff_id, staffName: s.staff_name, openedAt: s.opened_at, openingFloat: s.opening_float,
   closedAt: s.closed_at, countedCash: s.counted_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
-  notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, expected: s.expected,
+  notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, cashDeposits: s.cash_deposits ?? 0, expected: s.expected,
   blind: s.blind
 });
 

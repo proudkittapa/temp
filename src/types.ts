@@ -229,6 +229,7 @@ export interface Product {
   subCategory?: string; // "drink", "snack", "food", "racket", "shoes"
   price: number;
   isRental: boolean;
+  deposit?: number; // rental only: cash deposit per unit, given back on return
   // Authoritative stock count ONLY when `variants` is absent. When variants
   // are present (e.g. sized rentals), this is a cached sum of their stock for
   // quick display - the variants are what checkout must actually decrement.
@@ -266,6 +267,12 @@ export interface Order {
   items: OrderItem[];
   voidedAt?: string;   // a manager voided the sale (status CANCELLED)
   voidReason?: string;
+  // Rental deposit (cash): settled when the last item is back, or on void.
+  depositAmount?: number;
+  depositReturned?: number;
+  depositKept?: number;
+  depositNote?: string;
+  depositSettledAt?: string;
 }
 
 export interface AuditLog {

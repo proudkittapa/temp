@@ -27,7 +27,12 @@ function localShiftView(sh: Shift, payments: Payment[], orders: Order[]): api.Sh
     (p.status === PaymentStatus.VERIFIED || p.status === PaymentStatus.REFUNDED)).reduce((n, p) => n + p.amount, 0));
   const cashOrders = roundBaht(orders.filter(o => o.paymentMethod === PaymentMethod.CASH && o.status !== OrderStatus.CANCELLED &&
     o.createdAt >= from && o.createdAt < to).reduce((n, o) => n + o.totalAmount, 0));
-  return { ...sh, cashBookings, cashOrders, expected: sh.expectedCash ?? roundBaht(sh.openingFloat + cashBookings + cashOrders) };
+  // Rental deposits: taken (voided rentals too) minus given back.
+  const cashDeposits = roundBaht(orders.reduce((n, o) =>
+    n + (o.createdAt >= from && o.createdAt < to ? o.depositAmount ?? 0 : 0)
+      - (o.depositSettledAt && o.depositSettledAt >= from && o.depositSettledAt < to ? o.depositReturned ?? 0 : 0), 0));
+  return { ...sh, cashBookings, cashOrders, cashDeposits,
+    expected: sh.expectedCash ?? roundBaht(sh.openingFloat + cashBookings + cashOrders + cashDeposits) };
 }
 
 // Browser-only mode keeps reward vouchers in localStorage ("redemptions").
@@ -1197,7 +1202,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       setRentalMember(null);
       setRentalVariantId('');
       onRefreshAll();
-      notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
+      const dep = roundBaht((prodObj.deposit ?? 0));
+      notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote}${dep > 0 ? `\nเก็บเงินสด ${formatBaht(prodObj.price + dep)} บาท (ค่าเช่า ${formatBaht(prodObj.price)} + มัดจำ ${formatBaht(dep)} คืนตอนคืนของ)` : ''} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
     };
 
     if (api.USE_BACKEND) {
@@ -1228,6 +1234,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       status: OrderStatus.PREPARING, // out on rent until returned
       totalAmount: prodObj.price,
       paidAmount: prodObj.price,
+      depositAmount: prodObj.deposit ?? 0,
       paymentMethod: PaymentMethod.CASH,
       createdAt: new Date().toISOString(),
       createdBy: 'u-staff-1',
@@ -1255,13 +1262,40 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // A rented item is back: restock it (its size, for shoes); the rental
   // closes once every item is back.
-  const handleReturnItem = (orderId: string, itemId: string) => {
+  // The last item back settles the deposit: given back, or partly/fully
+  // kept for damage or loss (with a reason).
+  const handleReturnItem = async (orderId: string, itemId: string) => {
+    const ord = api.USE_BACKEND ? activeRentalOrders.find(o => o.id === orderId)
+      : StorageService.get<Order[]>('orders', []).find(o => o.id === orderId);
+    const deposit = ord?.depositAmount ?? 0;
+    const settles = !!ord && deposit > 0 && !ord.depositSettledAt && ord.items.every(it => it.id === itemId || it.returnedAt);
+    let keep = 0, note = '';
+    if (settles) {
+      const raw = await askText(`คืนมัดจำ ${formatBaht(deposit)} บาท ให้ลูกค้า\nถ้าของเสียหาย/สูญหาย ใส่ยอดที่หักไว้ (0 = คืนเต็ม)`,
+        { title: 'คืนมัดจำ', defaultValue: '0', required: true, okLabel: 'ต่อไป' });
+      if (raw === null) return;
+      keep = Number(raw.trim());
+      if (!Number.isFinite(keep) || keep < 0 || keep > deposit) {
+        notify(`ยอดที่หักต้องอยู่ระหว่าง 0 - ${formatBaht(deposit)} บาท`);
+        return;
+      }
+      if (keep > 0) {
+        const r = await askText(`เหตุผลที่หักมัดจำ ${formatBaht(keep)} บาท (จำเป็น):`, { title: 'หักมัดจำ', required: true, okLabel: 'บันทึก' });
+        if (!r?.trim()) return;
+        note = r.trim();
+      }
+    }
+    const back = roundBaht(deposit - keep);
+    if (settles && back > 0 && !(await confirmCashWithoutShift())) return; // the deposit comes out of the drawer
+    const doneMsg = settles
+      ? `บันทึกคืนอุปกรณ์แล้ว — คืนมัดจำ ${formatBaht(back)} บาท${keep > 0 ? ` (หักไว้ ${formatBaht(keep)} บาท: ${note})` : ''}`
+      : 'บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย';
     if (api.USE_BACKEND) {
-      return api.returnRentalItem(itemId)
+      return api.returnRentalItem(itemId, keep, note)
         .then(o => {
-          onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', o.id, null, { item: itemId, status: o.status });
+          onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', o.id, null, { item: itemId, status: o.status, depositReturned: o.depositReturned, depositKept: o.depositKept });
           onRefreshAll();
-          notify('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
+          notify(doneMsg);
         })
         .catch(err => { notify(`บันทึกคืนไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
     }
@@ -1273,16 +1307,17 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     StorageService.set('orders', rawOrders.map(o => {
       if (o.id !== orderId) return o;
       const items = o.items.map(it => it.id === itemId ? { ...it, returnedAt: now } : it);
-      return { ...o, items, status: items.every(it => it.returnedAt) ? OrderStatus.DELIVERED : o.status };
+      return { ...o, items, status: items.every(it => it.returnedAt) ? OrderStatus.DELIVERED : o.status,
+        ...(settles ? { depositReturned: back, depositKept: keep, depositNote: note || undefined, depositSettledAt: now } : {}) };
     }));
     StorageService.set('products', StorageService.get<Product[]>('products', []).map(p => p.id !== itemRef.productId ? p : {
       ...p,
       stock: p.stock + itemRef.qty,
       variants: p.variants?.map(v => v.id === itemRef.variantId ? { ...v, stock: v.stock + itemRef.qty } : v)
     }));
-    onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', orderId, { item: itemId, returned: false }, { item: itemId, returned: true });
+    onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', orderId, { item: itemId, returned: false }, { item: itemId, returned: true, depositReturned: back, depositKept: keep });
     onRefreshAll();
-    notify('บันทึกการส่งคืนอุปกรณ์เข้าคลังเรียบร้อย');
+    notify(doneMsg);
   };
 
   // Calculate Ledger parameters (Module 3 Specification). Booking money is
@@ -2488,6 +2523,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         {formatBaht(products.find(p => p.id === selectedProductId)?.price ?? 0)} บาท
                         <span className="font-normal text-slate-500"> (ราคาตั้งในหน้า Admin)</span>
                       </p>
+                      {!!products.find(p => p.id === selectedProductId)?.deposit && (() => {
+                        const p = products.find(x => x.id === selectedProductId)!;
+                        return <p id="rental-deposit" className="mt-1 text-[11px] text-amber-700 font-bold">+ มัดจำ {formatBaht(p.deposit!)} บาท (คืนตอนคืนของ) → เก็บเงินสดรวม {formatBaht(p.price + p.deposit!)} บาท</p>;
+                      })()}
                     </div>
                   </div>
 
@@ -2576,6 +2615,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           {item.shoeSize && ` (เบอร์ ${item.shoeSize} ${item.shoeGender === 'F' ? 'หญิง' : 'ชาย'})`}
                           {` · ตั้งแต่ ${formatDateTime(order.createdAt)}`}
                         </p>
+                        {!!order.depositAmount && !order.depositSettledAt && (
+                          <p className="text-[10px] text-amber-700 font-bold">มัดจำ {formatBaht(order.depositAmount)} บาท (คืนเมื่อคืนครบ)</p>
+                        )}
                       </div>
 
                       <button
@@ -2660,6 +2702,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">เงินทอนตั้งต้น</span><b>{formatBaht(shift.openingFloat)}</b></div>
                     <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ เงินสดค่าสนาม</span><b>{formatBaht(shift.cashBookings)}</b></div>
                     <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ เงินสดขายของ/เช่า</span><b>{formatBaht(shift.cashOrders)}</b></div>
+                    {!!shift.cashDeposits && <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ มัดจำค้างในลิ้นชัก</span><b>{formatBaht(shift.cashDeposits)}</b></div>}
                     <div className="bg-emerald-50 rounded-lg p-2"><span className="text-emerald-700 block">= ควรมีในลิ้นชัก</span><b id="shift-expected">{formatBaht(shift.expected)}</b></div>
                   </div>
                   )}

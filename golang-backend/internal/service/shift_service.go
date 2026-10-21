@@ -34,27 +34,38 @@ type ShiftView struct {
 	model.Shift
 	CashBookings float64 `json:"cash_bookings"`
 	CashOrders   float64 `json:"cash_orders"`
-	Expected     float64 `json:"expected"` // opening float + cash bookings + cash orders
+	// Rental deposits taken minus deposits given back while open.
+	CashDeposits float64 `json:"cash_deposits"`
+	Expected     float64 `json:"expected"` // opening float + cash bookings + cash orders + deposits
 	// Blind: the cash figures above are withheld (counter staff, see
 	// handler.blindCount).
 	Blind bool `json:"blind,omitempty"`
 }
 
 // cashBetween sums cash taken in [from, to): approved cash payments for
-// bookings and non-voided cash counter orders.
-func cashBetween(db *gorm.DB, from, to time.Time) (float64, float64, error) {
-	var bookings, orders float64
+// bookings, non-voided cash counter orders, and rental deposits (taken,
+// voided rentals too, minus those given back).
+func cashBetween(db *gorm.DB, from, to time.Time) (float64, float64, float64, error) {
+	var bookings, orders, depIn, depOut float64
 	if err := db.Model(&model.Payment{}).Select("COALESCE(SUM(amount), 0)").
 		Where("method = ? AND verified_at >= ? AND verified_at < ? AND status IN ?", model.PaymentCash, from, to,
 			[]model.PaymentStatus{model.PaymentVerified, model.PaymentRefunded}).Scan(&bookings).Error; err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if err := db.Model(&model.Order{}).Select("COALESCE(SUM(total_amount), 0)").
 		Where("payment_method = ? AND created_at >= ? AND created_at < ? AND status <> ?", model.PaymentCash, from, to, model.OrderCancelled).
 		Scan(&orders).Error; err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
-	return RoundBaht(bookings), RoundBaht(orders), nil
+	if err := db.Model(&model.Order{}).Select("COALESCE(SUM(deposit_amount), 0)").
+		Where("created_at >= ? AND created_at < ?", from, to).Scan(&depIn).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	if err := db.Model(&model.Order{}).Select("COALESCE(SUM(deposit_returned), 0)").
+		Where("deposit_settled_at >= ? AND deposit_settled_at < ?", from, to).Scan(&depOut).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	return RoundBaht(bookings), RoundBaht(orders), RoundBaht(depIn - depOut), nil
 }
 
 func (s *ShiftService) view(db *gorm.DB, sh model.Shift) (*ShiftView, error) {
@@ -62,11 +73,11 @@ func (s *ShiftService) view(db *gorm.DB, sh model.Shift) (*ShiftView, error) {
 	if sh.ClosedAt != nil {
 		to = *sh.ClosedAt
 	}
-	b, o, err := cashBetween(db, sh.OpenedAt, to)
+	b, o, d, err := cashBetween(db, sh.OpenedAt, to)
 	if err != nil {
 		return nil, err
 	}
-	v := &ShiftView{Shift: sh, CashBookings: b, CashOrders: o, Expected: RoundBaht(sh.OpeningFloat + b + o)}
+	v := &ShiftView{Shift: sh, CashBookings: b, CashOrders: o, CashDeposits: d, Expected: RoundBaht(sh.OpeningFloat + b + o + d)}
 	// A closed shift keeps what it was counted against.
 	if sh.ExpectedCash != nil {
 		v.Expected = *sh.ExpectedCash

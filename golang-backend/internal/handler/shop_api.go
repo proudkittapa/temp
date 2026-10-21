@@ -134,8 +134,19 @@ func (h *ShopHandler) ActiveRentals(c *gin.Context) {
 
 // POST /api/v1/staff/rentals/items/:id/return - staff: the item is back.
 func (h *ShopHandler) ReturnRental(c *gin.Context) {
+	// Optional body: the part of the deposit kept for damage or loss.
+	var in struct {
+		KeepDeposit float64 `json:"keep_deposit"`
+		Note        string  `json:"note"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&in); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+			return
+		}
+	}
 	actorID, actorName := actor(c)
-	o, err := h.pos.ReturnRentalItem(c.Request.Context(), c.Param("id"), actorID, actorName)
+	o, err := h.pos.ReturnRentalItem(c.Request.Context(), c.Param("id"), in.KeepDeposit, in.Note, actorID, actorName)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -264,7 +275,7 @@ func blindShift(c *gin.Context, sh *service.ShiftView) *service.ShiftView {
 		return sh
 	}
 	cp := *sh
-	cp.CashBookings, cp.CashOrders, cp.Expected, cp.Blind = 0, 0, 0, true
+	cp.CashBookings, cp.CashOrders, cp.CashDeposits, cp.Expected, cp.Blind = 0, 0, 0, 0, true
 	return &cp
 }
 

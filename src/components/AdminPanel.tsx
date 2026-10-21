@@ -203,6 +203,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   const [newProductStock, setNewProductStock] = useState<number>(50);
   // Equipment can be sold (shuttlecocks) or rented out (rackets, shoes).
   const [newProductIsRental, setNewProductIsRental] = useState<boolean>(false);
+  const [newProductDeposit, setNewProductDeposit] = useState<number>(0);
 
   // Load state from localStorage on triggerRefresh
   useEffect(() => {
@@ -1142,7 +1143,8 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
     if (!newProductName || !newProductPrice) return;
 
     if (api.USE_BACKEND) {
-      return api.createProducts([{ name: newProductName, category: newProductCat, price: Number(newProductPrice), isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental, stock: Number(newProductStock) }])
+      return api.createProducts([{ name: newProductName, category: newProductCat, price: Number(newProductPrice), isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental,
+        deposit: newProductCat === ProductCat.EQUIPMENT && newProductIsRental ? Number(newProductDeposit) || 0 : 0, stock: Number(newProductStock) }])
         .then(() => {
           setNewProductName('');
           setNewProductPrice(20);
@@ -1160,6 +1162,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
       category: newProductCat,
       price: Number(newProductPrice),
       isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental,
+      deposit: newProductCat === ProductCat.EQUIPMENT && newProductIsRental ? Number(newProductDeposit) || 0 : 0,
       stock: Number(newProductStock),
       isActive: true
     };
@@ -1182,6 +1185,30 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
 
   // Restock (+) or count correction (-), with a reason for the audit log.
   // Shoes are stocked per size: the size picked next to the buttons.
+  // Rental deposit per unit (cash, given back on return).
+  const handleSetDeposit = async (p: Product) => {
+    const raw = await askText(`มัดจำต่อชิ้นของ "${p.name}" (บาท, 0 = ไม่เก็บมัดจำ)\nพนักงานเก็บเป็นเงินสดตอนเช่า และคืนให้ตอนคืนของ`,
+      { title: 'ตั้งมัดจำ', defaultValue: String(p.deposit ?? 0), required: true, okLabel: 'บันทึก' });
+    if (raw === null) return;
+    const deposit = Number(raw.trim());
+    if (!Number.isFinite(deposit) || deposit < 0 || deposit > 100000) {
+      notify('มัดจำต้องเป็นตัวเลข 0 - 100,000 บาท');
+      return;
+    }
+    const done = () => {
+      onAddAuditLog('PRODUCT_UPDATED', 'Product', p.id, { deposit: p.deposit ?? 0 }, { deposit });
+      onRefreshAll();
+      notify(`ตั้งมัดจำ "${p.name}" เป็น ${formatBaht(deposit)} บาทแล้ว`);
+    };
+    if (api.USE_BACKEND) {
+      return api.updateProduct(p, { deposit }).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+    }
+    const updated = StorageService.get<Product[]>('products', []).map(x => x.id === p.id ? { ...x, deposit } : x);
+    StorageService.set('products', updated);
+    setProducts(updated);
+    done();
+  };
+
   const handleUpdateStockValue = async (prodId: string, val: number) => {
     const prod = products.find(p => p.id === prodId);
     if (!prod) return;
@@ -1302,6 +1329,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
           const categoryVal = pick('หมวดหมู่', 'category', 'Category');
           const isRentalVal = pick('เช่า', 'isRental', 'IsRental', 'เช่าเล่น') ?? false;
           const subCategoryVal = pick('หมวดย่อย', 'subCategory', 'SubCategory');
+          const depositVal = Number(pick('มัดจำ', 'deposit', 'Deposit') ?? 0);
 
           const cleanName = String(name ?? '').trim();
           const price = Number(priceVal);
@@ -1325,8 +1353,9 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
           // The template's เช่า column decides; F&B is never rented.
           const isRental = category === ProductCat.EQUIPMENT && (isRentalVal === true || String(isRentalVal).toLowerCase() === 'true');
 
+          const deposit = isRental && Number.isFinite(depositVal) && depositVal > 0 && depositVal <= 100000 ? depositVal : 0;
           apiRows.push({
-            name: cleanName, category, price, isRental, stock, subCategory: subCategoryVal ? String(subCategoryVal) : undefined
+            name: cleanName, category, price, isRental, deposit, stock, subCategory: subCategoryVal ? String(subCategoryVal) : undefined
           });
           const pId = 'pd-excel-' + Math.random().toString(36).slice(2, 11);
           newProds.push({
@@ -1336,6 +1365,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
             price,
             stock,
             isRental: isRental,
+            deposit,
             isActive: true,
             subCategory: subCategoryVal ? String(subCategoryVal) : undefined
           });
@@ -1346,7 +1376,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         // Preview: nothing is saved until the admin has seen what was read.
         if (importedCount > 0) {
           const lines = apiRows.slice(0, 20).map(r =>
-            `• ${r.name} — ${r.category === ProductCat.EQUIPMENT ? (r.isRental ? 'อุปกรณ์ให้เช่า' : 'อุปกรณ์') : 'อาหาร/เครื่องดื่ม'} · ${formatBaht(r.price)} บาท · สต๊อก ${r.stock}`);
+            `• ${r.name} — ${r.category === ProductCat.EQUIPMENT ? (r.isRental ? `อุปกรณ์ให้เช่า${r.deposit ? ` (มัดจำ ${formatBaht(r.deposit)})` : ''}` : 'อุปกรณ์') : 'อาหาร/เครื่องดื่ม'} · ${formatBaht(r.price)} บาท · สต๊อก ${r.stock}`);
           const more = apiRows.length > 20 ? `\n… และอีก ${apiRows.length - 20} รายการ` : '';
           if (!(await ask(`จะนำเข้าสินค้าใหม่ ${importedCount} รายการ:\n${lines.join('\n')}${more}${skippedNote}`,
             { title: 'ตรวจรายการก่อนนำเข้า', okLabel: `นำเข้า ${importedCount} รายการ` }))) return;
@@ -2545,6 +2575,12 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                         ให้เช่า (คืนเข้าคลังหลังใช้) — ไม่ติ๊ก = ขายขาด เช่น ลูกแบด
                       </label>
                     )}
+                    {newProductCat === ProductCat.EQUIPMENT && newProductIsRental && (
+                      <label className="block text-slate-700">มัดจำต่อชิ้น (บาท, 0 = ไม่เก็บ)
+                        <input type="number" min={0} max={100000} value={newProductDeposit} onChange={e => setNewProductDeposit(Number(e.target.value))}
+                          className="mt-1 w-full bg-white border border-slate-200 py-2 px-3 rounded-lg" />
+                      </label>
+                    )}
 
                     <button 
                       type="submit" disabled={busy} 
@@ -2598,6 +2634,10 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                         </span>
                         <p className="font-bold text-slate-800 mt-1">{p.name || 'สินค้า'}</p>
                         <p className="text-[10px] text-slate-500">มูลค่าต่อหน่วย: <span className="font-bold text-slate-700">{formatBaht(p.price)} บาท</span>{!p.isActive && <span className="ml-1 text-rose-600 font-bold">(ปิดขาย)</span>}</p>
+                        {p.isRental && (
+                          <p className="text-[10px] text-slate-500">มัดจำ: <span className="font-bold text-slate-700">{p.deposit ? `${formatBaht(p.deposit)} บาท` : 'ไม่เก็บ'}</span>
+                            <button type="button" disabled={busy} onClick={guarded(() => handleSetDeposit(p))} className="ml-2 text-sky-700 underline disabled:opacity-50">ตั้งมัดจำ</button></p>
+                        )}
                       </div>
 
                       {/* Stock adjustments levers */}

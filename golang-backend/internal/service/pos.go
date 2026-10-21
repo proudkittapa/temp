@@ -154,7 +154,8 @@ type ProductInput struct {
 	SubCategory *string          `json:"sub_category,omitempty"`
 	Price       float64          `json:"price"`
 	IsRental    bool             `json:"is_rental"`
-	Stock       int              `json:"stock"` // initial stock (create only; use AdjustStock afterwards)
+	Deposit     float64          `json:"deposit"` // rental products only
+	Stock       int              `json:"stock"`   // initial stock (create only; use AdjustStock afterwards)
 	IsActive    *bool            `json:"is_active,omitempty"`
 }
 
@@ -172,7 +173,13 @@ func (in *ProductInput) validate() error {
 	if in.Stock < 0 || in.Stock > 100000 {
 		return fmt.Errorf("%w: stock must be between 0 and 100000", ErrInvalidBooking)
 	}
-	in.Price = RoundBaht(in.Price)
+	if in.Deposit < 0 || in.Deposit > 100000 {
+		return fmt.Errorf("%w: deposit must be between 0 and 100000", ErrInvalidBooking)
+	}
+	if !in.IsRental {
+		in.Deposit = 0
+	}
+	in.Price, in.Deposit = RoundBaht(in.Price), RoundBaht(in.Deposit)
 	return nil
 }
 
@@ -194,7 +201,7 @@ func (s *POSService) CreateProducts(ctx context.Context, inputs []ProductInput, 
 		for _, in := range inputs {
 			p := model.Product{
 				ID: ids.New("prd"), Name: in.Name, Category: in.Category, SubCategory: in.SubCategory,
-				Price: in.Price, IsRental: in.IsRental, Stock: in.Stock, IsActive: true, CreatedAt: now,
+				Price: in.Price, IsRental: in.IsRental, Deposit: in.Deposit, Stock: in.Stock, IsActive: true, CreatedAt: now,
 			}
 			if in.IsActive != nil {
 				p.IsActive = *in.IsActive
@@ -230,7 +237,7 @@ func (s *POSService) UpdateProduct(ctx context.Context, id string, in ProductInp
 			return err
 		}
 		before := p
-		p.Name, p.Category, p.SubCategory, p.Price, p.IsRental = in.Name, in.Category, in.SubCategory, in.Price, in.IsRental
+		p.Name, p.Category, p.SubCategory, p.Price, p.IsRental, p.Deposit = in.Name, in.Category, in.SubCategory, in.Price, in.IsRental, in.Deposit
 		if in.IsActive != nil {
 			p.IsActive = *in.IsActive
 		}
@@ -461,7 +468,7 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 		}
 		now := s.now()
 		orderID := ids.New("ord")
-		total := 0.0
+		total, deposit := 0.0, 0.0
 		items := make([]OrderItemView, 0, len(input.Items))
 		for _, in := range input.Items {
 			var p model.Product
@@ -520,6 +527,9 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 				return err
 			}
 			total = RoundBaht(total + p.Price*float64(in.Qty))
+			if p.IsRental {
+				deposit = RoundBaht(deposit + p.Deposit*float64(in.Qty))
+			}
 			items = append(items, OrderItemView{OrderItem: line, ProductName: p.Name})
 		}
 
@@ -535,6 +545,12 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 			ID: orderID, OrderCode: code, CustomerName: input.CustomerName, CourtID: input.CourtID,
 			Type: input.Type, Status: status, TotalAmount: total, PaidAmount: total,
 			PaymentMethod: input.PaymentMeth, CreatedBy: input.CreatedBy, CreatedAt: now,
+			DepositAmount: deposit,
+		}
+		// The deposit is cash in the drawer (the drawer lock above was taken
+		// for cash only).
+		if deposit > 0 && input.PaymentMeth != model.PaymentCash {
+			return fmt.Errorf("%w: a rental with a deposit is paid in cash", ErrInvalidBooking)
 		}
 		if input.IdempotencyKey != "" {
 			key := input.IdempotencyKey
@@ -681,7 +697,15 @@ func (s *POSService) ActiveRentals(ctx context.Context) ([]OrderView, error) {
 
 // ReturnRentalItem puts a rented item back in stock (its size, for shoes)
 // and closes the rental once every item is back. Returning twice fails.
-func (s *POSService) ReturnRentalItem(ctx context.Context, itemID, actorID, actorName string) (*OrderView, error) {
+// When that is the last item out and the rental has a deposit, the deposit
+// is settled: keep (0..deposit, with a note) stays in the drawer for damage
+// or loss, the rest is given back from the drawer (needs an open shift).
+func (s *POSService) ReturnRentalItem(ctx context.Context, itemID string, keep float64, note, actorID, actorName string) (*OrderView, error) {
+	note = strings.TrimSpace(note)
+	keep = RoundBaht(keep)
+	if keep < 0 || len(note) > 500 {
+		return nil, fmt.Errorf("%w: invalid deposit amount or note", ErrInvalidBooking)
+	}
 	var view *OrderView
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var item model.OrderItem
@@ -726,12 +750,42 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID, actorID, acto
 				return err
 			}
 		}
+		settle := out == 0 && order.DepositAmount > 0 && order.DepositSettledAt == nil
+		if keep > 0 && !settle {
+			return fmt.Errorf("%w: the deposit is settled when the last item comes back", ErrInvalidBooking)
+		}
+		if settle {
+			if keep > order.DepositAmount {
+				return fmt.Errorf("%w: at most %.2f THB of the deposit can be kept", ErrInvalidBooking, order.DepositAmount)
+			}
+			if keep > 0 && note == "" {
+				return fmt.Errorf("%w: say why the deposit is kept", ErrInvalidBooking)
+			}
+			back := RoundBaht(order.DepositAmount - keep)
+			if back > 0 {
+				if err := lockDrawerForCash(tx); err != nil {
+					return err
+				}
+			}
+			upd := map[string]any{"deposit_returned": back, "deposit_kept": keep, "deposit_settled_at": now}
+			if note != "" {
+				upd["deposit_note"] = note
+			}
+			if err := tx.Model(&model.Order{}).Where("id = ?", order.ID).Updates(upd).Error; err != nil {
+				return err
+			}
+			order.DepositReturned, order.DepositKept, order.DepositSettledAt = back, keep, &now
+			if note != "" {
+				order.DepositNote = &note
+			}
+		}
 		if err := tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: actorID, UserName: actorName, Action: "RENTAL_RETURNED",
 			TargetType: "Order", TargetID: order.ID,
 			BeforeState: model.AuditJSON(map[string]any{"item": item.ID, "returned": false}),
-			AfterState:  model.AuditJSON(map[string]any{"item": item.ID, "returned": true, "qty": item.Qty, "order_closed": out == 0}),
-			CreatedAt:   now,
+			AfterState: model.AuditJSON(map[string]any{"item": item.ID, "returned": true, "qty": item.Qty, "order_closed": out == 0,
+				"deposit_returned": order.DepositReturned, "deposit_kept": order.DepositKept, "deposit_note": note}),
+			CreatedAt: now,
 		}).Error; err != nil {
 			return err
 		}
@@ -820,6 +874,17 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 					return err
 				}
 			}
+		}
+		// A voided rental gives its deposit back (from the drawer, which this
+		// void already holds).
+		if order.DepositAmount > 0 && order.DepositSettledAt == nil {
+			if err := tx.Model(&model.Order{}).Where("id = ?", order.ID).Updates(map[string]any{
+				"deposit_returned": order.DepositAmount, "deposit_settled_at": now, "deposit_note": "voided",
+			}).Error; err != nil {
+				return err
+			}
+			voided := "voided"
+			order.DepositReturned, order.DepositSettledAt, order.DepositNote = order.DepositAmount, &now, &voided
 		}
 		taken := 0
 		var cancelledVouchers []string

@@ -18,6 +18,42 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Rental deposit
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `5415f84`)
+- **Changed:** owner decisions: a fixed deposit per rental item, cash, and
+  any counter staff may keep part/all of it with a reason.
+  - Model: `products.deposit`; `orders.deposit_amount / deposit_returned /
+    deposit_kept / deposit_note / deposit_settled_at` (NOT NULL DEFAULT 0
+    for the amounts so old rows read 0).
+  - Checkout: rental deposit = Σ deposit × qty, stored on the order, not
+    in total_amount (no points, not revenue); a rental with a deposit must
+    be cash. Return of the last item settles it: `keep_deposit` + `note`
+    (note required when keeping; ≤ deposit); giving cash back needs an open
+    shift. Void gives the deposit back. Shift expected cash = float + cash
+    bookings + cash orders + deposits taken − deposits given back
+    (`cash_deposits`, hidden in blind count). (`models.go`, `pos.go`,
+    `shift_service.go`, `shop_api.go`)
+  - Admin: deposit field when creating a rental product, "ตั้งมัดจำ" button
+    per rental product (`PUT /admin/products/:id` via new
+    `api.updateProduct`), Excel column "มัดจำ". Staff: rental form shows fee
+    + deposit = cash to collect; list shows the held deposit; return asks
+    the amount kept and the reason; shift panel shows deposits held. Local
+    mode does the same. (`AdminPanel.tsx`, `StaffPOS.tsx`, `api.ts`,
+    `types.ts`); feature guide and checklist 4b.1b updated.
+- **Verified:** go vet + go test, tsc, vitest 53/53. curl: deposit set to
+  200; PromptPay rental refused; cash rental 60 + 200 → shift expected
+  1000 → 1260; keep without note / keep 500 refused; keep 50 "เอ็นขาด" →
+  returned 150, expected 1110; void of a new rental → deposit_returned
+  200, expected back to 1110. Playwright (API mode): form shows "เก็บเงินสด
+  รวม 260", list shows the deposit, return with 30 kept + reason → "คืน
+  มัดจำ 170 บาท (หักไว้ 30 บาท: ด้ามแตก)"; no page errors.
+- **Not done / follow-ups:** kept deposits are not shown as income in the
+  monthly reports.
+
+---
+
 ## 2026-10-21 — Excel product import: preview before saving
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

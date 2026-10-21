@@ -355,6 +355,9 @@ type Product struct {
 	SubCategory *string    `json:"sub_category,omitempty" db:"sub_category" gorm:"column:sub_category"`
 	Price       float64    `json:"price" db:"price" gorm:"column:price"`
 	IsRental    bool       `json:"is_rental" db:"is_rental" gorm:"column:is_rental"`
+	// Deposit is taken in cash per unit rented and given back on return
+	// (rental products only; 0 = none).
+	Deposit float64 `json:"deposit" db:"deposit" gorm:"column:deposit;not null;default:0"`
 	// Authoritative stock ONLY for products with no rows in product_variants.
 	// A variant-tracked product (e.g. sized rentals) must decrement the
 	// matching ProductVariant row instead - checking/decrementing this
@@ -396,6 +399,15 @@ type Order struct {
 	// double submit with the same key returns this order instead of selling
 	// again (unique when set - see ensureIndexes in main.go).
 	IdempotencyKey *string `json:"-" db:"idempotency_key" gorm:"column:idempotency_key;type:varchar(64)"`
+	// Rental deposit: cash taken with the rental (not income, no points),
+	// settled when the last item comes back (or on void): given back
+	// (DepositReturned) and/or kept for damage or loss (DepositKept, with
+	// DepositNote). The drawer's expected cash follows both.
+	DepositAmount    float64    `json:"deposit_amount" db:"deposit_amount" gorm:"column:deposit_amount;not null;default:0"`
+	DepositReturned  float64    `json:"deposit_returned" db:"deposit_returned" gorm:"column:deposit_returned;not null;default:0"`
+	DepositKept      float64    `json:"deposit_kept" db:"deposit_kept" gorm:"column:deposit_kept;not null;default:0"`
+	DepositNote      *string    `json:"deposit_note,omitempty" db:"deposit_note" gorm:"column:deposit_note"`
+	DepositSettledAt *time.Time `json:"deposit_settled_at,omitempty" db:"deposit_settled_at" gorm:"column:deposit_settled_at;index"`
 }
 
 // 9. Order Specific Line Item
