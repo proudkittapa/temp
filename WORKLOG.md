@@ -21,7 +21,7 @@ Entry format:
 ## 2026-10-21 — TODO: single login with roles/permissions; basketball A/B/C
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `b0ee7a7`)
+- **Commit(s):** `cca3259` (on `main`, parent `b0ee7a7`); follow-up adds the court-rename item to section 10 (docs only)
 - **Changed (docs only):** owner decisions recorded in `TODO.md`: managers
   keep today's rights for now; basketball is three courts (A, B, C) each
   bookable/closable full or by half. New sections 9 (one sign-in, screens
