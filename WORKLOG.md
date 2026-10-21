@@ -18,6 +18,50 @@ Entry format:
 
 ---
 
+## 2026-10-21 — One login, screens by permission, roles tab (TODO step 5, stages 3-5: frontend + docs)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
+- **Commit(s):** this commit (on `main`, parent `68f052f`)
+- **Changed:**
+  - `src/permissions.ts` (new): the 17 permissions with Thai labels, built-in
+    role rights (same as the server seed), `can(user, ...perms)`,
+    `canUseCounter`, `canUseSettings`. `User.permissions` comes from `/me`.
+  - `src/api.ts`: one session key `sports_complex_api_session`;
+    `migrateLegacySessions()` keeps an old admin/staff/customer session (in
+    that order) so nobody is logged out; `login` returns the user with
+    permissions; `listRoles` / `saveRole` / `deleteRole`.
+  - `App.tsx`: top nav in API mode (จองสนาม / หน้าเคาน์เตอร์ / ตั้งค่า shown by
+    permission, user name, ออกจากระบบ). A staff account signing in at the
+    customer login is taken to the counter (or settings if it has no counter
+    rights) instead of being refused (`CustomerPanel` `onStaffSignIn`).
+  - `StaffPOS.tsx`: tabs shown by permission (walk-in → counter_bookings,
+    slips → verify_slips, F&B / rentals → sell_rent, vouchers, today's total
+    → day_summary/shifts); cancel/refund and blind count use permissions.
+  - `AdminPanel.tsx`: tab bar from `ADMIN_TABS` + permission map; data is
+    fetched only for tabs the account may open; role dropdowns use the roles
+    list. New `RolesTab.tsx` (สิทธิ์และบทบาท): list, create, edit, delete
+    roles; ADMIN's manage_roles box is locked; read-only demo note in
+    browser-only mode.
+  - Docs: README sign-in paragraph, TESTING_CHECKLIST 1.5-1.7b rewritten +
+    new section 1b (roles), TODO step 5 / section 9 marked done.
+- **Verified:** `tsc` clean, vitest 53 passing (new `permissions.test.ts`:
+  `can` fallbacks, session migration), `vite build` OK, `go vet` / `go test`
+  pass. Browser (Playwright, API mode against Postgres): logged out → only
+  booking in nav; staff → `#/staff`, counter only; manager → settings with
+  dashboard + accounts only; admin → all tabs, created a cashier role in the
+  UI; an account given that role sees only F&B + rentals at the counter; an
+  old per-screen staff session is upgraded to the single key. Browser-only
+  mode: no nav bar, all 4 staff tabs, roles tab shows the demo note.
+- **Not done / follow-ups:**
+  - Deviation from the plan: no separate `LoginPage.tsx` - the customer login
+    box is the single sign-in and the counter/settings gates show the same
+    form. The dev role switcher doesn't sign in by itself; the ⚡ demo
+    buttons do.
+  - Custom roles are treated as staff-type accounts (no customer-only custom
+    roles yet) - noted in TODO section 9.
+  - `TestLoginThrottleBurstOnlyLetsFiveThrough` failed once and then passed
+    20/20 with and without this change - looks flaky, not caused by it.
+
 ## 2026-10-21 — Roles as permission sets (TODO step 5, stages 1-2: backend)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner

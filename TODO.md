@@ -15,7 +15,7 @@ Cheap and blocking first, then what changes what customers/staff see
    (section 10).
 4. **Safety checks** - section 7: database backstop against double booking,
    concurrency tests and automatic retry of "busy" errors.
-5. **One login, screens by permission, admin-defined roles** - section 9.
+5. ~~**One login, screens by permission, admin-defined roles**~~ - done 2026-10-21 (section 9).
    Before launch so staff learn the final sign-in once (if launch can't
    wait, do it right after; today's separate sign-ins work).
 6. **Deploy to a real server with HTTPS** - section 8.
@@ -96,11 +96,12 @@ Each needs a yes/no from the owner before it is built.
 - [ ] Create the real admin account and remove/disable demo accounts; daily database backups and a tested restore; a place to keep slip images (`uploads/`) that survives redeploys.
 
 ## 9. One login for everyone; screens by permission; roles set by the admin
-Today the app has separate sign-ins for the customer page, Staff POS (`#/staff`, `#/manager`) and Admin (`#/admin`), and each keeps its own session.
-- [ ] One sign-in page for every account. After sign-in the user lands on what they can use (customer booking, counter, settings) and only sees the menus/tabs/buttons their permissions allow; the demo role switcher goes away in production.
-- [ ] Permissions as data: a list of named permissions (e.g. book online, verify slips, sell & rent, open/close shift, cancel & refund, record cash, adjust points, edit pricing, manage courts & closures, view reports (limited/full), export, manage users & roles, view audit log). Every server route checks a permission instead of a fixed role.
-- [ ] Admin screen to create/edit roles and tick their permissions; assign a role to each staff account. Built-in roles CUSTOMER / STAFF / MANAGER / ADMIN are created with today's rights (managers as they are now: manual points, full dashboard) so nothing changes until the admin edits them; ADMIN can't remove its own access to roles.
-- [ ] Session: one token per user; `api.ts` sessions per panel (`customer` / `staff` / `admin`) merge into one; audit log keeps who did what.
+Done 2026-10-21 (see WORKLOG.md).
+- [x] One sign-in for every account (the customer page's login; the counter and settings screens offer the same form). After sign-in a staff/admin account lands on the counter or settings; the nav bar shows only the screens the role may use; the demo role switcher stays in dev/browser-only mode only. Old `#/staff`, `#/manager`, `#/admin` links still open those screens.
+- [x] 17 permissions (`model/permissions.go`, mirrored in `src/permissions.ts`); every protected route checks one; built-in roles keep exactly their old rights (`route_access_test.go`).
+- [x] Admin tab "🔐 สิทธิ์และบทบาท": create/edit/delete roles, tick permissions; role pickers list custom roles. ADMIN keeps "manage roles"; built-in and in-use roles can't be deleted.
+- [x] One session per browser (old per-screen sessions are merged on first load); audit log keeps who did what.
+- [ ] Optional later: custom roles are staff-type only (customer-only checks such as walk-in member matching look for role CUSTOMER); a "customer tier" role type if ever needed.
 
 ## 10. Basketball: courts A, B, C - each bookable full or by half, closable full or by half
 Done 2026-10-21 (see WORKLOG.md).

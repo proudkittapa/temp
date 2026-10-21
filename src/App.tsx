@@ -7,6 +7,12 @@ import AdminPanel from './components/AdminPanel';
 import { DialogHost } from './components/Dialog';
 import { Shield, Sparkles, User, Users, Briefcase, Clock } from 'lucide-react';
 import * as api from './api';
+import { canUseCounter, canUseSettings } from './permissions';
+import { User as SessionUser } from './types';
+
+// One login per browser: keep one of the per-screen sessions stored before
+// that (see api.migrateLegacySessions), before anything reads the session.
+if (api.USE_BACKEND) api.migrateLegacySessions();
 
 // Each panel has its own address: the customer site is "/", the counter
 // "#/staff" (managers sign in there too), settings "#/admin". Hash routes
@@ -37,6 +43,29 @@ const MAX_LOCAL_AUDIT_LOGS = 2000;
 export default function App() {
   const [currentRole, setCurrentRole] = useState<UserRole>(roleFromHash);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
+  // API mode: the one signed-in account; its permissions decide which
+  // screens the nav bar offers (the server checks every call regardless).
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(() => api.USE_BACKEND ? api.getSession()?.user ?? null : null);
+  useEffect(() => {
+    if (api.USE_BACKEND) setSessionUser(api.getSession()?.user ?? null);
+  }, [refreshTrigger]);
+
+  const openScreen = (role: UserRole) => {
+    setCurrentRole(role);
+    window.history.replaceState(null, '', role === UserRole.CUSTOMER ? window.location.pathname : hashForRole(role));
+    triggerCompleteRefresh();
+  };
+  // A staff/admin account signed in on the customer page goes to the
+  // screen its role may use: the counter first, otherwise settings.
+  const handleStaffSignIn = (user: SessionUser) => {
+    setSessionUser(user);
+    openScreen(canUseCounter(user) ? UserRole.STAFF : UserRole.ADMIN);
+  };
+  const handleSignOut = () => {
+    api.logout();
+    setSessionUser(null);
+    openScreen(UserRole.CUSTOMER);
+  };
 
   // Auto-initialize standard seed databases to localStorage on startup
   useEffect(() => {
@@ -162,6 +191,32 @@ export default function App() {
       </div>
       )}
 
+      {/* API mode: one nav bar for everyone - booking, plus the counter and
+          settings when the signed-in role may use them. */}
+      {api.USE_BACKEND && (
+        <nav id="main-nav" className="bg-white border-b border-slate-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex flex-wrap items-center gap-2 text-xs font-bold">
+            <button type="button" onClick={() => openScreen(UserRole.CUSTOMER)} className={`px-3 py-1.5 rounded-lg ${currentRole === UserRole.CUSTOMER ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>🏸 จองสนาม</button>
+            {canUseCounter(sessionUser) && (
+              <button type="button" onClick={() => openScreen(UserRole.STAFF)} className={`px-3 py-1.5 rounded-lg ${currentRole === UserRole.STAFF || currentRole === UserRole.MANAGER ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>🧾 หน้าเคาน์เตอร์</button>
+            )}
+            {canUseSettings(sessionUser) && (
+              <button type="button" onClick={() => openScreen(UserRole.ADMIN)} className={`px-3 py-1.5 rounded-lg ${currentRole === UserRole.ADMIN ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>⚙️ ตั้งค่า</button>
+            )}
+            <span className="ml-auto flex items-center gap-2 text-slate-500 font-semibold">
+              {sessionUser ? (
+                <>
+                  <span>👤 {sessionUser.name}</span>
+                  <button type="button" onClick={handleSignOut} className="text-slate-500 hover:text-slate-800 underline">ออกจากระบบ</button>
+                </>
+              ) : (
+                <span>ยังไม่ได้เข้าสู่ระบบ</span>
+              )}
+            </span>
+          </div>
+        </nav>
+      )}
+
       {/* Main Dynamic View Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
@@ -171,6 +226,7 @@ export default function App() {
             onAddAuditLog={handleAddNewAuditLog}
             triggerRefresh={refreshTrigger}
             onRefreshAll={triggerCompleteRefresh}
+            onStaffSignIn={handleStaffSignIn}
           />
         )}
 

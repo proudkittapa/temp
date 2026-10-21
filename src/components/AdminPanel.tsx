@@ -9,6 +9,8 @@ import { StorageService, findClosure, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS,
 import * as api from '../api';
 import { notify, ask, askText } from './Dialog';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
+import { can, canUseSettings, Permission, BUILTIN_ROLES } from '../permissions';
+import RolesTab from './RolesTab';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
@@ -23,6 +25,25 @@ interface AdminPanelProps {
   onRefreshAll: () => void;
 }
 
+// Settings tabs and the permissions that open each (any one is enough).
+type AdminTab = 'dashboard' | 'pricing' | 'courts' | 'products' | 'users' | 'reports' | 'audit_logs' | 'member_discounts' | 'roles';
+const ADMIN_TABS: { id: AdminTab; label: string }[] = [
+  { id: 'dashboard', label: '📊 แดชบอร์ด' },
+  { id: 'pricing', label: '⚙️ Pricing Engine ตั้งราคา' },
+  { id: 'courts', label: '🏟️ บริหารสนาม & วันปิดบริการ' },
+  { id: 'products', label: '🥤 คุมตู้เครื่องดื่ม F&B' },
+  { id: 'users', label: '👥 บัญชีสตาฟเวร' },
+  { id: 'member_discounts', label: '🌟 ตั้งค่าสิทธิ์ส่วนลด (Membership Tiers)' },
+  { id: 'reports', label: '📥 ออกรายงาน Excel' },
+  { id: 'roles', label: '🔐 สิทธิ์และบทบาท' },
+  { id: 'audit_logs', label: '🛡️ Audit Log ล็อกกลโกง' }
+];
+const ADMIN_TAB_PERMISSIONS: Record<AdminTab, Permission[]> = {
+  dashboard: ['view_reports'], pricing: ['edit_pricing'], courts: ['manage_closures', 'manage_courts'],
+  products: ['manage_products'], users: ['manage_members', 'adjust_points', 'manage_staff'],
+  member_discounts: ['edit_pricing'], reports: ['view_reports'], roles: ['manage_roles'], audit_logs: ['view_audit_log']
+};
+
 export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll }: AdminPanelProps) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
@@ -34,7 +55,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   // Menu tab state
-  const [activeAdminTab, setActiveAdminTab] = useState<'dashboard' | 'pricing' | 'courts' | 'products' | 'users' | 'reports' | 'audit_logs' | 'member_discounts'>('dashboard');
+  const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>('dashboard');
   const [memberDiscounts, setMemberDiscounts] = useState<MemberDiscountRule[]>([]);
 
   // Search filters
@@ -647,25 +668,28 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
 
   // API mode: closures live in the backend (which enforces them on every
   // booking), and changing them needs a manager/admin login.
-  const isManagerRole = (u: User | null) => !!u && (u.role === UserRole.MANAGER || u.role === UserRole.ADMIN);
+  // The one shared session, if its role may use settings; a signed-in
+  // account without such permissions gets the sign-in form with a note.
   const [adminUser, setAdminUser] = useState<User | null>(() => {
     const u = api.USE_BACKEND ? api.getSession('admin')?.user ?? null : null;
-    return isManagerRole(u) ? u : null;
+    return canUseSettings(u) ? u : null;
   });
-  // Pricing rules, member discounts and the half-court rate are admin-only
-  // on the server (FR-2, RBAC matrix: "Configure Court Pricing" = Admin), so
-  // a manager logged in here doesn't get those tabs - every save would fail.
-  const canEditPricing = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
-  // Staff roles and suspending accounts are admin-only on the server too.
-  const canManageAccounts = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
-  // Adding courts and opening/closing them is admin-only on the server;
-  // managers close a court temporarily with a closure (วันปิดบริการ).
-  const canManageCourts = !api.USE_BACKEND || adminUser?.role === UserRole.ADMIN;
+  // Who is acting: the signed-in account (API mode) or the built-in ADMIN
+  // role (browser-only mode, where this panel is the admin's). Tabs and
+  // buttons follow its permissions; the server checks every call anyway.
+  const actingAdmin = api.USE_BACKEND ? adminUser : { role: UserRole.ADMIN };
+  // Roles for the role pickers and the roles tab: the server's (incl. ones
+  // the admin made) in API mode, the built-ins in browser-only mode.
+  const [roles, setRoles] = useState<api.RoleView[]>(BUILTIN_ROLES);
+  const roleName = (id: string) => roles.find(r => r.id === id)?.name ?? id;
+  const canEditPricing = can(actingAdmin, 'edit_pricing');
+  const canManageAccounts = can(actingAdmin, 'manage_staff');
+  const canManageCourts = can(actingAdmin, 'manage_courts');
+  const adminTabAllowed = (t: AdminTab) => can(actingAdmin, ...ADMIN_TAB_PERMISSIONS[t]);
+  const firstAdminTab = ADMIN_TABS.find(t => adminTabAllowed(t.id))?.id;
   useEffect(() => {
-    if (!canEditPricing && (activeAdminTab === 'pricing' || activeAdminTab === 'member_discounts')) {
-      setActiveAdminTab('dashboard');
-    }
-  }, [canEditPricing, activeAdminTab]);
+    if (!adminTabAllowed(activeAdminTab) && firstAdminTab) setActiveAdminTab(firstAdminTab);
+  }, [activeAdminTab, firstAdminTab]);
   // One save at a time: a double click must not create two products,
   // closures, courts or pricing rules (the server doesn't refuse all such
   // duplicates). Wraps the button/form handlers; `busy` greys them.
@@ -693,19 +717,25 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
       try {
         const me = await api.refreshMe('admin');
         if (cancelled) return;
-        if (!isManagerRole(me)) {
-          api.logout('admin');
+        if (!canUseSettings(me)) {
           setAdminUser(null);
           setAdminApiError('เซสชันผู้จัดการหมดอายุหรือไม่มีสิทธิ์ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
         setAdminUser(me);
         const [closures, pricing, apiUsers, apiProducts, apiCourts, logs] = await Promise.all([
-          api.listDaysOff(getTodayDateStr()), api.syncPricingCache(), api.listUsers(), api.adminListProducts(), api.adminListCourts(),
-          // The audit trail is for admins only (RBAC).
-          me!.role === UserRole.ADMIN ? api.auditLogs({ limit: 500 }) : Promise.resolve([] as AuditLog[])
+          // Each list only if the role may read it - a custom role missing
+          // one permission must still get the rest of the panel.
+          api.listDaysOff(getTodayDateStr()), api.syncPricingCache(),
+          can(me, 'manage_members', 'adjust_points', 'manage_staff') ? api.listUsers() : Promise.resolve([] as User[]),
+          can(me, 'manage_products') ? api.adminListProducts() : Promise.resolve([] as Product[]),
+          can(me, 'manage_closures', 'manage_courts') ? api.adminListCourts() : api.listCourts(),
+          can(me, 'view_audit_log') ? api.auditLogs({ limit: 500 }) : Promise.resolve([] as AuditLog[])
         ]);
         if (cancelled) return;
+        if (can(me, 'manage_roles', 'manage_staff')) {
+          api.listRoles().then(r => { if (!cancelled) setRoles(r); }).catch(() => {});
+        }
         setDaysOff(closures);
         setUsers(apiUsers);
         setProducts(apiProducts);
@@ -728,8 +758,9 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   // The dashboard's date: its numbers, bookings and closures (the list
   // above has closures from today on only, so a past date needs its own).
   const [dashClosures, setDashClosures] = useState<DayOff[]>([]);
+  const canSeeDashboard = can(adminUser, 'view_reports');
   useEffect(() => {
-    if (!api.USE_BACKEND || !adminUserId) return;
+    if (!api.USE_BACKEND || !adminUserId || !canSeeDashboard) return;
     let cancelled = false;
     Promise.all([api.dashboard(dashboardSelectedDate), api.listBookingsByDate(dashboardSelectedDate, 'admin'),
       api.listDaysOff(dashboardSelectedDate, dashboardSelectedDate)])
@@ -748,7 +779,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         setAdminApiError(err instanceof Error ? err.message : String(err));
       });
     return () => { cancelled = true; };
-  }, [triggerRefresh, adminUserId, dashboardSelectedDate]);
+  }, [triggerRefresh, adminUserId, dashboardSelectedDate, canSeeDashboard]);
 
   const handleAdminLogout = () => {
     api.logout('admin');
@@ -765,9 +796,8 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
     setAdminApiError(null);
     api.login('admin', identity, password)
       .then(user => {
-        if (!isManagerRole(user)) {
-          api.logout('admin');
-          setAdminApiError('ต้องใช้บัญชีผู้จัดการหรือผู้บริหารเท่านั้น');
+        if (!canUseSettings(user)) {
+          setAdminApiError('บัญชีนี้ไม่มีสิทธิ์ใช้หน้าตั้งค่า - เข้าสู่ระบบด้วยบัญชีผู้จัดการหรือผู้บริหาร');
           return;
         }
         setAdminUser(user);
@@ -1467,7 +1497,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
               from the manager to the admin account) - there was none. */}
           {api.USE_BACKEND && adminUser && (
             <p className="text-[11px] text-slate-300 mt-1">
-              เข้าสู่ระบบในนาม <span className="font-bold text-white">{adminUser.name}</span> ({adminUser.role})
+              เข้าสู่ระบบในนาม <span className="font-bold text-white">{adminUser.name}</span> ({roleName(adminUser.role)})
               <button type="button" onClick={handleAdminLogout} className="ml-2 underline text-slate-400 hover:text-white">ออกจากระบบ</button>
             </p>
           )}
@@ -1475,60 +1505,15 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
 
         {/* Dashboard quick navigation links */}
         <div id="admin-navbar" className="flex flex-wrap gap-1 bg-slate-800 p-1.5 rounded-xl border border-slate-700 text-xs">
-          <button 
-            onClick={() => setActiveAdminTab('dashboard')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'dashboard' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            📊 แดชบอร์ด
-          </button>
-          {canEditPricing && (
-            <button 
-              onClick={() => setActiveAdminTab('pricing')} 
-              className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'pricing' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
+          {ADMIN_TABS.filter(t => adminTabAllowed(t.id)).map(t => (
+            <button
+              key={t.id}
+              onClick={() => setActiveAdminTab(t.id)}
+              className={`px-3 py-1.5 rounded-lg ${activeAdminTab === t.id ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
             >
-              ⚙️ Pricing Engine ตั้งราคา
+              {t.label}
             </button>
-          )}
-          <button 
-            onClick={() => setActiveAdminTab('courts')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'courts' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            🏟️ บริหารสนาม & วันปิดบริการ
-          </button>
-          <button 
-            onClick={() => setActiveAdminTab('products')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'products' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            🥤 คุมตู้เครื่องดื่ม F&B
-          </button>
-          <button 
-            onClick={() => setActiveAdminTab('users')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'users' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            👥 บัญชีสตาฟเวร
-          </button>
-          {canEditPricing && (
-            <button 
-              onClick={() => setActiveAdminTab('member_discounts')} 
-              className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'member_discounts' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-            >
-              🌟 ตั้งค่าสิทธิ์ส่วนลด (Membership Tiers)
-            </button>
-          )}
-          <button 
-            onClick={() => setActiveAdminTab('reports')} 
-            className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'reports' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-          >
-            📥 ออกรายงาน Excel
-          </button>
-          {canManageAccounts && (
-            <button 
-              onClick={() => setActiveAdminTab('audit_logs')} 
-              className={`px-3 py-1.5 rounded-lg ${activeAdminTab === 'audit_logs' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-300 hover:text-white'}`}
-            >
-              🛡️ Audit Log ล็อกกลโกง
-            </button>
-          )}
+          ))}
         </div>
       </div>
 
@@ -1536,7 +1521,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
       <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm min-h-[400px]">
         
         {/* Sub Module 1: Main Dashboard (Recharts Visuals) */}
-        {activeAdminTab === 'dashboard' && (
+        {activeAdminTab === 'dashboard' && adminTabAllowed('dashboard') && (
           <div className="space-y-6">
             
             {/* Header with Date Selection */}
@@ -1885,7 +1870,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         )}
 
         {/* Sub Module 2: Pricing Engine configurations */}
-        {activeAdminTab === 'pricing' && canEditPricing && (
+        {activeAdminTab === 'pricing' && adminTabAllowed('pricing') && (
           <div className="space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900">ตัวเครื่องมือตั้งและปรับราคาล่วงหน้า (Pricing Engine Configurator)</h3>
@@ -2172,7 +2157,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         )}
 
         {/* Sub Module 2.5: Manage Courts and Special Holidays */}
-        {activeAdminTab === 'courts' && (
+        {activeAdminTab === 'courts' && adminTabAllowed('courts') && (
           <div className="space-y-6 animate-fade-in text-xs">
             <div>
               <h3 className="text-base font-bold text-slate-900">ระบบบริหารสนามกีฬาและตั้งเกณฑ์วันปิดบริการพิเศษ (Complex Facility & Holiday Manager)</h3>
@@ -2483,7 +2468,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         )}
 
         {/* Sub Module 3: Product catalogue & inventory management */}
-        {activeAdminTab === 'products' && (
+        {activeAdminTab === 'products' && adminTabAllowed('products') && (
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <div>
@@ -2650,7 +2635,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         )}
 
         {/* Sub Module 4: Users accounts roles */}
-        {activeAdminTab === 'users' && (
+        {activeAdminTab === 'users' && adminTabAllowed('users') && (
           <div className="space-y-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
@@ -2704,9 +2689,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                       onChange={(e) => setNewUserRole(e.target.value as UserRole)}
                       className="w-full bg-white border border-slate-200 py-2 px-3 rounded-lg text-slate-800"
                     >
-                      <option value={UserRole.STAFF}>Staff (พนักงานหน้าเคาน์เตอร์ POS)</option>
-                      <option value={UserRole.MANAGER}>Manager (ผู้บริหารจัดการอาคาร)</option>
-                      <option value={UserRole.ADMIN}>Admin (ผู้ดูแลระบบหลังบ้านสากล)</option>
+                      {roles.filter(r => r.id !== UserRole.CUSTOMER).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                   </div>
 
@@ -2830,10 +2813,8 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                                     : 'bg-slate-50 border-slate-200 text-slate-800'
                                 }`}
                               >
-                                <option value={UserRole.CUSTOMER}>CUSTOMER</option>
-                                <option value={UserRole.STAFF}>STAFF</option>
-                                <option value={UserRole.MANAGER}>MANAGER</option>
-                                <option value={UserRole.ADMIN}>ADMIN</option>
+                                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                {!roles.some(r => r.id === item.role) && <option value={item.role}>{item.role}</option>}
                               </select>
                               {userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role && (
                                 <span className="block text-[8px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
@@ -2935,7 +2916,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         )}
 
         {/* Sub Module 5: Consolidated reports downloadable excel simulated CSV */}
-        {activeAdminTab === 'reports' && (
+        {activeAdminTab === 'reports' && adminTabAllowed('reports') && (
           <div className="space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900">สรุปพิมพ์ดาวน์โหลดรายงานรายได้ (Exporter Console)</h3>
@@ -3008,7 +2989,16 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         )}
 
         {/* Sub Module 6: Anti-Fraud Audit LOG interactive system (Anti-Fraud and DB track specifications) */}
-        {activeAdminTab === 'audit_logs' && canManageAccounts && (
+        {activeAdminTab === 'roles' && adminTabAllowed('roles') && (
+          <RolesTab
+            roles={roles}
+            editable={api.USE_BACKEND}
+            onChanged={() => api.listRoles().then(setRoles).catch(err => notify(`โหลดบทบาทไม่สำเร็จ: ${err.message}`))}
+            onAddAuditLog={onAddAuditLog}
+          />
+        )}
+
+        {activeAdminTab === 'audit_logs' && adminTabAllowed('audit_logs') && (
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
@@ -3221,7 +3211,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         )}
 
         {/* Sub Module: Membership Tiers & Discounts (dynamic management of privileges) */}
-        {activeAdminTab === 'member_discounts' && canEditPricing && (
+        {activeAdminTab === 'member_discounts' && adminTabAllowed('member_discounts') && (
           <div className="space-y-6">
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">

@@ -23,8 +23,9 @@ import { thaiErrorText } from './errorText';
 export const USE_BACKEND = import.meta.env.VITE_DATA_SOURCE === 'api';
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
-// The role switcher lets one browser act as customer, staff and
-// manager/admin, so each side keeps its own login instead of sharing one.
+// One login per browser: customers, counter staff and admins all sign in
+// the same way and share one stored session. SessionKind is kept as a label
+// on calls (which screen makes them) but every kind reads the same session.
 export type SessionKind = 'customer' | 'staff' | 'admin';
 
 interface StoredSession {
@@ -32,28 +33,45 @@ interface StoredSession {
   user: User;
 }
 
-const sessionKey = (kind: SessionKind) => `sports_complex_api_session_${kind}`;
+const SESSION_KEY = 'sports_complex_api_session';
+// Before there was one login, each screen kept its own session under these
+// keys. The first load after the upgrade keeps one of them (staff/admin over
+// customer, so a manager isn't silently demoted) and drops the rest.
+const LEGACY_SESSION_KEYS = ['admin', 'staff', 'customer'].map(k => `sports_complex_api_session_${k}`);
 
-export function getSession(kind: SessionKind): StoredSession | null {
+export function migrateLegacySessions(): void {
   try {
-    const raw = localStorage.getItem(sessionKey(kind));
+    if (!localStorage.getItem(SESSION_KEY)) {
+      const kept = LEGACY_SESSION_KEYS.map(k => localStorage.getItem(k)).find(Boolean);
+      if (kept) localStorage.setItem(SESSION_KEY, kept);
+    }
+    LEGACY_SESSION_KEYS.forEach(k => localStorage.removeItem(k));
+  } catch {
+    // storage unavailable: nothing to migrate
+  }
+}
+
+export function getSession(_kind?: SessionKind): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-function saveSession(kind: SessionKind, session: StoredSession | null) {
+function saveSession(_kind: SessionKind, session: StoredSession | null) {
   try {
-    if (session) localStorage.setItem(sessionKey(kind), JSON.stringify(session));
-    else localStorage.removeItem(sessionKey(kind));
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else localStorage.removeItem(SESSION_KEY);
   } catch (e) {
     console.error(e);
   }
 }
 
-export function logout(kind: SessionKind) {
-  saveSession(kind, null);
+// Signs out everywhere (there is one session).
+export function logout(_kind?: SessionKind) {
+  saveSession('customer', null);
 }
 
 // Calls back when another tab signs in, out, or as someone else (the token
@@ -64,8 +82,7 @@ export function onSessionChangedElsewhere(cb: (kind: SessionKind) => void): () =
     try { return raw ? (JSON.parse(raw) as StoredSession).token : null; } catch { return null; }
   };
   const handler = (e: StorageEvent) => {
-    const kind = (['customer', 'staff', 'admin'] as SessionKind[]).find(k => e.key === sessionKey(k));
-    if (kind && token(e.oldValue) !== token(e.newValue)) cb(kind);
+    if (e.key === SESSION_KEY && token(e.oldValue) !== token(e.newValue)) cb('customer');
   };
   window.addEventListener('storage', handler);
   return () => window.removeEventListener('storage', handler);
@@ -134,6 +151,7 @@ export function assetUrl(path?: string): string | undefined {
 interface ApiUser {
   id: string; name: string; email?: string; phone: string; role: string;
   member_type: string; org_name?: string; is_active: boolean; points: number; created_at: string;
+  permissions?: string[]; // /auth/me only
 }
 interface ApiCourt {
   id: string; name: string; type: string; mutex_group_id?: string; share_of_group: number;
@@ -164,7 +182,8 @@ const toUser = (u: ApiUser): User => ({
   orgName: u.org_name,
   isActive: u.is_active,
   points: u.points,
-  createdAt: u.created_at
+  createdAt: u.created_at,
+  permissions: u.permissions
 });
 
 const toCourt = (c: ApiCourt): Court => ({
@@ -232,9 +251,10 @@ export async function login(kind: SessionKind, identity: string, password: strin
     method: 'POST',
     body: { identity, password }
   });
-  const user = toUser(data.user);
-  saveSession(kind, { token: data.token, user });
-  return user;
+  saveSession(kind, { token: data.token, user: toUser(data.user) });
+  // The login response has no permissions; /auth/me does, and the screens
+  // use them to decide what to show.
+  return (await refreshMe(kind)) ?? toUser(data.user);
 }
 
 export async function register(input: { name: string; email: string; phone: string; password: string }): Promise<User> {
@@ -573,6 +593,36 @@ export async function setUserRole(userId: string, role: UserRole): Promise<User>
   return toUser(await request<ApiUser>(`/admin/users/${encodeURIComponent(userId)}/role`, {
     method: 'PUT', session: 'admin', body: { role }
   }));
+}
+
+// ---- roles (permission sets, admin) ----
+
+export interface RoleView {
+  id: string;
+  name: string;
+  permissions: string[];
+  isBuiltin: boolean;
+  userCount: number;
+}
+
+interface ApiRole { id: string; name: string; permissions: string[] | null; is_builtin: boolean; user_count?: number }
+const toRole = (r: ApiRole): RoleView => ({ id: r.id, name: r.name, permissions: r.permissions || [], isBuiltin: r.is_builtin, userCount: r.user_count ?? 0 });
+
+export async function listRoles(): Promise<RoleView[]> {
+  const d = await request<{ roles: ApiRole[] }>('/admin/roles', { session: 'admin' });
+  return d.roles.map(toRole);
+}
+
+// Creates the role when id is empty, otherwise renames / re-permissions it.
+export async function saveRole(role: { id?: string; name: string; permissions: string[] }): Promise<RoleView> {
+  const body = { name: role.name, permissions: role.permissions };
+  return toRole(role.id
+    ? await request<ApiRole>(`/admin/roles/${encodeURIComponent(role.id)}`, { method: 'PUT', session: 'admin', body })
+    : await request<ApiRole>('/admin/roles', { method: 'POST', session: 'admin', body }));
+}
+
+export async function deleteRole(id: string): Promise<void> {
+  await request(`/admin/roles/${encodeURIComponent(id)}`, { method: 'DELETE', session: 'admin' });
 }
 
 // Admin only: suspend or reactivate an account (accounts are never deleted

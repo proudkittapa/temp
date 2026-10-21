@@ -7,7 +7,8 @@ import { StorageService, findClosure, getTodayDateStr, calculatePrice, isHourOff
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import { notify, ask, askText, dialog } from './Dialog';
-import DemoLogins, { DEMO_STAFF } from './DemoLogins';
+import DemoLogins, { DEMO_STAFF, DEMO_ADMINS } from './DemoLogins';
+import { can, canUseCounter, Permission } from '../permissions';
 import { Check, X, ShoppingCart, Activity, AlertTriangle, ShieldCheck, Receipt, Plus, Minus, CheckCircle2, AlertOctagon } from 'lucide-react';
 
 interface StaffPOSProps {
@@ -99,7 +100,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [rejectReason, setRejectReason] = useState<string>('');
 
   // API mode: slip review queue comes from the backend and needs a staff login
-  const [staffUser, setStaffUser] = useState<User | null>(() => api.USE_BACKEND ? api.getSession('staff')?.user ?? null : null);
+  // The one shared session, if its role may use the counter (a signed-in
+  // customer gets the sign-in form with a note instead).
+  const [staffUser, setStaffUser] = useState<User | null>(() => {
+    const u = api.USE_BACKEND ? api.getSession('staff')?.user ?? null : null;
+    return canUseCounter(u) ? u : null;
+  });
   const [staffIdentity, setStaffIdentity] = useState<string>('');
   const [staffPassword, setStaffPassword] = useState<string>('');
   const [staffApiError, setStaffApiError] = useState<string | null>(null);
@@ -121,7 +127,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   useEffect(() => {
     if (!api.USE_BACKEND || !staffUserId) return;
     let cancelled = false;
-    const isManager = staffRole === UserRole.MANAGER || staffRole === UserRole.ADMIN;
+    const isManager = can(staffUser, 'view_reports');
     Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals(),
       api.currentShift(), isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[]), api.listBookingsByDate(getTodayDateStr(), 'staff')])
       .then(([queue, summary, prods, dayOrders, rentals, openShift, history, todays]) => {
@@ -154,8 +160,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       try {
         const me = await api.refreshMe('staff');
         if (cancelled) return;
-        if (!me || me.role === UserRole.CUSTOMER) {
-          api.logout('staff');
+        if (!me || !canUseCounter(me)) {
+          // Signed out, or the role lost its counter permissions.
           setStaffUser(null);
           setStaffApiError('เซสชันพนักงานหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
@@ -188,9 +194,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setStaffApiError(null);
     api.login('staff', identity, password)
       .then(user => {
-        if (user.role === UserRole.CUSTOMER) {
-          api.logout('staff');
-          setStaffApiError('บัญชีลูกค้าไม่มีสิทธิ์ตรวจสลิป');
+        if (!canUseCounter(user)) {
+          setStaffApiError('บัญชีนี้ไม่มีสิทธิ์ใช้หน้าเคาน์เตอร์ - เข้าสู่ระบบด้วยบัญชีพนักงาน');
           return;
         }
         setStaffUser(user);
@@ -722,12 +727,25 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Managers/admins may cancel, refund and record cash (FR-6.3); every
   // staff member may mark a no-show. API mode: the signed-in staff account's
   // role; browser-only mode: the role switcher.
-  const effectiveRole = api.USE_BACKEND ? staffUser?.role : currentUserRole;
-  const canManageBookings = effectiveRole === UserRole.MANAGER || effectiveRole === UserRole.ADMIN;
+  // Who is acting: the signed-in account (API mode) or the demo role picked
+  // in the switcher (browser-only mode, built-in role permissions).
+  const actingUser = api.USE_BACKEND ? staffUser : { role: currentUserRole };
+  const canManageBookings = can(actingUser, 'cancel_refund');
+  // Each counter tab needs one of these permissions; tabs a role lacks are
+  // hidden, and the panel opens on the first tab it may use.
+  const TAB_PERMISSIONS: Record<typeof activePosTab, Permission[]> = {
+    walkin: ['counter_bookings'], slips: ['verify_slips'], fb: ['sell_rent'], rentals: ['sell_rent'],
+    vouchers: ['sell_rent', 'counter_bookings'], todays_total: ['day_summary', 'shifts']
+  };
+  const tabAllowed = (t: typeof activePosTab) => can(actingUser, ...TAB_PERMISSIONS[t]);
+  const firstAllowedTab = (Object.keys(TAB_PERMISSIONS) as (typeof activePosTab)[]).find(tabAllowed);
+  useEffect(() => {
+    if (!tabAllowed(activePosTab) && firstAllowedTab) setActivePosTab(firstAllowedTab);
+  }, [activePosTab, firstAllowedTab]);
   // Blind cash count (owner decision 2026-10-21): counter staff count the
   // drawer without seeing what it should hold; managers/admins see it. In
   // API mode the server withholds the figures (shift.blind).
-  const blindCount = api.USE_BACKEND ? !!shift?.blind : effectiveRole === UserRole.STAFF;
+  const blindCount = api.USE_BACKEND ? !!shift?.blind : !can(actingUser, 'view_reports');
   // Once a blind count is confirmed it can't be changed (only explained).
   const [countLocked, setCountLocked] = useState(false);
 
@@ -1505,20 +1523,24 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Bookings the slip queue can resolve payments against.
   const slipQueueBookings = api.USE_BACKEND ? reviewQueue.flatMap(r => r.bookings) : bookings;
 
-  // API mode: everything on this panel acts as a staff member, so sign in
-  // first (separately from any customer login in the same browser).
+  // API mode: everything on this panel acts as a staff member - sign in
+  // with an account whose role may use the counter (one shared login).
+  const signedInElsewhere = api.USE_BACKEND && !staffUser ? api.getSession('staff')?.user : null;
   if (api.USE_BACKEND && !staffUser) {
     return (
       <div className="max-w-sm mx-auto my-10 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
         <form onSubmit={handleStaffLogin} className="space-y-3 text-xs">
           <p className="text-sm font-bold text-slate-800">เข้าสู่ระบบพนักงาน (Staff POS)</p>
+          {signedInElsewhere && (
+            <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">ตอนนี้เข้าสู่ระบบเป็น "{signedInElsewhere.name}" ซึ่งไม่มีสิทธิ์ใช้หน้าเคาน์เตอร์ - เข้าสู่ระบบด้วยบัญชีพนักงานเพื่อสลับบัญชี</p>
+          )}
           {staffApiError && (
             <p className="text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠️ {staffApiError}</p>
           )}
           <input value={staffIdentity} onChange={e => setStaffIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลพนักงาน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
           <input type="password" value={staffPassword} onChange={e => setStaffPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
           <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
-          <DemoLogins accounts={DEMO_STAFF} onPick={staffLoginWith} />
+          <DemoLogins accounts={[...DEMO_STAFF, ...DEMO_ADMINS]} onPick={staffLoginWith} />
         </form>
       </div>
     );
@@ -1548,7 +1570,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           <div className="h-10 w-10 bg-emerald-950 text-emerald-400 rounded-xl flex items-center justify-center font-bold font-mono">POS</div>
           <div>
             <p className="text-xs font-bold">แผงทำงานพนักงานสปอร์ตคอมเพล็กซ์ (Staff Panel)</p>
-            <p className="text-[10px] text-slate-400">ผู้ใช้งาน: {staffUser ? staffUser.name : 'คุณ กิตติ (เดโม)'} | สิทธิ์ของคุณ: <span className="text-emerald-400 font-extrabold">{effectiveRole}</span></p>
+            <p className="text-[10px] text-slate-400">ผู้ใช้งาน: {staffUser ? staffUser.name : 'คุณ กิตติ (เดโม)'} | สิทธิ์ของคุณ: <span className="text-emerald-400 font-extrabold">{actingUser?.role}</span></p>
           </div>
         </div>
 
@@ -1563,12 +1585,15 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
       {/* POS Sub Tabs controller */}
       <div id="staff-pos-tabs" className="flex flex-wrap border-b border-slate-200 gap-1">
+{tabAllowed('walkin') && (
         <button
           onClick={() => setActivePosTab('walkin')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'walkin' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
           🏸 บันทึก Walk-in ด่วน
         </button>
+        )}
+{tabAllowed('slips') && (
         <button
           onClick={() => setActivePosTab('slips')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition relative ${activePosTab === 'slips' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
@@ -1578,37 +1603,46 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
             <span className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
           )}
         </button>
+        )}
+{tabAllowed('fb') && (
         <button
           onClick={() => setActivePosTab('fb')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'fb' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
           ☕️ POS ขายอาหาร F&B / ลูกแบด
         </button>
+        )}
+{tabAllowed('rentals') && (
         <button
           onClick={() => setActivePosTab('rentals')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'rentals' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
           🏸 ยืม/เช่าแร็กเกต & รองเท้า
         </button>
+        )}
+{tabAllowed('vouchers') && (
         <button
           onClick={() => setActivePosTab('vouchers')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'vouchers' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
           🎁 รับของรางวัล
         </button>
+        )}
+{tabAllowed('todays_total') && (
         <button
           onClick={() => setActivePosTab('todays_total')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'todays_total' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
           📊 ยอดลิ้นชักวันนี้ (Read-Only)
         </button>
+        )}
       </div>
 
       {/* POS Contents Rendering */}
       <div id="pos-content-sections" className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm min-h-[400px]">
         
         {/* Tab 1: Walkin Booking */}
-        {activePosTab === 'walkin' && (
+        {activePosTab === 'walkin' && tabAllowed('walkin') && (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-4">
@@ -2047,7 +2081,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         )}
 
         {/* Tab 2: Approve Slips */}
-        {activePosTab === 'slips' && (
+        {activePosTab === 'slips' && tabAllowed('slips') && (
           <div className="space-y-4">
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
@@ -2202,7 +2236,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
             </div>
           </div>
         )}
-        {activePosTab === 'fb' && (
+        {activePosTab === 'fb' && tabAllowed('fb') && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
             {/* Products Selector Grid (Left-Side) */}
@@ -2378,7 +2412,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         )}
 
         {/* Tab 4: Equipment Rental */}
-        {activePosTab === 'rentals' && (
+        {activePosTab === 'rentals' && tabAllowed('rentals') && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               
@@ -2543,7 +2577,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
         {/* Reward vouchers: staff check an RW-XXXXXX claim code and hand the
             reward over (FR-4.3). */}
-        {activePosTab === 'vouchers' && (
+        {activePosTab === 'vouchers' && tabAllowed('vouchers') && (
           <div className="max-w-lg space-y-4">
             <div>
               <h3 className="text-base font-bold text-slate-900">🎁 ตรวจรหัสแลกของรางวัล</h3>
@@ -2577,7 +2611,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         )}
 
         {/* Tab 5: Today's consolidate accounting summary (Read only block for staff) */}
-        {activePosTab === 'todays_total' && (
+        {activePosTab === 'todays_total' && tabAllowed('todays_total') && (
           <div className="space-y-6">
             {/* Cash drawer shift (FR-6.1/6.2) */}
             <div id="shift-panel" className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3 shadow-sm text-xs">

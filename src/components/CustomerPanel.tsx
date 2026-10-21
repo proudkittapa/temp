@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime, businessInfo } from '../mockData';
 import * as api from '../api';
+import { canUseCounter, canUseSettings } from '../permissions';
 import { notify, ask } from './Dialog';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
 import { QRCodeSVG } from 'qrcode.react';
@@ -19,6 +20,9 @@ interface CustomerPanelProps {
   onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
   triggerRefresh: number;
   onRefreshAll: () => void;
+  // One login for everyone: a staff/admin account signed in here is handed
+  // to App, which opens the screen its role may use.
+  onStaffSignIn?: (user: User) => void;
 }
 
 interface Reward {
@@ -66,7 +70,7 @@ const LOYALTY_REWARDS: Reward[] = [
   { id: 'court', name: "เช่าสนามฟรี 1 สล็อต Off-Peak (Free 1-Hr Court)", cost: 25, description: "ยกเว้นค่าธรรมเนียมสนามในช่วงเวลา Off-Peak 1 ชั่วโมงเต็ม", emoji: "🏸" }
 ];
 
-export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefreshAll }: CustomerPanelProps) {
+export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefreshAll, onStaffSignIn }: CustomerPanelProps) {
   // Load data
   const [courts, setCourts] = useState<Court[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -320,9 +324,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     if (api.USE_BACKEND) {
       return api.login('customer', identity, password)
         .then(user => {
-          if (user.role !== UserRole.CUSTOMER) {
-            api.logout('customer');
-            setAuthError('❌ บัญชีนี้เป็นบัญชีพนักงาน กรุณาเข้าสู่ระบบที่หน้า Staff POS');
+          setAuthEmail('');
+          setAuthPassword('');
+          if (onStaffSignIn && (canUseCounter(user) || canUseSettings(user))) {
+            onStaffSignIn(user);
             return;
           }
           setLoggedInUser(user);

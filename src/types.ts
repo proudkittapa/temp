@@ -149,6 +149,9 @@ export interface User {
   // every mutation must go through StorageService.addLedgerEntry so the
   // balance and the ledger never disagree.
   points?: number;
+  // Permissions of the user's role, from the server's /auth/me (API mode).
+  // Absent in browser-only mode: permissionsOf() uses the built-in role's.
+  permissions?: string[];
 }
 
 export interface Booking {

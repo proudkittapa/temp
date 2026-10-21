@@ -84,10 +84,15 @@ the same demo accounts as `DEFAULT_USERS` (all password `123456`) on every
 start: customers `0845678901` (member) and `0856789012` (student), staff
 `0834567890`, manager `0823456789`, admin `0812345678`. In dev (`npm run dev`
 or `npm run dev:api`) every login screen also has one-click buttons for these
-accounts; production builds don't include them. The
-Staff POS panel asks staff to sign in separately from the customer, and the
-Admin panel asks for a manager/admin account (e.g. manager `0823456789`;
-editing prices and discounts needs the admin account `0812345678`). Price
+accounts; production builds don't include them. Everyone signs in once,
+with the same login (customer or staff account); the top bar then shows only
+the screens that account's role allows - 🧾 counter and ⚙️ settings appear
+for staff roles, and inside them each tab follows the role's permissions
+(e.g. the manager sees no pricing tab; editing prices needs the admin
+`0812345678`). A role is a named set of permissions: the admin edits the
+built-in roles or creates new ones (e.g. a cashier who can only sell) in
+Settings → 🔐 สิทธิ์และบทบาท and gives them to accounts in the accounts tab.
+The server checks the permission on every call. Price
 previews in the UI are refreshed from the backend, so they always match what
 the server charges.
 
