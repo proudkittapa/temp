@@ -18,6 +18,24 @@ Entry format:
 
 ---
 
+## 2026-10-21 — "Open shift" banner scrolls to the shift box
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `dfbd781`)
+- **Changed:** user reported "กดเพื่อเปิดกะ ไม่ได้". Opening a shift works
+  (staff, manager, API and browser-only mode all tested), but on a short
+  window (e.g. VS Code's built-in browser) the banner only switched tab and
+  the shift box opened below the fold, so nothing seemed to happen. The
+  banner and the "ไปเปิดกะ" dialog button now scroll the shift box into
+  view and focus the float field (`goOpenShift`, `StaffPOS.tsx`).
+- **Verified:** tsc; Playwright at 1000×560: banner → float focused, box
+  in view → open → "เปิดกะโดย…"; same flow OK at 1280×900 for staff and
+  manager (API) and in browser-only mode.
+- **Not done / follow-ups:** if the user still can't open a shift, need the
+  exact message/screenshot.
+
+---
+
 ## 2026-10-21 — Fixes to today's review fixes (self-review)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

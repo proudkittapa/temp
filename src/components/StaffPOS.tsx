@@ -786,11 +786,20 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Cash only with a drawer shift open (owner decision 2026-10-21): cash
   // taken outside a shift is in no shift's count, so the drawer never adds
   // up. The server refuses it too. Offers to go and open the shift.
+  // Take staff to the shift box: switch tab, scroll it into view (on a
+  // short screen it opens below the fold) and put the cursor in the float.
+  const goOpenShift = () => {
+    setActivePosTab('todays_total');
+    setTimeout(() => {
+      document.getElementById('shift-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('shift-float')?.focus({ preventScroll: true });
+    }, 50);
+  };
   const confirmCashWithoutShift = async (): Promise<boolean> => {
     if (shift) return true;
     if (await ask('ต้องเปิดกะลิ้นชักก่อนรับเงินสด\nนับเงินทอนในลิ้นชัก แล้วกด "เปิดกะ" ที่แท็บ "ยอดลิ้นชักวันนี้"',
       { title: '⚠️ ยังไม่ได้เปิดกะ', okLabel: 'ไปเปิดกะ', cancelLabel: 'ปิด' })) {
-      setActivePosTab('todays_total');
+      goOpenShift();
     }
     return false;
   };
@@ -1629,7 +1638,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       )}
 
       {!shift && (
-        <button type="button" id="no-shift-banner" onClick={() => setActivePosTab('todays_total')}
+        <button type="button" id="no-shift-banner" onClick={goOpenShift}
           className="w-full text-left text-xs bg-amber-50 border border-amber-300 text-amber-900 rounded-xl px-4 py-2 font-bold">
           ⚠️ ยังไม่ได้เปิดกะลิ้นชัก — รับเงินสดไม่ได้จนกว่าจะเปิดกะ (กดที่นี่เพื่อเปิดกะ)
         </button>
