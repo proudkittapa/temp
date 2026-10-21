@@ -594,7 +594,7 @@ type LoginFailure struct {
 // Idempotency-Key header, so a repeat is answered from here instead of
 // selling, booking or refunding twice. Scope ties the key to one session
 // and endpoint. Completed=false while the first attempt is still running.
-// Rows older than a day are pruned.
+// Rows older than an hour are pruned.
 type IdempotencyKey struct {
 	Key        string    `gorm:"primaryKey;column:key;type:varchar(80)"`
 	Scope      string    `gorm:"column:scope;type:varchar(64)"`

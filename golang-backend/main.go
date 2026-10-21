@@ -893,7 +893,10 @@ func withDBTimeouts(dsn string) string {
 // stops instead of holding a database connection.
 func requestDeadline(c *gin.Context) {
 	limit := 30 * time.Second
-	if p := c.Request.URL.Path; strings.Contains(p, "/admin/report") || strings.Contains(p, "/admin/dashboard") || strings.Contains(p, "/export") {
+	switch p := c.Request.URL.Path; {
+	case strings.HasSuffix(p, "/upload-slip"):
+		limit = 2 * time.Minute // the photo may come over a slow phone connection
+	case strings.Contains(p, "/admin/report") || strings.Contains(p, "/admin/dashboard") || strings.Contains(p, "/export"):
 		limit = 90 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), limit)

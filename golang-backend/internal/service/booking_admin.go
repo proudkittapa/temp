@@ -598,6 +598,7 @@ func (s *BookingService) PaymentForBooking(ctx context.Context, bookingID string
 func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, actorName string) (*model.Booking, error) {
 	var b model.Booking
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		var rev pointsReversal // reset per attempt
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&b, "id = ?", bookingID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound
@@ -632,16 +633,19 @@ func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, act
 		}
 		b.Status = model.BookingNoShow
 		if b.TotalAmount > 0 { // a free (voucher) hour earned no point to take back
-			if _, err := s.reversePoints(ctx, tx, b.UserID, 1, actorID, fmt.Sprintf("No-show %s %s (%s)", b.Date, b.StartTime, b.BookingCode), &b.ID); err != nil {
+			r, err := s.reversePoints(ctx, tx, b.UserID, 1, actorID, fmt.Sprintf("No-show %s %s (%s)", b.Date, b.StartTime, b.BookingCode), &b.ID)
+			if err != nil {
 				return err
 			}
+			rev = r
 		}
 		return tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: actorID, UserName: actorName,
 			Action: "BOOKING_NO_SHOW", TargetType: "Booking", TargetID: b.ID,
 			BeforeState: model.AuditJSON(map[string]any{"status": before}),
-			AfterState:  model.AuditJSON(map[string]any{"status": model.BookingNoShow}),
-			CreatedAt:   now,
+			AfterState: model.AuditJSON(map[string]any{"status": model.BookingNoShow, "points_reversed": rev.Taken,
+				"vouchers_cancelled": rev.CancelledVouchers, "points_short": rev.Short}),
+			CreatedAt: now,
 		}).Error
 	})
 	if err != nil {

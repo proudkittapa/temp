@@ -716,6 +716,9 @@ func countUnpaidGroups(db *gorm.DB, userID string) (int, error) {
 		Joins("JOIN bookings ON bookings.id = payments.booking_id").
 		Where("bookings.user_id = ? AND payments.status IN ?", userID,
 			[]model.PaymentStatus{model.PaymentPending, model.PaymentSlipUploaded}).
+		// Only bookings the customer made: a walk-in staff made for them
+		// (waiting for a transfer, never auto-expired) isn't theirs to clear.
+		Where("bookings.created_by = bookings.user_id").
 		Count(&n).Error
 	return int(n), err
 }

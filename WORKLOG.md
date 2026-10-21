@@ -18,6 +18,51 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Fixes from the independent bug review of today's changes
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `780141d`)
+- **Changed:** an independent reviewer went over commits 0139a14..a9026ac;
+  its panic/startup/report-timeout/closed-shift findings were already fixed
+  in dfbd781. The rest:
+  - Retry keys (client, `api.ts`): kept at most 2 min (an identical sale
+    later is a new sale, not a replay of an old one); cleared when another
+    user signs in/out (not on a session refresh of the same user); dropped
+    on 422. Cart and rental form carry an id (`api.newActionId`, refs in
+    StaffPOS, reset when the cart/form contents change or on success) sent
+    as the body `idempotency_key`, so checkout's own in-transaction replay
+    works again and a new cart never matches an old body.
+  - Retry keys (server, `handler/idempotency.go`): scope = user id +
+    endpoint (was the raw token, so a retry after re-login got 422);
+    anonymous requests (sign-in/up) are never stored (they held JWTs);
+    a claim still in progress after 3 min is taken over (crash/restart);
+    a key released between claim and lookup is claimed again (was 404/500);
+    stored responses kept 1 h (was 24 h).
+  - Unpaid-booking cap counts only bookings the customer made - a pending
+    walk-in staff made for a member no longer blocks their online booking.
+    (`booking_service.go` countUnpaidGroups)
+  - No-show audit records rewards cancelled / points short.
+  - Slip upload request deadline 2 min (slow phone uploads).
+  - StaffPOS: rental "collect cash" and return/deposit messages use the
+    server's recorded amounts; browser-only void gives the deposit back;
+    walk-in grid no longer stays "loading" when the pricing-cache refresh
+    fails. AdminPanel browser-only Excel import re-reads products after the
+    preview. slipImage keeps accepted files up to ~5 MB byte for byte (the
+    duplicate-slip hash sees the real file).
+  - Not a bug: "pool starvation from pricing inside a transaction" -
+    planSlots/NewSlotQuoter run before the transaction.
+  - TODO: kept deposits missing from income reports / day ledger.
+- **Verified:** go vet + go test, tsc, vitest 54/54. curl: login with a key
+  stores nothing; same key from a second token of the same staff → replay;
+  another user → 422; 5-min-old in-progress claim → taken over and sold;
+  fresh in-progress claim → 409; pending member walk-in counted by the cap
+  query: 0 (was 1). Playwright: lost-response sale → retry sends the same
+  key and shows the same receipt (twice); two identical sales in a row →
+  two receipts; deposit return with 30 kept → "คืนมัดจำ 170 … ด้ามแตก".
+- **Not done / follow-ups:** TODO section 11.
+
+---
+
 ## 2026-10-21 — "Open shift" banner scrolls to the shift box
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

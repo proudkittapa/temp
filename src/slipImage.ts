@@ -1,10 +1,11 @@
 // Slip photos are checked and, when large, shrunk in the browser before
 // upload: the server takes JPG/PNG/WebP up to 5 MB, and a phone camera
-// photo can be bigger or HEIC. Small JPG/PNG/WebP files (e.g. banking-app
-// screenshots) are sent unchanged, so the server's duplicate-slip check
-// still sees the original bytes.
+// photo can be bigger or HEIC. JPG/PNG/WebP files under the limit (e.g.
+// banking-app screenshots) are sent unchanged.
 const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp'];
-const KEEP_AS_IS_BYTES = 1.5 * 1024 * 1024;
+// Up to the server's limit an accepted file is sent byte for byte, so the
+// server's duplicate-slip check compares the real file, not a re-encoding.
+const KEEP_AS_IS_BYTES = 5 * 1024 * 1024 - 64 * 1024;
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_SIDE = 1600; // px - bank slip text stays readable
 

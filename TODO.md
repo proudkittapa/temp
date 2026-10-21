@@ -171,6 +171,8 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] `LockCourtGroupTx` uses a mutex group read before the transaction - re-read after locking the court row.
 - [ ] Database backstops: CHECK `points >= 0`, `stock >= 0`, `refund_amount <= amount`; unique "one open shift"; money columns `numeric(12,2)` instead of float.
 
+- [ ] Kept rental deposits (`orders.deposit_kept`) are not in any income report or CSV, and the staff day ledger's expected cash leaves out deposits still held (the shift count includes them) - decide whether kept deposits are income, then add them.
+
 ### Performance (beyond indexes)
 - [ ] Admin dashboard: ~33 sequential queries (6-month loop = 18) - one GROUP BY month query per table, daily rollup or 60 s cache for all-time totals.
 - [ ] Unbounded lists: `GET /admin/users` returns everyone; audit log does a full COUNT + 4-column LIKE per page (use has_more + keyset paging); monthly export loads the month in memory with an IN list that fails past ~65k orders (join on date range, stream CSV); `GET /admin/shifts` = 4 queries per shift (store cash_deposits at close, skip closed shifts).

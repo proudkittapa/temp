@@ -1389,8 +1389,11 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
             })
             .catch(err => notify(`นำเข้าไม่สำเร็จ (ไม่มีรายการใดถูกบันทึก): ${err.message}`));
         } else if (importedCount > 0) {
-          StorageService.set('products', newProds);
-          setProducts(newProds);
+          // Re-read: stock may have changed (e.g. a sale in another tab)
+          // while the preview was open; only the new rows are added.
+          const saved = [...StorageService.get<Product[]>('products', []), ...newProds.slice(currentProds.length)];
+          StorageService.set('products', saved);
+          setProducts(saved);
           onAddAuditLog('PRODUCTS_UPLOADED_VIA_EXCEL', 'Product', 'bulk', null, { count: importedCount });
           onRefreshAll();
           notify(`อัปโหลดเสร็จสมบูรณ์! นำเข้าสินค้าแถวใหม่ ${importedCount} รายการเข้าสู่ตู้อัตโนมัติและคลังสต๊อกสำเร็จค่ะ 🚀${skippedNote}`);

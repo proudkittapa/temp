@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift
@@ -62,6 +62,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [walkinSlot, setWalkinSlot] = useState<string>('');
   const [walkinName, setWalkinName] = useState<string>('');
   const [walkinPhone, setWalkinPhone] = useState<string>('');
+  // One id per cart / rental form until it is sold: a retry after a lost
+  // response repeats it (the server answers with the first sale), a changed
+  // cart or the next sale gets a new one.
+  const cartActionId = useRef('');
+  const rentalActionId = useRef('');
   // The member picked in each phone box: their name comes from the
   // database, so the name box is locked while one is linked.
   const [walkinMember, setWalkinMember] = useState<api.MemberMatch | null>(null);
@@ -106,6 +111,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Shoes are rented by size: gender filter + the chosen size variant (FR-5.3).
   const [rentalShoeGender, setRentalShoeGender] = useState<'M' | 'F'>('M');
   const [rentalVariantId, setRentalVariantId] = useState<string>('');
+  // Reset only when what is being sold changes (a refresh rebuilds the
+  // cart's objects without changing it).
+  const cartSig = JSON.stringify([cartItems.map(i => [i.product.id, i.qty]), cartPayMethod, cartCustomerPhone, cartCustomerName, cartCourtId]);
+  useEffect(() => { cartActionId.current = ''; }, [cartSig]);
+  useEffect(() => { rentalActionId.current = ''; }, [selectedProductId, rentalVariantId, rentalCustomerPhone, rentalCourtId]);
   // Rentals still out (any day); in browser-only mode derived from orders.
   const [activeRentalOrders, setActiveRentalOrders] = useState<Order[]>([]);
 
@@ -194,7 +204,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           api.listCourts(),
           api.listBookingsByDate(walkinDate, 'staff'),
           api.listDaysOff(walkinDate, walkinDate),
-          api.syncPricingCache() // walk-in price previews read it
+          // Price previews read it; a failure here mustn't block the grid.
+          api.syncPricingCache().catch(() => undefined)
         ]);
         if (cancelled) return;
         setCourts(apiCourts);
@@ -1133,11 +1144,14 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (api.USE_BACKEND) {
       // The server prices the items, checks and takes the stock, and
       // credits the customer with this phone.
+      cartActionId.current ||= api.newActionId();
       return api.checkout({
         type, paymentMethod: cartPayMethod, customerName: cartCustomerName, customerPhone: cartCustomerPhone,
-        courtId: cartCourtId || undefined, items: cartItems.map(i => ({ productId: i.product.id, qty: i.qty }))
+        courtId: cartCourtId || undefined, items: cartItems.map(i => ({ productId: i.product.id, qty: i.qty })),
+        idempotencyKey: cartActionId.current
       })
         .then(r => {
+          cartActionId.current = '';
           onAddAuditLog('ORDER_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode, total: r.order.totalAmount });
           done(r.order.orderCode, r.order.totalAmount, r.pointsEarned);
         })
@@ -1214,25 +1228,28 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
     if (!(await confirmCashWithoutShift())) return; // rentals are paid in cash
     const sizeNote = variant ? ` (รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label})` : '';
-    const done = (orderCode: string, pts: number) => {
+    // Fee and deposit as recorded (the server's, in API mode).
+    const done = (orderCode: string, pts: number, fee = prodObj.price, dep = roundBaht(prodObj.deposit ?? 0)) => {
       setRentalCourtId('');
       setRentalCustomerPhone('');
       setRentalMember(null);
       setRentalVariantId('');
       onRefreshAll();
-      const dep = roundBaht((prodObj.deposit ?? 0));
-      notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote}${dep > 0 ? `\nเก็บเงินสด ${formatBaht(prodObj.price + dep)} บาท (ค่าเช่า ${formatBaht(prodObj.price)} + มัดจำ ${formatBaht(dep)} คืนตอนคืนของ)` : ''} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
+      notify(`ปล่อยเช่าสำเร็จ! รหัสทำรายการเช่า ${orderCode}${sizeNote}${dep > 0 ? `\nเก็บเงินสด ${formatBaht(fee + dep)} บาท (ค่าเช่า ${formatBaht(fee)} + มัดจำ ${formatBaht(dep)} คืนตอนคืนของ)` : ''} ${pts > 0 ? `(🎁 ลูกค้าสะสมแต้ม +${pts} แต้ม!)` : ''}`);
     };
 
     if (api.USE_BACKEND) {
+      rentalActionId.current ||= api.newActionId();
       return api.checkout({
         type: OrderType.EQUIPMENT_RENT, paymentMethod: PaymentMethod.CASH, customerName: '', // the server uses the member's name, or "walk-in"
         customerPhone: rentalCustomerPhone, courtId: rentalCourtId || undefined,
-        items: [{ productId: prodObj.id, variantId: variant?.id, qty: 1 }]
+        items: [{ productId: prodObj.id, variantId: variant?.id, qty: 1 }],
+        idempotencyKey: rentalActionId.current
       })
         .then(r => {
+          rentalActionId.current = '';
           onAddAuditLog('RENTAL_CREATED_BY_STAFF', 'Order', r.order.id, null, { orderCode: r.order.orderCode });
-          done(r.order.orderCode, r.pointsEarned);
+          done(r.order.orderCode, r.pointsEarned, r.order.totalAmount, r.order.depositAmount ?? 0);
         })
         .catch(err => { notify(`ปล่อยเช่าไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
     }
@@ -1313,7 +1330,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         .then(o => {
           onAddAuditLog('RENTAL_RETURNED_BY_STAFF', 'Order', o.id, null, { item: itemId, status: o.status, depositReturned: o.depositReturned, depositKept: o.depositKept });
           onRefreshAll();
-          notify(doneMsg);
+          // What the server recorded - another counter may have returned
+          // the other items, so this return can settle the deposit even
+          // when this screen didn't expect it.
+          const settledNow = !!o.depositAmount && !!o.depositSettledAt && !ord?.depositSettledAt;
+          notify(settledNow
+            ? `บันทึกคืนอุปกรณ์แล้ว — คืนมัดจำ ${formatBaht(o.depositReturned ?? 0)} บาทให้ลูกค้า${o.depositKept ? ` (หักไว้ ${formatBaht(o.depositKept)} บาท${o.depositNote ? `: ${o.depositNote}` : ''})` : ''}`
+            : doneMsg);
         })
         .catch(err => { notify(`บันทึกคืนไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
     }
@@ -1494,7 +1517,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       };
     }));
     StorageService.set('orders', StorageService.get<Order[]>('orders', []).map(o => o.id === order.id
-      ? { ...o, status: OrderStatus.CANCELLED, voidedAt: new Date().toISOString(), voidReason: reason } : o));
+      ? { ...o, status: OrderStatus.CANCELLED, voidedAt: new Date().toISOString(), voidReason: reason,
+          // A voided rental gives its deposit back (as the server does).
+          ...(o.depositAmount && !o.depositSettledAt
+            ? { depositReturned: o.depositAmount, depositSettledAt: new Date().toISOString(), depositNote: 'voided' } : {}) } : o));
     onAddAuditLog('ORDER_VOIDED', 'Order', order.id, { status: order.status }, { status: OrderStatus.CANCELLED, reason });
     onRefreshAll();
     notify(`ยกเลิกบิล ${order.orderCode} แล้ว (คืนสต๊อกและแต้ม)${cancelledCodes.length ? `\nยกเลิกคูปองของรางวัลที่แลกด้วยแต้มจากบิลนี้: ${cancelledCodes.join(', ')}` : ''}`);

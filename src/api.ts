@@ -61,6 +61,9 @@ export function getSession(_kind?: SessionKind): StoredSession | null {
 }
 
 function saveSession(_kind: SessionKind, session: StoredSession | null) {
+  // A retry key belongs to the user who started the action: forget them
+  // when someone else signs in or out (not on a refresh of the same login).
+  if (getSession()?.user?.id !== session?.user?.id) pendingWrites.clear();
   try {
     if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     else localStorage.removeItem(SESSION_KEY);
@@ -104,7 +107,10 @@ export class ApiError extends Error {
 // its key, so the server answers from the first attempt instead of selling,
 // booking or refunding twice. The key is dropped once the action succeeds,
 // so an identical action later is a new one.
-const pendingWrites = new Map<string, { body: string; key: string }>();
+// An entry lives at most RETRY_WINDOW_MS: after that the same body is a new
+// action (e.g. the next customer buying the same thing), not a retry.
+const pendingWrites = new Map<string, { body: string; key: string; at: number }>();
+const RETRY_WINDOW_MS = 2 * 60 * 1000;
 const newIdempotencyKey = () => typeof crypto !== 'undefined' && crypto.randomUUID
   ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 
@@ -127,8 +133,8 @@ async function request<T>(
   if (writeScope) {
     const sent = typeof body === 'string' ? body : '';
     let pending = pendingWrites.get(writeScope);
-    if (!pending || pending.body !== sent) {
-      pending = { body: sent, key: newIdempotencyKey() };
+    if (!pending || pending.body !== sent || Date.now() - pending.at > RETRY_WINDOW_MS) {
+      pending = { body: sent, key: newIdempotencyKey(), at: Date.now() };
       pendingWrites.set(writeScope, pending);
     }
     headers['Idempotency-Key'] = pending.key;
@@ -149,6 +155,8 @@ async function request<T>(
     // unless the stored session is already a newer one (signed in again,
     // maybe in another tab, while this request was out).
     if (res.status === 401 && opts.session && token && getSession(opts.session)?.token === token) saveSession(opts.session, null);
+    // The server refused the key itself: don't send it again.
+    if (writeScope && res.status === 422) pendingWrites.delete(writeScope);
     // No JSON at all (e.g. a proxy's HTML error page on a 200).
     throw new ApiError(json?.error || (json ? `Request failed (${res.status})` : 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง กรุณาลองใหม่'), res.status);
   }
@@ -901,11 +909,15 @@ interface CheckoutInput {
   customerName?: string;
   customerPhone?: string; // a registered customer's phone earns the points
   courtId?: string;
-  idempotencyKey?: string; // optional: the request() Idempotency-Key header already covers retries
+  // One id per cart / rental form (kept until it succeeds): makes a new sale's
+  // body differ from an earlier identical one, and lets the server replay a
+  // retried sale inside its own transaction.
+  idempotencyKey?: string;
 }
 
 // Staff: sell or rent out. Prices and stock are the server's. A retry of
 // the same sale is answered with the first one (see request()).
+export const newActionId = () => newIdempotencyKey();
 
 export async function checkout(input: CheckoutInput): Promise<{ order: OrderWithNames; pointsEarned: number }> {
   const r = await request<{ order: ApiOrder; points_earned: number }>('/pos/order', {

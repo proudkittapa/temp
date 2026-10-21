@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
@@ -18,6 +19,15 @@ import (
 
 var idempotencyKeyRE = regexp.MustCompile(`^[A-Za-z0-9_-]{8,80}$`)
 
+const (
+	// A claim still "in progress" after this long belongs to a request that
+	// died (crash, restart) - longer than any request deadline.
+	idempotencyAbandonedAfter = 3 * time.Minute
+	// Stored responses hold customer data, so they are kept only as long as
+	// a retry is plausible.
+	idempotencyKeep = time.Hour
+)
+
 // recordingWriter keeps a copy of the response body for replay.
 type recordingWriter struct {
 	gin.ResponseWriter
@@ -29,17 +39,19 @@ func (w *recordingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// Idempotency makes a write request carrying an Idempotency-Key header
-// safe to send again: the first attempt claims the key; a repeat after it
-// succeeded gets the same response back (header Idempotent-Replay: true)
-// without running again; a repeat while it is still running gets 409. A
-// failed attempt (non-2xx - nothing was saved) releases the key so the
-// client can retry. The key is bound to the caller's session and the
-// endpoint (Scope); reusing it elsewhere is refused.
+// Idempotency makes a signed-in user's write request carrying an
+// Idempotency-Key header safe to send again: the first attempt claims the
+// key; a repeat after it succeeded gets the same response back (header
+// Idempotent-Replay: true) without running again; a repeat while it is
+// still running gets 409. A failed attempt (non-2xx - nothing was saved)
+// releases the key so the client can retry. The key is bound to the user
+// and the endpoint (scope): reusing it elsewhere is refused. Anonymous
+// requests (sign-in, sign-up) are never stored.
 func Idempotency(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.GetHeader("Idempotency-Key")
-		if key == "" || c.Request.Method == http.MethodGet {
+		userID := currentUserID(c)
+		if key == "" || c.Request.Method == http.MethodGet || userID == "" {
 			c.Next()
 			return
 		}
@@ -47,7 +59,7 @@ func Idempotency(db *gorm.DB) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"success": false, "error": "invalid Idempotency-Key"})
 			return
 		}
-		sum := sha256.Sum256([]byte(c.GetHeader("Authorization") + "|" + c.Request.Method + " " + c.Request.URL.Path))
+		sum := sha256.Sum256([]byte(userID + "|" + c.Request.Method + " " + c.Request.URL.Path))
 		scope := hex.EncodeToString(sum[:])
 		// Bookkeeping outlives a cancelled request: the write may have
 		// committed even if the client went away.
@@ -56,18 +68,27 @@ func Idempotency(db *gorm.DB) gin.HandlerFunc {
 			defer cancel()
 			return run(db.WithContext(ctx))
 		}
-		claim := store(func(tx *gorm.DB) *gorm.DB {
-			return tx.Clauses(clause.OnConflict{DoNothing: true}).
-				Create(&model.IdempotencyKey{Key: key, Scope: scope, CreatedAt: time.Now()})
-		})
-		if claim.Error != nil {
-			respondError(c, claim.Error)
-			c.Abort()
-			return
-		}
-		if claim.RowsAffected == 0 {
+
+		owned := false
+		for attempt := 0; attempt < 2 && !owned; attempt++ {
+			claim := store(func(tx *gorm.DB) *gorm.DB {
+				return tx.Clauses(clause.OnConflict{DoNothing: true}).
+					Create(&model.IdempotencyKey{Key: key, Scope: scope, CreatedAt: time.Now()})
+			})
+			if claim.Error != nil {
+				respondError(c, claim.Error)
+				c.Abort()
+				return
+			}
+			if claim.RowsAffected == 1 {
+				owned = true
+				break
+			}
 			var prev model.IdempotencyKey
 			if err := store(func(tx *gorm.DB) *gorm.DB { return tx.First(&prev, "key = ?", key) }).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue // released meanwhile by a failed attempt: claim again
+				}
 				respondError(c, err)
 				c.Abort()
 				return
@@ -75,15 +96,32 @@ func Idempotency(db *gorm.DB) gin.HandlerFunc {
 			switch {
 			case prev.Scope != scope:
 				c.AbortWithStatusJSON(http.StatusUnprocessableEntity, gin.H{"success": false, "error": "this Idempotency-Key was used for another request"})
-			case !prev.Completed:
-				c.AbortWithStatusJSON(http.StatusConflict, gin.H{"success": false, "error": "the same request is still being processed - check the result before trying again"})
-			default:
+				return
+			case prev.Completed:
 				c.Header("Idempotent-Replay", "true")
 				c.Data(prev.StatusCode, "application/json; charset=utf-8", prev.Response)
 				c.Abort()
+				return
+			case time.Since(prev.CreatedAt) > idempotencyAbandonedAfter:
+				// The first attempt died mid-request: take the key over.
+				took := store(func(tx *gorm.DB) *gorm.DB {
+					return tx.Model(&model.IdempotencyKey{}).
+						Where("key = ? AND NOT completed AND created_at = ?", key, prev.CreatedAt).
+						Update("created_at", time.Now())
+				})
+				if took.Error == nil && took.RowsAffected == 1 {
+					owned = true
+				}
+			default:
+				c.AbortWithStatusJSON(http.StatusConflict, gin.H{"success": false, "error": "the same request is still being processed - check the result before trying again"})
+				return
 			}
+		}
+		if !owned {
+			c.AbortWithStatusJSON(http.StatusConflict, gin.H{"success": false, "error": "the same request is still being processed - check the result before trying again"})
 			return
 		}
+
 		release := func() {
 			if err := store(func(tx *gorm.DB) *gorm.DB {
 				return tx.Where("key = ? AND NOT completed", key).Delete(&model.IdempotencyKey{})
@@ -117,8 +155,8 @@ func Idempotency(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// PruneIdempotencyKeys drops keys older than a day (a client retries within
-// seconds or minutes).
+// PruneIdempotencyKeys drops keys older than idempotencyKeep (a client
+// retries within seconds or minutes).
 func PruneIdempotencyKeys(ctx context.Context, db *gorm.DB) error {
-	return db.WithContext(ctx).Where("created_at < ?", time.Now().Add(-24*time.Hour)).Delete(&model.IdempotencyKey{}).Error
+	return db.WithContext(ctx).Where("created_at < ?", time.Now().Add(-idempotencyKeep)).Delete(&model.IdempotencyKey{}).Error
 }
