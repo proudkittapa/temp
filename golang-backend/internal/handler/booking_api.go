@@ -22,6 +22,7 @@ const maxSlipBytes = 5 << 20
 const (
 	msgBusy     = "the system was busy - please try again"
 	msgInternal = "internal server error - please try again"
+	msgSlow     = "the request took too long - please try again"
 )
 
 // respondError maps service sentinel errors to HTTP status codes so clients
@@ -31,7 +32,12 @@ const (
 // details).
 func respondError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
-	if repository.IsRetryableConflict(err) || errors.Is(err, service.ErrBusy) {
+	if repository.IsQueryTimeout(err) {
+		log.Printf("TIMEOUT %s %s: %v", c.Request.Method, c.FullPath(), err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": msgSlow})
+		return
+	}
+	if repository.IsRetryableConflict(err) || repository.IsLockTimeout(err) || errors.Is(err, service.ErrBusy) {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": msgBusy})
 		return
 	}

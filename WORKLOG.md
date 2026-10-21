@@ -18,6 +18,39 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Review fixes: DB limits/timeouts, walk-in expiry; review in TODO
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `d98053a`)
+- **Changed:** after a performance/concurrency/frontend review (three
+  reviewers + spot checks), the user chose to fix two P0s now and put the
+  rest - indexes included, "since the data is fake" - in TODO.
+  - Database: pool capped (`DB_MAX_OPEN_CONNS`, default 20, idle = max,
+    30 min lifetime); `statement_timeout` 15 s, `lock_timeout` 5 s,
+    `idle_in_transaction_session_timeout` 30 s added to the connection
+    string unless it sets them (`DB_STATEMENT_TIMEOUT_MS`,
+    `DB_LOCK_TIMEOUT_MS`); every request gets a context deadline (30 s,
+    90 s for reports/dashboard/export); uploads over 1 MB spill to disk
+    (`MaxMultipartMemory`). Lock timeout (55P03) → 409 "busy"; statement
+    timeout / deadline → 503 "took too long". (`main.go`,
+    `repository/user.go`, `handler/booking_api.go`, `.env.example`)
+  - Walk-in paid by PromptPay was cancelled by the 30-minute unpaid-hold
+    job (customer already playing, hour resold online, "mark cash" then
+    skews the drawer). The job now only expires bookings the customer made
+    (created_by = user_id). (`booking_service.go` ExpireUnpaidBookings)
+  - TODO: new section 11 with every open finding (go-live: indexes, phone
+    lookup, retry keys, live refresh, walk-in grid loading, bundle split;
+    scaling to 2 servers; correctness; performance; structure). Order of
+    work step 6 points at it.
+- **Verified:** go vet + go test, gofmt. Live: a booking on a court row
+  locked by another session fails after 5.0 s with 409 "busy" (no
+  retries); walk-in + online PromptPay bookings both backdated 40 min →
+  next job run: online EXPIRED, walk-in still PENDING, and staff verify
+  of the walk-in → VERIFIED.
+- **Not done / follow-ups:** TODO section 11.
+
+---
+
 ## 2026-10-21 — Staff POS / Admin on a tablet
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

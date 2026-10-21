@@ -723,12 +723,16 @@ func countUnpaidGroups(db *gorm.DB, userID string) (int, error) {
 // ExpireUnpaidBookings cancels online bookings whose payment is still
 // PENDING (no slip uploaded) after PaymentHoldDuration, freeing their slots.
 // Bookings with an uploaded slip are left for staff to verify or reject.
+// A walk-in paid by transfer at the counter (made by staff, so created_by
+// is not the customer) never expires: the customer is there and may
+// already be playing; staff confirm the transfer or cancel it themselves.
 // main runs this every minute.
 func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) {
 	cutoff := s.now().Add(-PaymentHoldDuration)
 	var stale []model.Payment
 	if err := s.db.WithContext(ctx).
 		Where("status = ? AND method = ? AND created_at < ?", model.PaymentPending, model.PaymentPromptPay, cutoff).
+		Where("EXISTS (SELECT 1 FROM bookings b WHERE b.id = payments.booking_id AND b.created_by = b.user_id)").
 		Order("created_at").Limit(500).Find(&stale).Error; err != nil {
 		return 0, err
 	}

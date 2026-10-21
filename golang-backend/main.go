@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata" // Asia/Bangkok must resolve even on hosts without tzdata
@@ -86,7 +88,7 @@ func main() {
 	}
 
 	log.Printf("Connecting Go database using GORM with postgres driver...")
-	db, err := gorm.Open(postgres.Open(pgConnString), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(withDBTimeouts(pgConnString)), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Critical error instantiating DB with GORM: %v\n", err)
 	}
@@ -99,6 +101,14 @@ func main() {
 	if err := sqlDB.Ping(); err != nil {
 		log.Fatalf("Database is unreachable: %v\n", err)
 	}
+	// A bounded pool: a burst of requests waits for a connection instead of
+	// exhausting Postgres max_connections (which would fail every request
+	// and the background jobs too). DB_MAX_OPEN_CONNS overrides.
+	maxConns := envInt("DB_MAX_OPEN_CONNS", 20)
+	sqlDB.SetMaxOpenConns(maxConns)
+	sqlDB.SetMaxIdleConns(maxConns)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	log.Println("GORM Database connection established successfully!")
 
 	// 1b. GORM AutoMigrate to guarantee database schema is 100% complete!
@@ -178,6 +188,10 @@ func main() {
 
 	// 3. Launch Gin Web Engine Router
 	router := gin.Default()
+	// Uploads (slips, max ~5 MB) spill to a temp file beyond 1 MB instead of
+	// being held in memory.
+	router.MaxMultipartMemory = 1 << 20
+	router.Use(requestDeadline)
 	// c.ClientIP() feeds the login throttle, so X-Forwarded-For is only
 	// believed from proxies listed in TRUSTED_PROXIES (comma-separated IPs
 	// or CIDRs, e.g. your reverse proxy). Otherwise anyone could send a
@@ -822,4 +836,61 @@ func warnDuplicatePhones(db *gorm.DB) {
 		log.Printf("WARNING: %d phone number(s) belong to more than one account (%s); merge them so walk-in points go to the right account.\n",
 			len(phones), strings.Join(phones, ", "))
 	}
+}
+
+// withDBTimeouts adds server-side limits to the connection string unless it
+// already sets them: a statement running longer than DB_STATEMENT_TIMEOUT_MS
+// (default 15 s) or waiting for a row lock longer than DB_LOCK_TIMEOUT_MS
+// (default 5 s) is cancelled, and a transaction left idle is closed. One
+// stuck request then fails on its own instead of piling every request up
+// behind its locks. pgx sends unknown connection parameters to the server
+// as runtime settings.
+func withDBTimeouts(dsn string) string {
+	params := [][2]string{
+		{"statement_timeout", strconv.Itoa(envInt("DB_STATEMENT_TIMEOUT_MS", 15000))},
+		{"lock_timeout", strconv.Itoa(envInt("DB_LOCK_TIMEOUT_MS", 5000))},
+		{"idle_in_transaction_session_timeout", "30000"},
+	}
+	if strings.Contains(dsn, "://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return dsn
+		}
+		q := u.Query()
+		for _, p := range params {
+			if q.Get(p[0]) == "" {
+				q.Set(p[0], p[1])
+			}
+		}
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	for _, p := range params {
+		if !strings.Contains(dsn, p[0]+"=") {
+			dsn += " " + p[0] + "=" + p[1]
+		}
+	}
+	return dsn
+}
+
+// requestDeadline gives every request a deadline (reports and exports get
+// longer), so a request whose client has gone, or that waits on a lock,
+// stops instead of holding a database connection.
+func requestDeadline(c *gin.Context) {
+	limit := 30 * time.Second
+	if p := c.Request.URL.Path; strings.Contains(p, "/admin/report") || strings.Contains(p, "/admin/dashboard") || strings.Contains(p, "/export") {
+		limit = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), limit)
+	defer cancel()
+	c.Request = c.Request.WithContext(ctx)
+	c.Next()
+}
+
+// envInt reads a positive integer setting, or def.
+func envInt(name string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && n > 0 {
+		return n
+	}
+	return def
 }

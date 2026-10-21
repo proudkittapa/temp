@@ -60,6 +60,20 @@ func RetryTx(db *gorm.DB, fn func(tx *gorm.DB) error) error {
 	}
 }
 
+// IsLockTimeout reports a row/advisory lock wait cut off by lock_timeout
+// (55P03): another request held the lock too long.
+func IsLockTimeout(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "55P03"
+}
+
+// IsQueryTimeout reports a statement cancelled by statement_timeout or by
+// the request's deadline (57014), or a deadline hit while waiting.
+func IsQueryTimeout(err error) bool {
+	var pgErr *pgconn.PgError
+	return (errors.As(err, &pgErr) && pgErr.Code == "57014") || errors.Is(err, context.DeadlineExceeded)
+}
+
 // Create inserts a brand new customer or staff member user profile row.
 func (r *UserRepository) Create(ctx context.Context, u *model.User) error {
 	if err := r.db.WithContext(ctx).Create(u).Error; err != nil {

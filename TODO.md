@@ -20,6 +20,9 @@ Cheap and blocking first, then what changes what customers/staff see
    wait, do it right after; today's separate sign-ins work).
 6. **Deploy to a real server with HTTPS** - section 8 (8a: free tunnel from
    the Mac for testers now; 8b: VPS + Docker + Caddy for customers).
+   **Before real customers (8b): section 11 "Go-live" items** - database
+   indexes (not needed while the data is fake), retry protection, live
+   refresh, smaller customer download.
 7. **Test on real phones** - section 6 and section 3 (real phones, inside the
    LINE app); scan the PromptPay QR with two Thai banking apps.
 8. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
@@ -133,3 +136,51 @@ Done 2026-10-21 (see WORKLOG.md).
 - [x] Grid shows 9 basketball rows (today's way); half courts keep the half-court price and off-peak-only rule. Dashboard occupancy already counts by court group, so it counts 3 basketball courts.
 - [x] Admin: "✏️ เปลี่ยนชื่อ" button per court (admin only); the server now refuses a rename to a name another court already has.
 - [ ] Optional later: one grid row per court with a full/left/right choice instead of 9 rows.
+
+## 11. Performance / concurrency review (2026-10-21) - what's left
+Full review: three reviewers (backend performance, concurrency/money, frontend) + spot checks. Done the same day: database pool cap + statement/lock/idle timeouts + request deadlines (section below, "done"), walk-in PromptPay no longer auto-expires.
+
+### Go-live (do before real customers - not needed while the data is fake)
+- [ ] **Database indexes** (build with `CREATE INDEX CONCURRENTLY` in `ensureIndexes`, main.go - plain CREATE INDEX blocks writes on big tables):
+  - `order_items (order_id)` - every sale view, rental return, void, day summary and dashboard scans order_items without it.
+  - `bookings (user_id, date DESC, start_time)` - my-bookings and the unpaid-booking cap on every online booking.
+  - `payments (slip_uploaded_at, created_at) WHERE status = 'SLIP_UPLOADED'` and `payments (created_at) WHERE status = 'PENDING'` - slip queue, expiry job.
+  - `bookings (date, end_time) WHERE status = 'CONFIRMED'` - the every-minute "finished" job; `bookings (date) WHERE status = 'PENDING_PAYMENT'` - dashboard.
+  - `vouchers (expires_at) WHERE status = 'ACTIVE'`, `vouchers (user_id, created_at DESC)`, `vouchers (booking_id) WHERE booking_id IS NOT NULL`.
+  - `orders (created_at) WHERE status = 'PREPARING'` (open rentals), `audit_logs (target_type, created_at DESC)`, `users (role, created_at DESC)`, `day_offs (date)`, `shifts (opened_at) WHERE closed_at IS NULL`.
+  - Member search / audit search: `pg_trgm` GIN on `lower(users.name)`, `lower(audit_logs.user_name)`, `lower(audit_logs.target_id)`; `users.phone text_pattern_ops` for the prefix match.
+- [ ] **Phone lookups use a regex over every user row** (`repository/user.go` canonicalPhoneSQL: login, register, walk-in, checkout): normalise all stored phones once (merge duplicates), then compare `phone = ?`; split login's email-OR-phone into two indexed queries.
+- [ ] **Retry protection (idempotency):** the checkout key is new on every attempt (`api.ts` checkout, StaffPOS) so it protects nothing - keep one key per cart until success. Add the same key to partial refunds, reward redeem, manual points/stock adjust, walk-in and online booking create (replay on unique violation).
+- [ ] **Live refresh:** slip queue, the selected date's bookings and the customer's payment screen poll every 10-15 s while the page is visible and refetch on focus (today nothing updates until a click). Payment screen should follow the server status (expired / approved).
+- [ ] **Walk-in grid shows the previous date's bookings while loading** (StaffPOS) - copy CustomerPanel's `loadedDate` gate; disable cell actions until loaded.
+- [ ] **Customers download the staff/admin app** (one 436 KB gzip bundle, ~70% xlsx + recharts): lazy-load StaffPOS/AdminPanel, `await import('xlsx')` in the Excel handlers, charts in a lazy component.
+- [ ] **`index.html`:** `lang="th"` and a real title (now "My Google AI Studio App"); demo users/passwords (`DEFAULT_USERS`) are in the production bundle - gate behind browser-only mode.
+
+### Scaling to 2+ servers
+- [ ] Slip images are on the server's own disk - move to shared storage (S3/GCS or a shared volume) before a second server.
+- [ ] Background jobs run in every server - elect one with `pg_try_advisory_lock` per tick; batch `CompleteFinishedBookings`.
+- [ ] Startup migrations/indexes run unlocked - wrap in one advisory lock or run as a one-shot job.
+- [ ] Cash-drawer attribution uses each server's clock (and `ReturnRentalItem` takes its time before the drawer lock): stamp `shift_id` on payments/orders/deposit settlements under the drawer lock and compute expected cash by shift.
+
+### Correctness
+- [ ] Booking cancel-with-refund takes back only the points left (clamped at 0) - rewards bought with them are kept; reuse VoidOrder's voucher clawback.
+- [ ] Lock order differs (return vs void: item→order vs order→items; void restocks in line order, checkout sorted; return locks products before the drawer, checkout drawer first) - one documented order everywhere.
+- [ ] `CancelBookings` mutates `refund`/`res` captured outside the retried closure - copy into locals.
+- [ ] `SaveSlip` on an EXPIRED payment doesn't take the user lock, so the unpaid cap can be exceeded; expiry job can starve behind 500 un-expirable rows (keyset paging).
+- [ ] `LockCourtGroupTx` uses a mutex group read before the transaction - re-read after locking the court row.
+- [ ] Database backstops: CHECK `points >= 0`, `stock >= 0`, `refund_amount <= amount`; unique "one open shift"; money columns `numeric(12,2)` instead of float.
+
+### Performance (beyond indexes)
+- [ ] Admin dashboard: ~33 sequential queries (6-month loop = 18) - one GROUP BY month query per table, daily rollup or 60 s cache for all-time totals.
+- [ ] Unbounded lists: `GET /admin/users` returns everyone; audit log does a full COUNT + 4-column LIKE per page (use has_more + keyset paging); monthly export loads the month in memory with an IN list that fails past ~65k orders (join on date range, stream CSV); `GET /admin/shifts` = 4 queries per shift (store cash_deposits at close, skip closed shifts).
+- [ ] Checkout makes 4-7 round trips per cart line under locks - lock all products in one query, bulk update, batch insert items.
+- [ ] Pricing config loaded 3× per booking; roles + user reloaded on every request - small in-process caches invalidated on admin writes.
+- [ ] Frontend: every action refetches everything (~13 requests per sale) - per-resource queries (e.g. TanStack Query) with targeted invalidation; `request()` timeout/AbortController; grid cells read localStorage and recompute on every keystroke - memoise the slot matrix, `calculateLedger` once per render.
+- [ ] Audit rows store full order/product snapshots and are never pruned - store ids/totals, partition or archive by month.
+
+### Structure / debt
+- [ ] React type checking is off (no `@types/react`, no `strict`; `--strict` = ~3,500 errors) - add types, enable strictNullChecks then strict, file by file. Do this before splitting the big files.
+- [ ] Pricing/availability/drawer rules exist in Go and TypeScript - server returns the availability matrix (status, price, reason) and error codes instead of English text matched by ~130 regexes.
+- [ ] Two data modes (110 `USE_BACKEND` branches) - one DataSource interface, or drop browser-only mode for a Docker demo.
+- [ ] Split StaffPOS / AdminPanel / CustomerPanel (2-3.5k lines each) by tab.
+- [ ] Small: token in localStorage + no CSP; slip upload has no client-side type/size check or downscale; CSV formula guard misses leading tab/CR/whitespace; 7-9 px text; unused deps (`@google/genai`, `express`, `dotenv`, `motion`); cash refunds don't reduce the drawer (section 0).
