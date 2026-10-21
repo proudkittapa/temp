@@ -61,7 +61,7 @@ Each needs a yes/no from the owner before it is built.
 
 ## 3. Mobile-friendly UI
 - [x] Customer pages on phones: list view with big hour buttons under 640px (grid/list toggle, remembered), bottom booking bar, one-column steps, folded rewards, text ≥ 11-12px; checked at 375/390/430px with no sideways scrolling (2026-10-20).
-- [ ] Staff POS and Admin usable on a tablet (next round).
+- [x] Staff POS and Admin on a tablet: checked at iPad portrait 820×1180 and landscape 1180×820 - no sideways scrolling on any staff/admin tab; F&B cart now beside the products (sticky) from tablet width. Done 2026-10-21. Still worth a try on a real tablet (small text links such as แก้ไข/ลบ are small to tap).
 - [ ] Try the customer flow on real phones, inside the LINE app too.
 
 ## 4. Forgot password — reset with the phone number

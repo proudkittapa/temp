@@ -2301,10 +2301,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           </div>
         )}
         {activePosTab === 'fb' && tabAllowed('fb') && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          // Side by side from tablet width up, so the cart stays in view.
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
             
             {/* Products Selector Grid (Left-Side) */}
-            <div className="col-span-1 lg:col-span-7 space-y-4">
+            <div className="col-span-1 md:col-span-7 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-700 block">อาหาร เครื่องดื่ม และอุปกรณ์ (ขายขาด):</span>
                 <span className="text-[10px] text-slate-400 font-medium">กดเลือกอาหาร/เครื่องดื่มเพื่อเพิ่มลงในตะกร้า</span>
@@ -2317,7 +2318,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 </div>
               )}
 
-              <div id="products-pos-grid" className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div id="products-pos-grid" className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                 {products.filter(p => p.isActive && !p.isRental).map((prod) => (
                   <div 
                     key={prod.id} 
@@ -2343,7 +2344,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
             </div>
 
             {/* Billing Cart Receipt Workspace Sidebar */}
-            <div className="col-span-1 lg:col-span-5 bg-slate-900 text-white rounded-2xl p-5 flex flex-col justify-between border border-slate-800 shadow-md">
+            <div className="col-span-1 md:col-span-5 md:sticky md:top-4 md:self-start bg-slate-900 text-white rounded-2xl p-5 flex flex-col justify-between border border-slate-800 shadow-md">
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <span className="text-xs font-bold flex items-center gap-1"><ShoppingCart className="h-4 w-4 text-emerald-400" /> ตะกร้าใบเสร็จรับเงิน F&B</span>

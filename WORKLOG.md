@@ -18,6 +18,23 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Staff POS / Admin on a tablet
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `64aa6d5`)
+- **Changed:** F&B sale screen: products and cart side by side from
+  tablet width (md) instead of desktop (lg), cart sticky, products 2 per
+  row until lg - in portrait the cart used to sit below all products.
+  (`StaffPOS.tsx`)
+- **Verified:** tsc. Playwright at 820×1180 and 1180×820 (touch): page
+  width = viewport on staff (walk-in, POS) and every admin tab (pricing,
+  courts, products, users, reports, roles, audit) - no sideways scroll;
+  screenshots checked for walk-in, POS and pricing.
+- **Not done / follow-ups:** a real-tablet try; small text links
+  (แก้ไข/ลบ, ตั้งมัดจำ) could get bigger tap areas.
+
+---
+
 ## 2026-10-21 — Rental deposit
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
