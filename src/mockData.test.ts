@@ -14,8 +14,11 @@ import {
   memberTierLabel,
   localDateOf,
   bangkokStamp,
+  findClosure,
+  initializeState,
+  StorageService,
 } from './mockData';
-import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType } from './types';
+import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType, DayOff } from './types';
 
 function makeCourt(overrides: Partial<Court>): Court {
   return {
@@ -270,5 +273,83 @@ describe('localDateOf / bangkokStamp (Bangkok calendar, any browser time zone)',
   });
   it('stamps CSV times in Bangkok', () => {
     expect(bangkokStamp('2026-10-20T06:56:02Z')).toBe('2026-10-20 13:56:02');
+  });
+});
+
+// Closures follow the booking group rule (same as the server's
+// repository.ClosureFor): closing a full court closes its halves, closing a
+// half closes the full court but not the other half.
+describe('findClosure (court groups)', () => {
+  const otherFull = makeCourt({ id: 'bb-b-full', mutexGroupId: 'bball-court-2', shareOfGroup: 1 });
+  const courts = [fullCourt, halfB, halfC, otherFull, standalone];
+  const closure = (courtId: string, extra: Partial<DayOff> = {}): DayOff => ({ id: 'do-1', date: '2026-09-20', courtId, reason: 'ซ่อม', isFullDay: true, ...extra });
+  const blocks = (closedId: string, targetId: string) => !!findClosure([closure(closedId)], '2026-09-20', targetId, 10, courts);
+
+  it('closing the full court closes both halves', () => {
+    expect(blocks('b_full_a', 'b_full_a')).toBe(true);
+    expect(blocks('b_full_a', 'b_half_b')).toBe(true);
+    expect(blocks('b_full_a', 'b_half_c')).toBe(true);
+  });
+
+  it('closing one half closes the full court but not the other half', () => {
+    expect(blocks('b_half_b', 'b_half_b')).toBe(true);
+    expect(blocks('b_half_b', 'b_full_a')).toBe(true);
+    expect(blocks('b_half_b', 'b_half_c')).toBe(false);
+  });
+
+  it('never reaches another court group or an unrelated court', () => {
+    expect(blocks('b_full_a', 'bb-b-full')).toBe(false);
+    expect(blocks('bb-b-full', 'b_half_b')).toBe(false);
+    expect(blocks('b_full_a', 'bad-1')).toBe(false);
+  });
+
+  it('still applies the hour window and the all-courts closure', () => {
+    const partial = [closure('b_full_a', { isFullDay: false, startHour: 9, endHour: 12 })];
+    expect(findClosure(partial, '2026-09-20', 'b_half_c', 11, courts)).toBeDefined();
+    expect(findClosure(partial, '2026-09-20', 'b_half_c', 12, courts)).toBeUndefined();
+    expect(findClosure([closure('all')], '2026-09-20', 'bad-1', 10, courts)).toBeDefined();
+  });
+});
+
+// In-memory localStorage so initializeState can run under Node.
+function stubLocalStorage(seed: Record<string, string> = {}) {
+  const store = new Map(Object.entries(seed));
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, String(v)); },
+    removeItem: (k: string) => { store.delete(k); },
+    clear: () => store.clear(),
+  });
+}
+
+describe('basketball courts A, B, C (seed and upgrade)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const basketball = () => StorageService.get<Court[]>('courts', []).filter(c => c.type === CourtType.BASKETBALL);
+
+  it('a fresh start has three courts, each a full court plus two halves', () => {
+    stubLocalStorage();
+    initializeState();
+    const groups = new Map<string, Court[]>();
+    for (const c of basketball()) groups.set(c.mutexGroupId!, [...(groups.get(c.mutexGroupId!) || []), c]);
+    expect([...groups.keys()].sort()).toEqual(['bball-court-1', 'bball-court-2', 'bball-court-3']);
+    for (const rows of groups.values()) {
+      expect(rows.map(r => r.shareOfGroup).sort()).toEqual([0.5, 0.5, 1]);
+      expect(rows.filter(r => r.shareOfGroup < 1).every(r => r.offPeakOnly)).toBe(true);
+    }
+  });
+
+  it('upgrading keeps court A ids, renames its halves only if unchanged, and adds B and C', () => {
+    const oldCourts = [
+      makeCourt({ id: 'b_full_a', name: 'สนามบาสเกตบอล A (เต็มสนาม)', mutexGroupId: 'bball-court-1' }),
+      makeCourt({ id: 'b_half_b', name: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)', mutexGroupId: 'bball-court-1', shareOfGroup: 0.5 }),
+      makeCourt({ id: 'b_half_c', name: 'ฝั่งประตูหลัง', mutexGroupId: 'bball-court-1', shareOfGroup: 0.5 }), // renamed by the owner
+    ];
+    stubLocalStorage({ sports_complex_init: 'true', sports_complex_courts: JSON.stringify(oldCourts) });
+    initializeState();
+    const byId = new Map(basketball().map(c => [c.id, c]));
+    expect(byId.get('b_half_b')?.name).toBe('สนามบาสเกตบอล A (ครึ่งซ้าย)');
+    expect(byId.get('b_half_c')?.name).toBe('ฝั่งประตูหลัง');
+    expect(byId.size).toBe(9);
+    expect(byId.get('bb-c-right')?.mutexGroupId).toBe('bball-court-3');
   });
 });

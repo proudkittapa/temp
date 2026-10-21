@@ -331,10 +331,14 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		if err := tx.Where("date = ?", input.Date).Find(&closures).Error; err != nil {
 			return err
 		}
+		closedCourts, err := repository.ClosureCourts(tx, closures)
+		if err != nil {
+			return err
+		}
 		if input.WalkIn == nil || !input.WalkIn.OverrideClosure {
 			for _, p := range planned {
 				_, hour, _ := hourSlotEnd(p.startTime)
-				if closure := repository.ClosureFor(closures, p.court.ID, hour); closure != nil {
+				if closure := repository.ClosureFor(closures, p.court, closedCourts, hour); closure != nil {
 					return fmt.Errorf("%w: %s is closed at %s (%s)", ErrSlotUnavailable, p.court.Name, p.startTime, closure.Reason)
 				}
 			}
@@ -500,6 +504,10 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 	if err != nil {
 		return nil, err
 	}
+	closedCourts, err := repository.ClosureCourts(s.db.WithContext(ctx), closures)
+	if err != nil {
+		return nil, err
+	}
 	quoter, err := s.priceEngine.NewSlotQuoter(ctx, input.Date, memberType)
 	if err != nil {
 		return nil, err
@@ -532,7 +540,7 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 		if !court.IsActive {
 			return nil, fmt.Errorf("%w: %s is currently closed for booking", ErrSlotUnavailable, court.Name)
 		}
-		if closure := repository.ClosureFor(closures, court.ID, hour); closure != nil &&
+		if closure := repository.ClosureFor(closures, court, closedCourts, hour); closure != nil &&
 			(input.WalkIn == nil || !input.WalkIn.OverrideClosure) {
 			return nil, fmt.Errorf("%w: %s is closed at %s (%s)", ErrSlotUnavailable, court.Name, sl.StartTime, closure.Reason)
 		}

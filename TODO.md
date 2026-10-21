@@ -11,8 +11,8 @@ Cheap and blocking first, then what changes what customers/staff see
    details are an admin setting (Pricing tab), receipts use them and show who
    took the money and when. Left: running tax-invoice number and full tax
    invoice (section 5); the owner still has to type in the real details.
-3. **Basketball courts A, B, C, each full or half** - section 10. It changes
-   the court list and closures, so do it before real bookings exist.
+3. ~~**Basketball courts A, B, C, each full or half**~~ - done 2026-10-21
+   (section 10).
 4. **Safety checks** - section 7: database backstop against double booking,
    concurrency tests and automatic retry of "busy" errors.
 5. **One login, screens by permission, admin-defined roles** - section 9.
@@ -103,9 +103,9 @@ Today the app has separate sign-ins for the customer page, Staff POS (`#/staff`,
 - [ ] Session: one token per user; `api.ts` sessions per panel (`customer` / `staff` / `admin`) merge into one; audit log keeps who did what.
 
 ## 10. Basketball: courts A, B, C - each bookable full or by half, closable full or by half
-Today there is one basketball floor: "A (full)" plus halves "B (left)" and "C (right)" of that same floor. The owner clarified there are three courts.
-- [ ] Courts: A, B and C, each a booking group of three rows - full court, left half, right half (the existing `mutex_group_id` + `share_of_group` model already supports this: full blocks both halves, a half blocks the full court, the two halves don't block each other). Migration: keep `b_full_a` as A full, rename `b_half_b` / `b_half_c` to A left / A right (their bookings stay valid), add B and C (full + halves) in new groups. Same in the browser-only seed (`DEFAULT_COURTS` + `initializeState` migration).
-- [ ] Closures by group: closing a full court also closes its halves; closing one half closes that half and the full court, not the other half. Server `repository.ClosureFor` and every availability check, frontend `findClosure` (needs the court list), the closure form (choose court + full/left/right), and "affected bookings" when a closure is saved.
-- [ ] Grid: show basketball as A/B/C with full/half choices (9 rows today's way, or one row per court with a full/half toggle); half courts keep the half-court price and the off-peak-only rule unless the owner changes it.
-- [ ] Dashboard occupancy counts 3 basketball courts; update tests, `TESTING_CHECKLIST.md` and the README court section.
-- [ ] Admin: a rename button for courts (the server already accepts a new name; the screen has none). Note: courts are already configurable - the admin adds courts (and half courts tied to a full court) and opens/closes them; with rename, B and C could be set up from the screen, leaving only the group-aware closures as code work.
+Done 2026-10-21 (see WORKLOG.md).
+- [x] Courts A, B and C, each a mutex group of full court + left half + right half. A keeps its ids (`b_full_a`, `b_half_b` = A left, `b_half_c` = A right, renamed only if the old "B"/"C" names were unchanged, so existing bookings stay valid); B and C are new (`bb-b-*`, `bb-c-*`, groups `bball-court-2/3`). Same in the server seed and the browser-only seed + migration.
+- [x] Closures by group: closing a full court also closes its halves; closing one half closes that half and the full court, not the other half (server `repository.ClosureFor` + `ClosureCourts`, every booking path; frontend `findClosure`; "affected bookings" when a closure is saved). The closure form already lists every court, so choosing full/left/right means choosing that row.
+- [x] Grid shows 9 basketball rows (today's way); half courts keep the half-court price and off-peak-only rule. Dashboard occupancy already counts by court group, so it counts 3 basketball courts.
+- [x] Admin: "✏️ เปลี่ยนชื่อ" button per court (admin only); the server now refuses a rename to a name another court already has.
+- [ ] Optional later: one grid row per court with a full/left/right choice instead of 9 rows.

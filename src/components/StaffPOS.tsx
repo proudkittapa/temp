@@ -360,7 +360,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
     // Special DayOff override check
     const hourNum = parseInt(walkinSlot.split(':')[0], 10);
-    const blockedReason = findClosure(daysOff, walkinDate, walkinCourtId, hourNum)?.reason;
+    const blockedReason = findClosure(daysOff, walkinDate, walkinCourtId, hourNum, courts)?.reason;
 
     if (blockedReason) {
       if (!(await ask(`วันที่/ช่วงเวลานี้ถูกปิดบริการ ("${blockedReason}")\nต้องการจองเป็นกรณีพิเศษหรือไม่?`, { title: '⚠️ ช่วงเวลาปิดบริการ', okLabel: 'จองกรณีพิเศษ' }))) {
@@ -1885,7 +1885,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         const bItem = findConflictingBooking(court.id, walkinDate, time, bookings, courts);
 
                         // 2. Is there a closure/maintenance?
-                        const closureItem = findClosure(daysOff, walkinDate, court.id, hourNum);
+                        const closureItem = findClosure(daysOff, walkinDate, court.id, hourNum, courts);
 
                         // 3. Peak/Offpeak, read from the same PricingRule config
                         // the price itself uses.

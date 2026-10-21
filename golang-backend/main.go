@@ -385,11 +385,23 @@ func seedDefaults(db *gorm.DB) {
 	// DEFAULT_PRICING_RULES, so a booking priced through this backend gives
 	// the same number the frontend would show for the same slot - useful for
 	// actually exercising the API locally instead of just seeing it boot.
-	bballGroup := "bball-court-1"
+	// Basketball: three courts A, B and C, each bookable as the full court
+	// or as either half. Each court is one mutex group (full blocks both
+	// halves, a half blocks the full court, the two halves don't block each
+	// other). A keeps the original ids - b_half_b / b_half_c were its two
+	// halves all along (once misnamed "B"/"C") - so existing bookings stay
+	// valid; B and C are new groups.
+	bballA, bballB, bballC := "bball-court-1", "bball-court-2", "bball-court-3"
 	courts := []model.Court{
-		{ID: "b_full_a", Name: "สนามบาสเกตบอล A (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 1, IsActive: true},
-		{ID: "b_half_b", Name: "สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
-		{ID: "b_half_c", Name: "สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)", Type: model.CourtBasketball, MutexGroupID: &bballGroup, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "b_full_a", Name: "สนามบาสเกตบอล A (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballA, ShareOfGroup: 1, IsActive: true},
+		{ID: "b_half_b", Name: "สนามบาสเกตบอล A (ครึ่งซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballA, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "b_half_c", Name: "สนามบาสเกตบอล A (ครึ่งขวา)", Type: model.CourtBasketball, MutexGroupID: &bballA, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "bb-b-full", Name: "สนามบาสเกตบอล B (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballB, ShareOfGroup: 1, IsActive: true},
+		{ID: "bb-b-left", Name: "สนามบาสเกตบอล B (ครึ่งซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballB, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "bb-b-right", Name: "สนามบาสเกตบอล B (ครึ่งขวา)", Type: model.CourtBasketball, MutexGroupID: &bballB, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "bb-c-full", Name: "สนามบาสเกตบอล C (เต็มสนาม)", Type: model.CourtBasketball, MutexGroupID: &bballC, ShareOfGroup: 1, IsActive: true},
+		{ID: "bb-c-left", Name: "สนามบาสเกตบอล C (ครึ่งซ้าย)", Type: model.CourtBasketball, MutexGroupID: &bballC, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
+		{ID: "bb-c-right", Name: "สนามบาสเกตบอล C (ครึ่งขวา)", Type: model.CourtBasketball, MutexGroupID: &bballC, ShareOfGroup: 0.5, OffPeakOnly: true, IsActive: true},
 		{ID: "meet-1", Name: "ห้องประชุมเอนกประสงค์ 1", Type: model.CourtMeetingRoom, ShareOfGroup: 1, IsActive: true},
 	}
 	for i := 1; i <= 12; i++ {
@@ -401,21 +413,22 @@ func seedDefaults(db *gorm.DB) {
 	for _, c := range courts {
 		check("court "+c.ID, db.Where(model.Court{ID: c.ID}).FirstOrCreate(&c).Error)
 	}
-	// Databases seeded by an earlier version got English names for these
-	// four courts. Rename them only if they still have that exact seeded
-	// name, so a name someone changed on purpose is left alone.
-	oldSeedNames := map[string]string{
-		"b_full_a": "Basketball Court A (Full)",
-		"b_half_b": "Basketball Court B (Half: Left)",
-		"b_half_c": "Basketball Court C (Half: Right)",
-		"bad-1":    "Badminton Court 1",
-		"bad-2":    "Badminton Court 2",
-		"pick-1":   "Pickleball Court 1",
-		"meet-1":   "Meeting Room 1",
+	// Databases seeded by an earlier version got older names for these
+	// courts (English, then "B"/"C" for what are court A's halves). Rename
+	// them only if they still have an exact earlier seeded name, so a name
+	// someone changed on purpose is left alone.
+	oldSeedNames := map[string][]string{
+		"b_full_a": {"Basketball Court A (Full)"},
+		"b_half_b": {"Basketball Court B (Half: Left)", "สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)"},
+		"b_half_c": {"Basketball Court C (Half: Right)", "สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)"},
+		"bad-1":    {"Badminton Court 1"},
+		"bad-2":    {"Badminton Court 2"},
+		"pick-1":   {"Pickleball Court 1"},
+		"meet-1":   {"Meeting Room 1"},
 	}
 	for _, c := range courts {
 		if old, ok := oldSeedNames[c.ID]; ok {
-			check("court name "+c.ID, db.Model(&model.Court{}).Where("id = ? AND name = ?", c.ID, old).Update("name", c.Name).Error)
+			check("court name "+c.ID, db.Model(&model.Court{}).Where("id = ? AND name IN ?", c.ID, old).Update("name", c.Name).Error)
 		}
 	}
 

@@ -567,6 +567,33 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
     notify(`เพิ่มสนามกีฬา "${newC.name}" เข้าสู่คอมเพล็กซ์สำเร็จเรียบร้อยค่ะ!`);
   };
 
+  // Rename a court (e.g. to match the signs on site). The id - which
+  // bookings point at - never changes, so existing bookings keep working.
+  const handleRenameCourt = async (id: string) => {
+    const court = courts.find(c => c.id === id);
+    if (!court) return;
+    const name = (await askText(`ชื่อใหม่ของ "${court.name}"`, { title: 'เปลี่ยนชื่อสนาม', defaultValue: court.name, required: true, okLabel: 'บันทึกชื่อ' }))?.trim();
+    if (!name || name === court.name) return;
+    if (courts.some(c => c.id !== id && c.name.trim().toLowerCase() === name.toLowerCase())) {
+      notify(`มีสนามชื่อ "${name}" อยู่แล้ว กรุณาใช้ชื่ออื่น`);
+      return;
+    }
+    if (api.USE_BACKEND) {
+      return api.updateCourt(id, { name })
+        .then(r => {
+          onAddAuditLog('COURT_RENAMED', 'Court', id, { name: court.name }, { name: r.court.name });
+          onRefreshAll();
+          notify(`เปลี่ยนชื่อเป็น "${r.court.name}" แล้ว`);
+        })
+        .catch(err => notify(`เปลี่ยนชื่อไม่สำเร็จ: ${err.message}`));
+    }
+    const updated = StorageService.get<Court[]>('courts', []).map(c => c.id === id ? { ...c, name } : c);
+    StorageService.set('courts', updated);
+    setCourts(updated);
+    onAddAuditLog('COURT_RENAMED', 'Court', id, { name: court.name }, { name });
+    onRefreshAll();
+  };
+
   // Open/close a court for new bookings. Courts are never deleted: old
   // bookings and reports point at them.
   const handleToggleCourtActive = async (id: string) => {
@@ -1764,7 +1791,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                           });
 
                           // 2. Check for closure/maintenance
-                          const closureItem = findClosure(api.USE_BACKEND ? dashClosures : daysOff, dashboardSelectedDate, court.id, targetH);
+                          const closureItem = findClosure(api.USE_BACKEND ? dashClosures : daysOff, dashboardSelectedDate, court.id, targetH, courts);
 
                           // 3. Peak/Offpeak, read from the same PricingRule
                           // config the price itself uses.
@@ -2353,7 +2380,18 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                         {courts.map((court) => (
                           <tr key={court.id} className="hover:bg-slate-50 transition">
                             <td className="px-4 py-3 font-mono text-[10px] text-slate-400">{court.id}</td>
-                            <td className="px-4 py-3 font-bold text-slate-800">{court.name}</td>
+                            <td className="px-4 py-3 font-bold text-slate-800">
+                              <span>{court.name}</span>
+                              <button
+                                type="button"
+                                disabled={!canManageCourts || busy}
+                                title={canManageCourts ? 'เปลี่ยนชื่อสนาม' : 'เฉพาะ Admin'}
+                                onClick={guarded(() => handleRenameCourt(court.id))}
+                                className="ml-2 text-[10px] font-bold text-sky-700 hover:text-sky-900 disabled:text-slate-300"
+                              >
+                                ✏️ เปลี่ยนชื่อ
+                              </button>
+                            </td>
                             <td className="px-4 py-3 font-medium text-slate-600">{court.type}</td>
                             <td className="px-4 py-3">
                               {court.shareOfGroup < 1 ? (

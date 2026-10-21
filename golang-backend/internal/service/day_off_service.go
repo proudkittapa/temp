@@ -93,14 +93,24 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(?, hashtext(?))", closureLockClass, in.Date).Error; err != nil {
 			return err
 		}
+		// The courts this closure covers: the named court plus the ones that
+		// conflict with it (model.CourtsConflict), for "affected bookings".
+		var coveredCourtIDs []string
 		if in.CourtID != nil {
-			var n int64
-			if err := tx.Model(&model.Court{}).Where("id = ?", *in.CourtID).Count(&n).Error; err != nil {
+			var closed model.Court
+			if err := tx.First(&closed, "id = ?", *in.CourtID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("%w: court %q does not exist", ErrInvalidBooking, *in.CourtID)
+				}
 				return err
 			}
-			if n == 0 {
-				return fmt.Errorf("%w: court %q does not exist", ErrInvalidBooking, *in.CourtID)
+			group := []model.Court{closed}
+			if closed.MutexGroupID != nil {
+				if err := tx.Where("mutex_group_id = ?", *closed.MutexGroupID).Find(&group).Error; err != nil {
+					return err
+				}
 			}
+			coveredCourtIDs = model.ConflictingCourtIDs(closed, group)
 		}
 		now := s.now()
 		d := model.DayOff{
@@ -120,7 +130,7 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 
 		q := tx.Where("date = ? AND status != ?", in.Date, model.BookingCancelled)
 		if in.CourtID != nil {
-			q = q.Where("court_id = ?", *in.CourtID)
+			q = q.Where("court_id IN ?", coveredCourtIDs)
 		}
 		if !in.IsFullDay {
 			q = q.Where("start_time < ? AND end_time > ?", fmt.Sprintf("%02d:00", *in.EndHour), fmt.Sprintf("%02d:00", *in.StartHour))

@@ -145,6 +145,15 @@ func (s *CourtAdminService) Update(ctx context.Context, id string, in CourtInput
 			if err != nil {
 				return err
 			}
+			// Same rule as Create: two courts with one name would be
+			// indistinguishable in the grid, closures and reports.
+			var same int64
+			if err := tx.Model(&model.Court{}).Where("id <> ? AND LOWER(name) = LOWER(?)", c.ID, name).Count(&same).Error; err != nil {
+				return err
+			}
+			if same > 0 {
+				return fmt.Errorf("%w: a court named %q already exists", ErrInvalidState, name)
+			}
 			c.Name = name
 		}
 		if in.IsActive != nil {

@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Basketball courts A, B, C; closures by court group; court rename
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
+- **Commit(s):** this commit (on `main`, parent `5a10aee`)
+- **Changed:** TODO step 3 / section 10 (step 1, owner decisions, skipped at the owner's request).
+  - Courts: basketball is now three courts A, B, C, each a mutex group of
+    full + left half + right half. A keeps its ids (`b_half_b`/`b_half_c`
+    were always A's halves, once misnamed "B"/"C"), so existing bookings
+    stay valid; B and C are new (`bb-b-*`, `bb-c-*`, groups
+    `bball-court-2/3`). Server seed (`main.go`) renames A's halves only if
+    they still have an old seeded name; browser-only seed + migration
+    (`mockData.ts` `BASKETBALL_COURTS`, `initializeState`) does the same.
+  - Closures follow the booking group rule: closing a full court closes its
+    halves, closing a half closes that half and the full court but not the
+    other half. New `model.CourtsConflict`; `repository.ClosureFor` now takes
+    the target court and the closed courts (`repository.ClosureCourts`) and
+    is used that way in all three booking paths (`booking_service.go`
+    planSlots + in-transaction re-check, `booking_admin.go` late payment).
+    `DayOffService.Create` lists affected bookings on every court the
+    closure covers. Frontend `findClosure` takes the court list (all six
+    call sites updated); fixed a doc comment that sat on the wrong function.
+  - Admin: "✏️ เปลี่ยนชื่อ" per court (admin only, both modes); the server's
+    court update now refuses a name another court already has.
+  - Docs: REQUIREMENTS.md FR-1.1/1.2/1.3 and AC-1 describe three courts and
+    group closures; TESTING_CHECKLIST.md 3.2-3.4, 5.8-5.11, 6f.1; TODO.md.
+- **Verified:** `go vet` + `go test ./...` pass (new `TestClosureForCourtGroups`,
+  9 cases); `npx tsc --noEmit`; `npx vitest run` 46/46 (new tests for
+  `findClosure` groups, fresh seed and the upgrade path). Against Postgres:
+  restart on an existing DB renamed A's halves and added B and C; closing
+  A-left blocked A-left and A-full but not A-right or court B; closing B
+  09-12 blocked all three B rows in the window only and listed B's booking
+  as affected; closing A-full listed an A-right booking as affected; rename
+  to a duplicate name 409, manager 403. Browser (API and local mode): 9
+  basketball rows with the right closed hours, rename works.
+- **Not done / follow-ups:** grid is still 9 rows (optional: one row per
+  court with a full/left/right choice). Courts list in the customer/staff
+  screens is active courts only, so a closure on a deactivated full court
+  isn't seen client-side (the server still enforces it).
+
 ## 2026-10-21 — Receipts: business details setting, real cashier and paid time
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

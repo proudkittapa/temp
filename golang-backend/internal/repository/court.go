@@ -41,13 +41,20 @@ func (r *CourtRepository) ListDayOffs(ctx context.Context, date string) ([]model
 	return closures, nil
 }
 
-// ClosureFor returns the closure (if any) that blocks courtID at hour
-// (FR-1.3): a closure with CourtID = nil applies to every court, and a
-// non-full-day closure only blocks the [StartHour, EndHour) window.
-func ClosureFor(closures []model.DayOff, courtID string, hour int) *model.DayOff {
+// ClosureFor returns the closure (if any) that blocks `target` at hour
+// (FR-1.3): a closure with CourtID = nil applies to every court; one naming
+// a court also covers the courts that conflict with it (model.CourtsConflict
+// - closing a full court closes its halves, closing a half closes the full
+// court but not the other half). closedCourts must hold the courts the
+// closures name (see ClosureCourts). A non-full-day closure only blocks the
+// [StartHour, EndHour) window.
+func ClosureFor(closures []model.DayOff, target model.Court, closedCourts map[string]model.Court, hour int) *model.DayOff {
 	for i, do := range closures {
-		if do.CourtID != nil && *do.CourtID != courtID {
-			continue
+		if do.CourtID != nil && *do.CourtID != target.ID {
+			closed, ok := closedCourts[*do.CourtID]
+			if !ok || !model.CourtsConflict(closed, target) {
+				continue
+			}
 		}
 		if do.IsFullDay || do.StartHour == nil || do.EndHour == nil {
 			return &closures[i]
@@ -57,6 +64,29 @@ func ClosureFor(closures []model.DayOff, courtID string, hour int) *model.DayOff
 		}
 	}
 	return nil
+}
+
+// ClosureCourts loads the courts the given closures name, keyed by id, for
+// ClosureFor. db may be a transaction.
+func ClosureCourts(db *gorm.DB, closures []model.DayOff) (map[string]model.Court, error) {
+	ids := []string{}
+	for _, d := range closures {
+		if d.CourtID != nil {
+			ids = append(ids, *d.CourtID)
+		}
+	}
+	out := map[string]model.Court{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var list []model.Court
+	if err := db.Where("id IN ?", ids).Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("failed to load closed courts: %w", err)
+	}
+	for _, c := range list {
+		out[c.ID] = c
+	}
+	return out, nil
 }
 
 // FetchByIDs loads the given courts (any state), keyed by id.

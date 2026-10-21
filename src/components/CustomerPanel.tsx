@@ -620,7 +620,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
       // Check Special DayOff block
       const hourNum = parseInt(startTime.split(':')[0], 10);
-      const blockedItem = findClosure(daysOff, selectedDate, courtId, hourNum);
+      const blockedItem = findClosure(daysOff, selectedDate, courtId, hourNum, courts);
 
       if (blockedItem) {
         notify(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
@@ -812,7 +812,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         setActiveStep(1);
         return;
       }
-      if (findClosure(freshClosures, selectedDate, sl.courtId, parseInt(sl.startTime, 10))) {
+      if (findClosure(freshClosures, selectedDate, sl.courtId, parseInt(sl.startTime, 10), courts)) {
         notify(`${cName} ปิดบริการในช่วง ${sl.startTime}`);
         setActiveStep(1);
         return;
@@ -988,7 +988,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     if (matchedBooking) {
       return { kind: 'booked', pending: matchedBooking.status === BookingStatus.PENDING_PAYMENT, mine: !!loggedInUser && matchedBooking.userId === loggedInUser.id };
     }
-    const closure = findClosure(daysOff, selectedDate, court.id, hourNum);
+    const closure = findClosure(daysOff, selectedDate, court.id, hourNum, courts);
     if (closure) return { kind: 'closed', reason: closure.reason };
     // Online, an hour can only be booked before it starts (the server
     // refuses it after - the counter can still sell it).

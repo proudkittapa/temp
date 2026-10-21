@@ -131,6 +131,10 @@ func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.
 	if err := tx.Where("date = ?", date).Find(&closures).Error; err != nil {
 		return err
 	}
+	closedCourts, err := repository.ClosureCourts(tx, closures)
+	if err != nil {
+		return err
+	}
 	// Take court-group locks in the same order CreateBookings does
 	// (repository.LockKey), so the two can't deadlock.
 	sort.Slice(rows, func(i, j int) bool {
@@ -163,7 +167,7 @@ func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.
 		if err := s.checkNotPast(date, []SlotRequest{{CourtID: b.CourtID, StartTime: b.StartTime}}, true); err != nil {
 			return fmt.Errorf("%w (%s %s is over)", ErrLatePaymentSlotGone, court.Name, b.StartTime)
 		}
-		if closure := repository.ClosureFor(closures, court.ID, hour); closure != nil {
+		if closure := repository.ClosureFor(closures, court, closedCourts, hour); closure != nil {
 			return fmt.Errorf("%w (%s is closed at %s)", ErrLatePaymentSlotGone, court.Name, b.StartTime)
 		}
 		if err := s.bkRepo.CheckOverlapTx(tx, court, locked[key], date, b.StartTime, b.EndTime); err != nil {

@@ -102,16 +102,18 @@ The **Sports Complex Management System** is a mission-critical management platfo
 ### FR-1: Facility & Court Scheduling Management
 - **FR-1.1 Sports Categories**: The system shall support at least 4 distinct court types:
   1. `BADMINTON`: Standard indoor wooden/rubber courts.
-  2. `BASKETBALL`: Full Court A, Half Court B, and Half Court C.
+  2. `BASKETBALL`: three courts **A, B and C**, each bookable as the full court or as its left or right half (clarified by the owner, 2026-10-21).
   3. `PICKLEBALL`: Specialized indoor/outdoor pickleball courts.
   4. `MEETING_ROOM`: Air-conditioned conference and event space.
-- **FR-1.2 Basketball Half-Court Mutual Exclusion**:
-  - Reserving Full Court A shall automatically block Half Courts B and C for that slot.
-  - Reserving Half Court B or C shall automatically block Full Court A for that slot.
+- **FR-1.2 Basketball Half-Court Mutual Exclusion** (applies to each of courts A, B and C separately):
+  - Reserving a full court shall automatically block both of its halves for that slot.
+  - Reserving either half shall automatically block that full court for that slot; the two halves of one court can be booked at the same time.
+  - Bookings on one basketball court never block another basketball court.
   - Half-court reservations shall only be bookable during **Off-Peak hours** to maximize peak court utilization.
 - **FR-1.3 Maintenance & Day-Off Engine (`DayOff`)**:
   - Managers and administrators shall have the capability to schedule temporary closures for a specific court or across all courts.
   - The closure can be configured as **Full Day** or restricted to a **Specific Time Window** (e.g., 08:00 to 12:00).
+  - A closure follows the same rule as FR-1.2: closing a full basketball court also closes both its halves; closing one half also closes that full court, but not the other half.
   - Customers attempting to book a blocked slot shall receive an immediate advisory dialog citing the closure reason.
   - All blocked slots must be visually color-coded as unavailable in the customer and staff calendars.
 
@@ -299,7 +301,7 @@ function isSlotBlockedByDayOff(courtId: string, date: string, hourNumber: number
 
 ## 8. Acceptance Criteria & Verification Checklist
 
-- [x] **AC-1**: Basketball Full Court booking blocks Half Courts B and C; Half Court B/C booking blocks Full Court A.
+- [x] **AC-1**: On each basketball court (A, B, C), a full-court booking blocks both halves and a half-court booking blocks the full court; the two halves don't block each other, and closures follow the same rule.
 - [x] **AC-2**: Basketball Half Courts are restricted to Off-Peak hours only.
 - [x] **AC-3**: Special Day-Off closures support whole-day and specified hour-range blocks, preventing conflicts.
 - [x] **AC-4**: PromptPay QR generator produces valid payloads with verified EMVCo CRC-16 checksums.

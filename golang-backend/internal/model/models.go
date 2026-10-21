@@ -177,6 +177,22 @@ func ConflictingCourtIDs(target Court, groupCourts []Court) []string {
 	return ids
 }
 
+// CourtsConflict reports whether a and b can't be used at the same time:
+// the same court, or two courts of one mutex group where at least one is
+// the hub (full court). Two halves of one court don't conflict. Used for
+// bookings (via ConflictingCourtIDs) and closures alike, so closing a full
+// court closes its halves and closing one half closes the full court but
+// not the other half.
+func CourtsConflict(a, b Court) bool {
+	if a.ID == b.ID {
+		return true
+	}
+	if a.MutexGroupID == nil || b.MutexGroupID == nil || *a.MutexGroupID != *b.MutexGroupID {
+		return false
+	}
+	return a.IsHub() || b.IsHub()
+}
+
 // 3. Dynamic Rule Charges
 type PricingRule struct {
 	ID           string    `json:"id" db:"id" gorm:"primaryKey;column:id"`

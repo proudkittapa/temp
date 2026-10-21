@@ -28,14 +28,45 @@ import {
 } from './types';
 
 // Default initial seeds
+const basketballCourt = (id: string, letter: string, part: 'full' | 'left' | 'right', group: string): Court => ({
+  id,
+  name: `สนามบาสเกตบอล ${letter} (${part === 'full' ? 'เต็มสนาม' : part === 'left' ? 'ครึ่งซ้าย' : 'ครึ่งขวา'})`,
+  type: CourtType.BASKETBALL,
+  mutexGroupId: group,
+  shareOfGroup: part === 'full' ? 1 : 0.5,
+  ...(part === 'full' ? {} : { offPeakOnly: true }),
+  isActive: true,
+  createdAt: '2026-01-01T00:00:00.000Z'
+});
+
+const BASKETBALL_COURTS: Court[] = [
+  basketballCourt('b_full_a', 'A', 'full', 'bball-court-1'),
+  basketballCourt('b_half_b', 'A', 'left', 'bball-court-1'),
+  basketballCourt('b_half_c', 'A', 'right', 'bball-court-1'),
+  basketballCourt('bb-b-full', 'B', 'full', 'bball-court-2'),
+  basketballCourt('bb-b-left', 'B', 'left', 'bball-court-2'),
+  basketballCourt('bb-b-right', 'B', 'right', 'bball-court-2'),
+  basketballCourt('bb-c-full', 'C', 'full', 'bball-court-3'),
+  basketballCourt('bb-c-left', 'C', 'left', 'bball-court-3'),
+  basketballCourt('bb-c-right', 'C', 'right', 'bball-court-3')
+];
+
+// Names earlier versions seeded for court A's halves, renamed on upgrade only
+// if still unchanged (see initializeState).
+const OLD_BASKETBALL_NAMES: Record<string, string> = {
+  b_half_b: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)',
+  b_half_c: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)'
+};
+
 const DEFAULT_COURTS: Court[] = [
-  // Basketball: one physical court exposed as a full-court booking option plus
-  // two half-court sides. They share `mutexGroupId` so availability/conflict
-  // checks are generic (see isCourtSlotAvailable) instead of hardcoding these
-  // three IDs. Half-court sides are off-peak only per FR-1.2.
-  { id: 'b_full_a', name: 'สนามบาสเกตบอล A (เต็มสนาม)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 1, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'b_half_b', name: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'b_half_c', name: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
+  // Basketball: three courts A, B and C, each bookable as the full court or
+  // as either half. Each court is one mutex group, so availability/conflict
+  // checks stay generic (see isCourtSlotAvailable): the full court blocks
+  // both halves, a half blocks the full court, the two halves don't block
+  // each other. A keeps the original ids (b_half_b / b_half_c were always
+  // its halves, once misnamed "B"/"C"). Half courts are off-peak only per
+  // FR-1.2. Same ids and names as the Go backend's seed.
+  ...BASKETBALL_COURTS,
   // Badminton (12 courts)
   ...Array.from({ length: 12 }, (_, i) => ({
     id: `bad-${i + 1}`,
@@ -571,18 +602,30 @@ export function memberTierLabel(memberType: MemberType | undefined): string {
   return `${tier.name} (ส่วนลด ${tier.isActive ? tier.discountPercent : 0}%)`;
 }
 
+// The closure covering `courtId` at `hour` on `date`, if any: an all-courts
+// closure, or one on this court or a court that conflicts with it
+// (courtsConflict - closing a full court closes its halves, closing a half
+// closes the full court but not the other half), for the full day or that
+// hour range. `courts` must include the closed courts; without them only
+// all-courts and same-court closures can match. The same rule as the
+// server's repository.ClosureFor; every screen uses this one.
+export function findClosure(daysOff: DayOff[], date: string, courtId: string, hour: number, courts: Court[] = []): DayOff | undefined {
+  const target = courts.find(c => c.id === courtId);
+  return daysOff.find(d => {
+    if (d.date !== date) return false;
+    if (d.courtId !== 'all' && d.courtId !== courtId) {
+      const closed = courts.find(c => c.id === d.courtId);
+      if (!target || !closed || !courtsConflict(closed, target)) return false;
+    }
+    return d.isFullDay || d.isFullDay === undefined ||
+      (d.startHour !== undefined && d.endHour !== undefined && hour >= d.startHour && hour < d.endHour);
+  });
+}
+
 // Every booking row of root's group: one checkout's hours share its code,
 // owner and date and are paid by one payment (attached to the first row).
 // Same rule as the backend's bookingGroup, which also matches owner and date
 // so a code collision can never pull in someone else's booking.
-// The closure covering `courtId` at `hour` on `date`, if any: an
-// all-courts or this-court closure, full day or that hour range. The same
-// rule as the server's repository.ClosureFor; every screen uses this one.
-export function findClosure(daysOff: DayOff[], date: string, courtId: string, hour: number): DayOff | undefined {
-  return daysOff.find(d => d.date === date && (d.courtId === 'all' || d.courtId === courtId) &&
-    (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hour >= d.startHour && hour < d.endHour)));
-}
-
 export function bookingGroupOf(root: Booking, bookings: Booking[]): Booking[] {
   return bookings.filter(b => b.bookingCode === root.bookingCode && b.userId === root.userId && b.date === root.date);
 }
@@ -743,8 +786,18 @@ export function initializeState() {
     const courts = StorageService.get<Court[]>('courts', []);
     if (!courts.some(c => c.mutexGroupId === 'bball-court-1')) {
       const filtered = courts.filter(c => c.type !== CourtType.BASKETBALL);
-      filtered.push(...DEFAULT_COURTS.filter(c => c.type === CourtType.BASKETBALL));
+      filtered.push(...BASKETBALL_COURTS);
       StorageService.set('courts', filtered.map(c => ({ ...c, shareOfGroup: c.shareOfGroup ?? 1 })));
+    } else if (!courts.some(c => c.mutexGroupId === 'bball-court-2')) {
+      // Basketball became three courts (A, B, C): rename A's halves if their
+      // old "B"/"C" names are unchanged, and add courts B and C.
+      const migrated = courts.map(c => {
+        const seeded = BASKETBALL_COURTS.find(b => b.id === c.id);
+        return seeded && OLD_BASKETBALL_NAMES[c.id] === c.name ? { ...c, name: seeded.name } : c;
+      });
+      const have = new Set(migrated.map(c => c.id));
+      migrated.push(...BASKETBALL_COURTS.filter(b => !have.has(b.id)));
+      StorageService.set('courts', migrated);
     }
     // Migration check for member_discounts
     if (!localStorage.getItem('sports_complex_member_discounts')) {
