@@ -587,3 +587,18 @@ type LoginFailure struct {
 	Key string    `json:"-" gorm:"column:key;index:idx_login_failures_key_at,priority:1"`
 	At  time.Time `json:"-" gorm:"column:at;index:idx_login_failures_key_at,priority:2;index"`
 }
+
+// 16. A write request the app may send again (a retry after a lost
+// response): the first attempt's response is kept, keyed by the client's
+// Idempotency-Key header, so a repeat is answered from here instead of
+// selling, booking or refunding twice. Scope ties the key to one session
+// and endpoint. Completed=false while the first attempt is still running.
+// Rows older than a day are pruned.
+type IdempotencyKey struct {
+	Key        string    `gorm:"primaryKey;column:key;type:varchar(80)"`
+	Scope      string    `gorm:"column:scope;type:varchar(64)"`
+	Completed  bool      `gorm:"column:completed;not null;default:false"`
+	StatusCode int       `gorm:"column:status_code;not null;default:0"`
+	Response   []byte    `gorm:"column:response"`
+	CreatedAt  time.Time `gorm:"column:created_at;index"`
+}

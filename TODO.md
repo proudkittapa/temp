@@ -150,7 +150,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
   - `orders (created_at) WHERE status = 'PREPARING'` (open rentals), `audit_logs (target_type, created_at DESC)`, `users (role, created_at DESC)`, `day_offs (date)`, `shifts (opened_at) WHERE closed_at IS NULL`.
   - Member search / audit search: `pg_trgm` GIN on `lower(users.name)`, `lower(audit_logs.user_name)`, `lower(audit_logs.target_id)`; `users.phone text_pattern_ops` for the prefix match.
 - [ ] **Phone lookups use a regex over every user row** (`repository/user.go` canonicalPhoneSQL: login, register, walk-in, checkout): normalise all stored phones once (merge duplicates), then compare `phone = ?`; split login's email-OR-phone into two indexed queries.
-- [ ] **Retry protection (idempotency):** the checkout key is new on every attempt (`api.ts` checkout, StaffPOS) so it protects nothing - keep one key per cart until success. Add the same key to partial refunds, reward redeem, manual points/stock adjust, walk-in and online booking create (replay on unique violation).
+- [x] Retry protection: every app write (not sign-in or slip upload) sends an `Idempotency-Key` reused while the same action is retried; the server (`handler/idempotency.go`, table `idempotency_keys`, pruned after 24 h) replays the first success, answers 409 while it is still running, releases the key on failure. Done 2026-10-21.
 - [ ] **Live refresh:** slip queue, the selected date's bookings and the customer's payment screen poll every 10-15 s while the page is visible and refetch on focus (today nothing updates until a click). Payment screen should follow the server status (expired / approved).
 - [x] Walk-in grid while loading another date: now shows "กำลังโหลด…", greyed and not clickable, and booking is refused until that date's data is in (it used to show every slot free). Done 2026-10-21.
 - [ ] **Customers download the staff/admin app** (one 436 KB gzip bundle, ~70% xlsx + recharts): lazy-load StaffPOS/AdminPanel, `await import('xlsx')` in the Excel handlers, charts in a lazy component.
@@ -164,7 +164,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] Cash-drawer attribution uses each server's clock (`ReturnRentalItem` now takes its time after the drawer lock - fixed 2026-10-21): stamp `shift_id` on payments/orders/deposit settlements under the drawer lock and compute expected cash by shift.
 
 ### Correctness
-- [ ] Booking cancel-with-refund takes back only the points left (clamped at 0) - rewards bought with them are kept; reuse VoidOrder's voucher clawback.
+- [x] Booking cancel / no-show now cancel unused rewards bought with those points (shared `coverPointsWithRewards` with VoidOrder); a reward already handed over is reported (`points_short`), the cancel still goes ahead. Done 2026-10-21. (Browser-only mode doesn't do the clawback.)
 - [x] Lock order: rental return now locks order → item → drawer → stock, void locks its items and restocks in checkout's sorted order. Done 2026-10-21. (MarkPaidInCash drawer-before-closure vs CreateBookings closure-before-drawer is still open; both shared locks, only matters with a queued close + day-off.)
 - [x] `CancelBookings` (and the expiry job's counter) reset per retry attempt. Done 2026-10-21.
 - [ ] `SaveSlip` on an EXPIRED payment doesn't take the user lock, so the unpaid cap can be exceeded; expiry job can starve behind 500 un-expirable rows (keyset paging).

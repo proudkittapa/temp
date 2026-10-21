@@ -98,6 +98,16 @@ export class ApiError extends Error {
   }
 }
 
+// Retry safety: every write (not sign-in, not file uploads) carries an
+// Idempotency-Key. The same action sent again - same endpoint, same body,
+// e.g. staff pressing "confirm" again after a dropped connection - reuses
+// its key, so the server answers from the first attempt instead of selling,
+// booking or refunding twice. The key is dropped once the action succeeds,
+// so an identical action later is a new one.
+const pendingWrites = new Map<string, { body: string; key: string }>();
+const newIdempotencyKey = () => typeof crypto !== 'undefined' && crypto.randomUUID
+  ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+
 async function request<T>(
   path: string,
   opts: { method?: string; body?: unknown; form?: FormData; session?: SessionKind } = {}
@@ -112,10 +122,21 @@ async function request<T>(
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(opts.body);
   }
+  const method = opts.method || 'GET';
+  const writeScope = method !== 'GET' && !opts.form && !path.startsWith('/auth') ? `${method} ${path}` : '';
+  if (writeScope) {
+    const sent = typeof body === 'string' ? body : '';
+    let pending = pendingWrites.get(writeScope);
+    if (!pending || pending.body !== sent) {
+      pending = { body: sent, key: newIdempotencyKey() };
+      pendingWrites.set(writeScope, pending);
+    }
+    headers['Idempotency-Key'] = pending.key;
+  }
 
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}${path}`, { method: opts.method || 'GET', headers, body });
+    res = await fetch(`${API_BASE_URL}${path}`, { method, headers, body });
   } catch {
     throw new ApiError(import.meta.env.DEV
       ? 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (is the Go backend running on :8080?)'
@@ -131,6 +152,7 @@ async function request<T>(
     // No JSON at all (e.g. a proxy's HTML error page on a 200).
     throw new ApiError(json?.error || (json ? `Request failed (${res.status})` : 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง กรุณาลองใหม่'), res.status);
   }
+  if (writeScope && pendingWrites.get(writeScope)?.key === headers['Idempotency-Key']) pendingWrites.delete(writeScope);
   return json.data as T;
 }
 
@@ -660,6 +682,8 @@ interface CancelResult {
   cancelled: number;
   refundAmount: number;
   pointsReversed: number;
+  cancelledVouchers: string[]; // rewards cancelled because their points came from these hours
+  pointsShort: number; // points spent on a reward already handed over (not taken back)
   paymentStatus: PaymentStatus;
   remainingActive: number;
 }
@@ -667,13 +691,15 @@ interface CancelResult {
 // Manager/admin. bookingId is any hour of the group; bookingIds limits the
 // cancellation to those hours. refund records the paid hours as refunded.
 export async function cancelBooking(bookingId: string, reason: string, refund: boolean, bookingIds?: string[], session: SessionKind = 'staff'): Promise<CancelResult> {
-  const r = await request<{ booking_code: string; cancelled: number; refund_amount: number; points_reversed: number; payment_status: string; remaining_active: number }>(
+  const r = await request<{ booking_code: string; cancelled: number; refund_amount: number; points_reversed: number; payment_status: string; remaining_active: number;
+    cancelled_vouchers?: string[]; points_short?: number }>(
     `/admin/bookings/${encodeURIComponent(bookingId)}/cancel`,
     { method: 'POST', session, body: { reason, refund, booking_ids: bookingIds } }
   );
   return {
     bookingCode: r.booking_code, cancelled: r.cancelled, refundAmount: r.refund_amount,
-    pointsReversed: r.points_reversed, paymentStatus: r.payment_status as PaymentStatus, remainingActive: r.remaining_active
+    pointsReversed: r.points_reversed, paymentStatus: r.payment_status as PaymentStatus, remainingActive: r.remaining_active,
+    cancelledVouchers: r.cancelled_vouchers ?? [], pointsShort: r.points_short ?? 0
   };
 }
 
@@ -875,14 +901,11 @@ interface CheckoutInput {
   customerName?: string;
   customerPhone?: string; // a registered customer's phone earns the points
   courtId?: string;
-  idempotencyKey?: string; // defaults to a fresh one per call
+  idempotencyKey?: string; // optional: the request() Idempotency-Key header already covers retries
 }
 
-// Staff: sell or rent out. Prices and stock are the server's.
-// One key per sale: if the request is sent again (a retry after a dropped
-// connection), the server returns the first sale instead of making another.
-const newIdempotencyKey = () => typeof crypto !== 'undefined' && crypto.randomUUID
-  ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+// Staff: sell or rent out. Prices and stock are the server's. A retry of
+// the same sale is answered with the first one (see request()).
 
 export async function checkout(input: CheckoutInput): Promise<{ order: OrderWithNames; pointsEarned: number }> {
   const r = await request<{ order: ApiOrder; points_earned: number }>('/pos/order', {
@@ -891,7 +914,7 @@ export async function checkout(input: CheckoutInput): Promise<{ order: OrderWith
       type: input.type, payment_method: input.paymentMethod, customer_name: input.customerName || '',
       customer_phone: input.customerPhone || '', court_id: input.courtId || undefined,
       items: input.items.map(i => ({ product_id: i.productId, variant_id: i.variantId, qty: i.qty })),
-      idempotency_key: input.idempotencyKey || newIdempotencyKey()
+      idempotency_key: input.idempotencyKey
     }
   });
   return { order: toOrder(r.order), pointsEarned: r.points_earned };

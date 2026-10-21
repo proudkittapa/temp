@@ -182,29 +182,42 @@ func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.
 
 // reversePoints takes back up to `hours` booking points (never below zero:
 // points already spent on rewards stay spent). Returns how many were taken.
-func (s *BookingService) reversePoints(ctx context.Context, tx *gorm.DB, userID string, hours int, actorID, note string, refID *string) (int, error) {
+// If the customer already spent those points, their unused rewards are
+// cancelled to cover them (as for a voided sale). Unlike a void, the
+// cancellation still goes ahead when the points went on a reward already
+// handed over (the venue must be able to cancel, e.g. for a closure): what
+// is left is taken and the shortfall reported.
+func (s *BookingService) reversePoints(ctx context.Context, tx *gorm.DB, userID string, hours int, actorID, note string, refID *string) (pointsReversal, error) {
 	if hours <= 0 || userID == "" || userID == model.WalkInUserID {
-		return 0, nil
+		return pointsReversal{}, nil
 	}
 	var u model.User
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&u, "id = ?", userID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, nil
+			return pointsReversal{}, nil
 		}
-		return 0, err
+		return pointsReversal{}, err
 	}
-	take := hours
-	if u.Points < take {
-		take = u.Points
+	codes, short, err := coverPointsWithRewards(ctx, tx, s.usrRepo, &u, hours, actorID, note)
+	if err != nil {
+		return pointsReversal{}, err
 	}
-	if take == 0 {
-		return 0, nil
+	take := hours - short
+	if take > 0 {
+		refType := "Booking"
+		if _, err := s.usrRepo.AddPointsEntry(ctx, tx, userID, model.LedgerReverseBooking, -take, actorID, &refType, refID, &note); err != nil {
+			return pointsReversal{}, err
+		}
 	}
-	refType := "Booking"
-	if _, err := s.usrRepo.AddPointsEntry(ctx, tx, userID, model.LedgerReverseBooking, -take, actorID, &refType, refID, &note); err != nil {
-		return 0, err
-	}
-	return take, nil
+	return pointsReversal{Taken: take, CancelledVouchers: codes, Short: short}, nil
+}
+
+// pointsReversal is what reversePoints did: points taken back, rewards
+// cancelled to cover them, and points that couldn't be taken back.
+type pointsReversal struct {
+	Taken             int
+	CancelledVouchers []string
+	Short             int
 }
 
 // applyRefund records money returned on a payment (the transfer itself is
@@ -263,6 +276,10 @@ type CancelResult struct {
 	PointsReversed  int     `json:"points_reversed"`
 	PaymentStatus   string  `json:"payment_status"`
 	RemainingActive int     `json:"remaining_active"`
+	// Rewards cancelled because their points came from these hours, and
+	// points that couldn't be taken back (spent on a reward handed over).
+	CancelledVouchers []string `json:"cancelled_vouchers,omitempty"`
+	PointsShort       int      `json:"points_short,omitempty"`
 }
 
 // CancelBookings is the manager/admin cancellation (FR-6.3). bookingID is
@@ -347,11 +364,12 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 		}
 		res.Cancelled, res.RemainingActive, res.BookingCode = len(cancel), active, root.BookingCode
 
-		res.PointsReversed, err = s.reversePoints(ctx, tx, root.UserID, paidHours, actorID,
+		rev, err := s.reversePoints(ctx, tx, root.UserID, paidHours, actorID,
 			fmt.Sprintf("%dh of booking %s cancelled: %s", paidHours, root.BookingCode, reason), &root.ID)
 		if err != nil {
 			return err
 		}
+		res.PointsReversed, res.CancelledVouchers, res.PointsShort = rev.Taken, rev.CancelledVouchers, rev.Short
 
 		// A free hour paid with a voucher: give the voucher back instead of
 		// a (zero) refund.
@@ -410,6 +428,7 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 			BeforeState: model.AuditJSON(map[string]any{"booking_code": root.BookingCode, "hours": len(cancel)}),
 			AfterState: model.AuditJSON(map[string]any{
 				"cancelled": len(cancel), "refund_amount": res.RefundAmount, "points_reversed": res.PointsReversed, "payment_status": p.Status,
+				"vouchers_cancelled": res.CancelledVouchers, "points_short": res.PointsShort,
 			}),
 			Reason: &reason, CreatedAt: now,
 		}).Error

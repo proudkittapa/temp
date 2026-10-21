@@ -427,6 +427,46 @@ func (s *POSService) replayCheckout(ctx context.Context, key string) (*CheckoutR
 // lineLockKey orders product/variant row locks the same way in every
 // checkout, so two carts holding the same items in a different order can't
 // deadlock.
+// coverPointsWithRewards gets u (locked by the caller) up to need points
+// before points are taken back: if the customer already spent them, their
+// unused rewards are cancelled, newest first, and those rewards' points
+// returned (owner decision 2026-10-21). It returns the cancelled voucher
+// codes and how many points are still missing - spent on rewards already
+// handed over, which can't be taken back.
+func coverPointsWithRewards(ctx context.Context, tx *gorm.DB, usrRepo *repository.UserRepository, u *model.User, need int, actorID, why string) ([]string, int, error) {
+	short := need - u.Points
+	if short <= 0 {
+		return nil, 0, nil
+	}
+	var active []model.Voucher
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ? AND status = ?", u.ID, model.VoucherActive).
+		Order("created_at DESC").Find(&active).Error; err != nil {
+		return nil, 0, err
+	}
+	var codes []string
+	for _, v := range active {
+		if short <= 0 {
+			break
+		}
+		if err := tx.Model(&model.Voucher{}).Where("id = ? AND status = ?", v.ID, model.VoucherActive).
+			Update("status", model.VoucherCancelled).Error; err != nil {
+			return nil, 0, err
+		}
+		refType, note := "Voucher", fmt.Sprintf("Voucher %s cancelled: %s", v.Code, why)
+		if _, err := usrRepo.AddPointsEntry(ctx, tx, u.ID, model.LedgerVoucherCancelled, v.PointsSpent, actorID, &refType, &v.ID, &note); err != nil {
+			return nil, 0, err
+		}
+		u.Points += v.PointsSpent
+		short -= v.PointsSpent
+		codes = append(codes, v.Code)
+	}
+	if short < 0 {
+		short = 0
+	}
+	return codes, short, nil
+}
+
 // itemLockKey is lineLockKey for a saved order line.
 func itemLockKey(l model.OrderItem) string {
 	return lineLockKey(POSOrderItemInput{ProductID: l.ProductID, VariantID: l.VariantID})
@@ -922,37 +962,16 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 					return err
 				}
 				taken = int(earned)
-				// The customer already spent some of these points: cancel
-				// their unused rewards (newest first) to cover them, giving
-				// those rewards' points back first (owner decision
-				// 2026-10-21). A reward already handed over can't be taken
-				// back, so then the sale can't be voided.
-				if short := taken - u.Points; short > 0 {
-					var active []model.Voucher
-					if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-						Where("user_id = ? AND status = ?", u.ID, model.VoucherActive).
-						Order("created_at DESC").Find(&active).Error; err != nil {
-						return err
-					}
-					for _, v := range active {
-						if short <= 0 {
-							break
-						}
-						if err := tx.Model(&model.Voucher{}).Where("id = ? AND status = ?", v.ID, model.VoucherActive).
-							Update("status", model.VoucherCancelled).Error; err != nil {
-							return err
-						}
-						refType, note := "Voucher", fmt.Sprintf("Voucher %s cancelled: sale %s voided", v.Code, order.OrderCode)
-						if _, err := s.usrRepo.AddPointsEntry(ctx, tx, u.ID, model.LedgerVoucherCancelled, v.PointsSpent, actorID, &refType, &v.ID, &note); err != nil {
-							return err
-						}
-						u.Points += v.PointsSpent
-						short -= v.PointsSpent
-						cancelledVouchers = append(cancelledVouchers, v.Code)
-					}
-					if short > 0 {
-						return fmt.Errorf("%w: the points from %s were already spent on a reward that was handed over - the sale can't be voided", ErrInvalidState, order.OrderCode)
-					}
+				// Points already spent: unused rewards are cancelled to cover
+				// them. A reward already handed over can't be taken back, so
+				// then the sale can't be voided.
+				codes, short, err := coverPointsWithRewards(ctx, tx, s.usrRepo, &u, taken, actorID, "sale "+order.OrderCode+" voided")
+				if err != nil {
+					return err
+				}
+				cancelledVouchers = codes
+				if short > 0 {
+					return fmt.Errorf("%w: the points from %s were already spent on a reward that was handed over - the sale can't be voided", ErrInvalidState, order.OrderCode)
 				}
 				if taken > 0 {
 					refType, note := "Order", fmt.Sprintf("Sale %s voided: %s", order.OrderCode, reason)

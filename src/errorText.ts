@@ -155,6 +155,9 @@ const RULES: Rule[] = [
 
   // General
   [/(?:^|: )name is required/i, 'กรุณาใส่ชื่อ (ไม่เกิน 100 ตัวอักษร)'],
+  [/the same request is still being processed/i, 'รายการเดิมกำลังบันทึกอยู่ กรุณาตรวจผลก่อนกดซ้ำ'],
+  [/Idempotency-Key was used for another request|invalid Idempotency-Key/i, 'ส่งรายการซ้ำไม่ถูกต้อง กรุณารีเฟรชหน้าแล้วลองใหม่'],
+  [/the request took too long - please try again/i, 'ระบบตอบช้าเกินไป กรุณาลองใหม่อีกครั้ง'],
   [/busy with the same booking|system was busy/i, 'ระบบกำลังทำรายการเดียวกันอยู่ กรุณาลองใหม่อีกครั้ง'],
   [/^not allowed/i, 'ไม่มีสิทธิ์ทำรายการนี้'],
   [/^(?:not found|user not found)/i, 'ไม่พบรายการนี้ (อาจถูกลบหรือเปลี่ยนไปแล้ว)'],

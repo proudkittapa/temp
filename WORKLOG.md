@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Review batch B: retry protection, reward clawback on cancel
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `0a5e781`)
+- **Changed:**
+  - Retry protection for every write. Server: `handler.Idempotency`
+    middleware on `/api/v1` (after auth and CORS, so replays carry CORS
+    headers): an `Idempotency-Key` header claims a row in the new
+    `idempotency_keys` table (scope = hash of Authorization + method +
+    path); a repeat after success replays the stored status/body with
+    `Idempotent-Replay: true`, a repeat while running gets 409, another
+    session/endpoint gets 422, a non-2xx releases the key. Bookkeeping
+    uses a context detached from the request (5 s). Keys pruned after 24 h
+    by the job loop; CORS allows the header. Client (`api.ts` request()):
+    every non-GET, non-/auth, non-form request sends a key, reused while
+    the same endpoint + body is retried, dropped on success; checkout no
+    longer sends a fresh body key per call. Thai texts for the new
+    messages + test.
+  - Rewards: `coverPointsWithRewards` (pos.go) shared by VoidOrder and
+    `reversePoints` (booking cancel, no-show): unused rewards bought with
+    the points are cancelled and their points returned before taking the
+    booking's points back. A booking cancel still goes ahead when a reward
+    was already handed over and reports `points_short`; void still
+    refuses. CancelResult gains `cancelled_vouchers`, `points_short`
+    (audited, shown in the staff message).
+- **Verified:** go vet + go test, tsc, vitest 54/54. curl: same key twice
+  → same order code + replay header, stock −1 once; same key from another
+  session → 422; 3 parallel sends with one key → one order; failed
+  request (bad qty) then same key → runs. Cancel-with-refund: reward not
+  used → voucher CANCELLED, 3 points taken, balance back to 2; reward
+  handed over → cancel OK, points_short 3, voucher stays REDEEMED.
+  Playwright: server saved the sale but the response was dropped →
+  "ขายไม่สำเร็จ" → confirm again → same receipt REC…EDC29E, same key on
+  both requests, no page errors.
+- **Not done / follow-ups:** batch C (live refresh). Browser-only mode
+  has no reward clawback on cancel.
+
+---
+
 ## 2026-10-21 — Review batch A: small bug fixes
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

@@ -57,6 +57,11 @@ describe('thaiErrorText', () => {
       .toBe('ถ้าจด VAT ต้องใส่ชื่อ ที่อยู่ และเลขประจำตัวผู้เสียภาษี');
   });
 
+  it('translates the retry and timeout messages', () => {
+    expect(thaiErrorText('the same request is still being processed - check the result before trying again')).toBe('รายการเดิมกำลังบันทึกอยู่ กรุณาตรวจผลก่อนกดซ้ำ');
+    expect(thaiErrorText('the request took too long - please try again')).toBe('ระบบตอบช้าเกินไป กรุณาลองใหม่อีกครั้ง');
+  });
+
   it('passes unknown and already-Thai messages through', () => {
     expect(thaiErrorText('something new happened')).toBe('something new happened');
     expect(thaiErrorText('ไม่พบสินค้านี้')).toBe('ไม่พบสินค้านี้');

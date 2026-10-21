@@ -114,6 +114,7 @@ func main() {
 	// 1b. GORM AutoMigrate to guarantee database schema is 100% complete!
 	log.Println("Running GORM AutoMigrate for all system schemas...")
 	err = db.AutoMigrate(
+		&model.IdempotencyKey{},
 		&model.User{},
 		&model.Role{},
 		&model.Court{},
@@ -229,7 +230,7 @@ func main() {
 				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 			}
 		}
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control, X-Requested-With, Idempotency-Key")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 
 		if c.Request.Method == "OPTIONS" {
@@ -241,7 +242,9 @@ func main() {
 
 	// 4. API Endpoints Map layout. Authenticate only parses an optional
 	// bearer token; RequireRole gates each route that needs a login.
-	api := router.Group("/api/v1", handler.LimitBody(), handler.Authenticate(authService, userService, roleService))
+	// Idempotency: a retried write (Idempotency-Key header) is answered from
+	// the first attempt instead of running twice.
+	api := router.Group("/api/v1", handler.LimitBody(), handler.Authenticate(authService, userService, roleService), handler.Idempotency(db))
 	// Each route checks a permission (model/permissions.go); roles are
 	// permission sets the admin edits. can(a, b) = any one of them.
 	loggedIn := handler.RequireLogin()
@@ -348,7 +351,7 @@ func main() {
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned
 	// checkouts don't block courts forever.
-	go expireUnpaidBookingsLoop(bookingService, authService, rewardService)
+	go expireUnpaidBookingsLoop(db, bookingService, authService, rewardService)
 
 	// 5. Fire Up listener
 	port := os.Getenv("PORT")
@@ -604,7 +607,7 @@ func resolveJWTSecret() []byte {
 	return b
 }
 
-func expireUnpaidBookingsLoop(bookings *service.BookingService, auth *service.AuthService, rewards *service.RewardService) {
+func expireUnpaidBookingsLoop(db *gorm.DB, bookings *service.BookingService, auth *service.AuthService, rewards *service.RewardService) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for ; ; <-ticker.C {
@@ -627,6 +630,7 @@ func expireUnpaidBookingsLoop(bookings *service.BookingService, auth *service.Au
 			return err
 		})
 		runJob("pruning old failed logins", auth.PruneLoginFailures)
+		runJob("pruning old idempotency keys", func(ctx context.Context) error { return handler.PruneIdempotencyKeys(ctx, db) })
 	}
 }
 

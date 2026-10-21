@@ -857,7 +857,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { ...res, reason });
           closeBookingDetail();
           onRefreshAll();
-          notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}`);
+          notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}${res.cancelledVouchers.length ? `\nยกเลิกคูปองที่แลกด้วยแต้มนี้: ${res.cancelledVouchers.join(', ')}` : ''}${res.pointsShort ? `\n⚠️ ลูกค้าใช้แต้ม ${res.pointsShort} แต้มแลกของรางวัลที่รับไปแล้ว หักคืนไม่ได้` : ''}`);
         })
         .catch(err => notify(`ยกเลิกไม่สำเร็จ: ${err.message}`));
     }
