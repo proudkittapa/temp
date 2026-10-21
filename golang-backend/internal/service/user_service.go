@@ -73,24 +73,26 @@ type MemberMatch struct {
 	Points     int              `json:"points"`
 }
 
-// SearchMembers finds active customers whose phone starts with q's digits
-// or whose name contains q (at least 2 characters), up to 8, for the
-// counter's member-phone dropdown.
+// SearchMembers lists active customers A-Z for the counter's member-phone
+// dropdown, up to 20: all of them when q is empty, otherwise those whose
+// phone starts with q's digits or whose name contains q.
 func (s *UserService) SearchMembers(ctx context.Context, q string) ([]MemberMatch, error) {
 	q = strings.TrimSpace(q)
 	out := []MemberMatch{}
-	if len([]rune(q)) < 2 || len([]rune(q)) > 50 {
+	if len([]rune(q)) > 50 {
 		return out, nil
 	}
 	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	tx := s.db.WithContext(ctx).Model(&model.User{}).
 		Where("role = ? AND is_active", model.RoleCustomer)
-	if digits := repository.NormalizePhone(q); len(digits) >= 2 {
+	if q == "" {
+		// no filter - the first page of the list
+	} else if digits := repository.NormalizePhone(q); digits != "" {
 		tx = tx.Where("(phone LIKE ? OR name ILIKE ?)", esc.Replace(digits)+"%", "%"+esc.Replace(q)+"%")
 	} else {
 		tx = tx.Where("name ILIKE ?", "%"+esc.Replace(q)+"%")
 	}
-	err := tx.Order("name").Limit(8).Select("id, name, phone, member_type, points").Scan(&out).Error
+	err := tx.Order("name").Limit(20).Select("id, name, phone, member_type, points").Scan(&out).Error
 	return out, err
 }
 

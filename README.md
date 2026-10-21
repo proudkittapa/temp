@@ -70,7 +70,7 @@ database from the Go Backend section below):
 | Counter shop: products with stock (shoes per size), F&B / equipment sales, racket & shoe rentals and returns (Staff POS); products and stock changes (Admin panel → 🥤) | `GET /staff/products`, `POST /pos/order`, `GET /staff/orders?date=`, `GET /staff/rentals`, `POST /staff/rentals/items/:id/return`, `GET`/`POST /admin/products`, `PUT /admin/products/:id`, `POST /admin/products/:id/stock` |
 | Cash drawer shifts: open with a float, close with the counted cash (over/short); void today's counter sale (manager) | `GET /staff/shift`, `POST /staff/shift/open`, `POST /staff/shift/close`, `GET /admin/shifts`, `POST /admin/orders/:id/void` |
 | Admin dashboard, monthly CSV exports (bookings, counter sales), audit log (admin only) | `GET /admin/dashboard?date=`, `GET /admin/report?month=`, `GET /admin/audit-logs` |
-| Member lookup at the counter: the member-phone fields (walk-in booking, sale, rental) drop down matching customers by phone prefix or name (Staff POS) | `GET /staff/members?q=` |
+| Member lookup at the counter: the member-phone fields (walk-in booking, sale, rental) open a dropdown of customers on click, narrowed by phone prefix or name as staff type (Staff POS) | `GET /staff/members?q=` |
 | Users list, a customer's membership tier, manual points; staff roles and suspending accounts (admin) (Admin panel → users) | `GET /admin/users`, `PUT /admin/users/:id/member-type`, `POST /admin/users/:id/adjust-points`, `PUT /admin/users/:id/role`, `PUT /admin/users/:id/active` |
 
 **How many courts:** set `BASKETBALL_COURT_COUNT` (default 3),

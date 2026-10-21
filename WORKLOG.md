@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Member dropdown opens on click
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `810590b`)
+- **Changed:** the user found the member-phone box still looked like a plain
+  text field - the list only appeared after typing 2 characters. Now
+  clicking/focusing the box (or the new ▾ button) opens the list of members
+  A-Z at once, and typing narrows it (any length). Up to 20 shown, with a
+  "type to search" note at 20. `GET /staff/members` with an empty q returns
+  the first 20 A-Z. (`MemberPhoneInput.tsx`, `user_service.go`, comments in
+  `handlers.go` / `api.ts`)
+- **Verified:** go vet + go test, tsc. Playwright (API mode, staff, F&B cart):
+  clicking the empty box lists 5 members; ArrowDown + Enter picks one and
+  fills phone and name; ▾ opens the list; typing "ต" narrows it; no page
+  errors.
+- **Not done / follow-ups:** none.
+
+---
+
 ## 2026-10-21 — Member-phone fields: dropdown of matching members
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

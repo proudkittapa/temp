@@ -537,8 +537,8 @@ export interface PaymentForReview {
 
 export interface MemberMatch { id: string; name: string; phone: string; memberType: MemberType; points: number }
 
-// Counter staff: customers whose phone starts with q or whose name contains
-// it (at least 2 characters, up to 8 results) - the member-phone dropdown.
+// Counter staff: customers A-Z, up to 20 - all when q is empty, otherwise
+// those whose phone starts with q or whose name contains it.
 export async function searchMembers(q: string): Promise<MemberMatch[]> {
   const rows = await request<{ id: string; name: string; phone: string; member_type: string; points: number }[]>(
     `/staff/members?q=${encodeURIComponent(q)}`, { session: 'staff' });

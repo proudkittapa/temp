@@ -326,8 +326,9 @@ func (h *ArenaHandler) ListUsers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": users})
 }
 
-// GET /api/v1/staff/members?q=081 - counter staff: customers matching a
-// phone prefix or part of a name, for picking who gets the points.
+// GET /api/v1/staff/members?q=081 - counter staff: customers A-Z (all when
+// q is empty) matching a phone prefix or part of a name, for picking who
+// gets the points.
 func (h *ArenaHandler) SearchMembers(c *gin.Context) {
 	list, err := h.userService.SearchMembers(c.Request.Context(), c.Query("q"))
 	if err != nil {
