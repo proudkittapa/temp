@@ -4,13 +4,19 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 	_ "time/tzdata" // Asia/Bangkok must resolve even on hosts without tzdata
 
@@ -22,6 +28,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // loadEnv parses custom environment files line by line and registers
@@ -81,26 +88,21 @@ func main() {
 		log.Println("[EnvLoader] No .env file - using the local-development defaults from .env.example. Copy it to .env to change them.")
 	}
 
+	// Ctrl+C / `kill` / `docker stop` (SIGINT, SIGTERM) cancel ctx: while
+	// waiting for the database the server just exits; once running it shuts
+	// down gracefully (see the end of main).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// 1. Database configurations setup
 	pgConnString := os.Getenv("DATABASE_URL")
 	if pgConnString == "" {
 		log.Fatalln("DATABASE_URL is not set: set it in the environment or in golang-backend/.env (see .env.example).")
 	}
 
-	log.Printf("Connecting Go database using GORM with postgres driver...")
-	db, err := gorm.Open(postgres.Open(withDBTimeouts(pgConnString)), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("Critical error instantiating DB with GORM: %v\n", err)
-	}
-
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Fatalf("Failed to retrieve generic sql.DB engine: %v\n", err)
-	}
-
-	if err := sqlDB.Ping(); err != nil {
-		log.Fatalf("Database is unreachable: %v\n", err)
-	}
+	// Nothing else starts until the database answers: it may still be
+	// starting (e.g. both containers come up together), so wait for it.
+	db, sqlDB := connectDB(ctx, withDBTimeouts(pgConnString))
 	// A bounded pool: a burst of requests waits for a connection instead of
 	// exhausting Postgres max_connections (which would fail every request
 	// and the background jobs too). DB_MAX_OPEN_CONNS overrides.
@@ -163,7 +165,12 @@ func main() {
 	}
 	// Speed-up indexes build in the background (perf_indexes.go): on a big
 	// database they can take minutes, and the server needn't wait for them.
-	go buildPerfIndexes(pgConnString)
+	var background sync.WaitGroup // index builds and jobs, waited for on shutdown
+	background.Add(1)
+	go func() {
+		defer background.Done()
+		buildPerfIndexes(ctx, pgConnString)
+	}()
 
 	// 2. Initialize Repositories & Services Slices
 	bkRepo := repository.NewBookingRepository(db)
@@ -363,9 +370,34 @@ func main() {
 		api.PUT("/admin/business", can(model.PermEditPricing), pricingHandler.UpdateBusiness)
 	}
 
+	// Health checks for Docker / the reverse proxy (outside /api/v1: no auth,
+	// no body limits): /healthz = the process is up; /readyz = it serves
+	// requests and the database answers (503 while shutting down, so a
+	// proxy stops sending traffic first).
+	var ready atomic.Bool
+	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	router.GET("/readyz", func(c *gin.Context) {
+		pingCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		if !ready.Load() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})
+			return
+		}
+		if err := sqlDB.PingContext(pingCtx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database unreachable"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+	})
+
 	// Cancel online bookings left unpaid past the payment hold, so abandoned
-	// checkouts don't block courts forever.
-	go expireUnpaidBookingsLoop(db, bookingService, authService, rewardService)
+	// checkouts don't block courts forever (and the other periodic jobs).
+	// Stops with ctx; a job already running is allowed to finish.
+	background.Add(1)
+	go func() {
+		defer background.Done()
+		expireUnpaidBookingsLoop(ctx, db, bookingService, authService, rewardService)
+	}()
 
 	// 5. Fire Up listener
 	port := os.Getenv("PORT")
@@ -383,9 +415,83 @@ func main() {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ListenAndServe() }()
+	ready.Store(true)
 	log.Printf("Sports Arena Go Backend server launching on Port %s...\n", port)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatalf("Failed to bind listener: %v\n", err)
+
+	// Run until a stop signal (or the listener fails, e.g. the port is
+	// taken), then shut down in order: stop taking requests and let those in
+	// flight finish (up to SHUTDOWN_TIMEOUT_SECONDS, default 30), stop the
+	// background work, and only then close the database connections.
+	select {
+	case err := <-serveErr:
+		ready.Store(false)
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("ERROR: HTTP server stopped: %v\n", err)
+		}
+		stop()
+	case <-ctx.Done():
+		ready.Store(false)
+		log.Println("Shutdown requested - finishing requests in progress...")
+	}
+	grace := time.Duration(envInt("SHUTDOWN_TIMEOUT_SECONDS", 30)) * time.Second
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("WARNING: requests still running after %s were cut off: %v\n", grace, err)
+	}
+	log.Println("HTTP server stopped. Waiting for background jobs...")
+	jobsDone := make(chan struct{})
+	go func() { background.Wait(); close(jobsDone) }()
+	select {
+	case <-jobsDone:
+	case <-shutdownCtx.Done():
+		log.Println("WARNING: background jobs did not stop in time.")
+	}
+	if err := sqlDB.Close(); err != nil {
+		log.Printf("WARNING: closing the database connections: %v\n", err)
+	}
+	log.Println("Stopped cleanly.")
+}
+
+// connectDB opens the pool and waits until the database answers, retrying
+// with backoff (1 s doubling to 10 s) for up to DB_CONNECT_TIMEOUT_SECONDS
+// (default 60) - a database still starting is normal, not fatal. A stop
+// signal while waiting ends the wait (and the process).
+func connectDB(ctx context.Context, dsn string) (*gorm.DB, *sql.DB) {
+	deadline := time.Now().Add(time.Duration(envInt("DB_CONNECT_TIMEOUT_SECONDS", 60)) * time.Second)
+	wait := time.Second
+	for attempt := 1; ; attempt++ {
+		// Quiet while retrying (this function logs each attempt itself);
+		// the normal logger (slow-query warnings etc.) once connected.
+		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		if err == nil {
+			db.Logger = logger.Default
+			var sqlDB *sql.DB
+			if sqlDB, err = db.DB(); err == nil {
+				pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err = sqlDB.PingContext(pingCtx)
+				cancel()
+				if err == nil {
+					log.Println("Database is ready.")
+					return db, sqlDB
+				}
+				sqlDB.Close()
+			}
+		}
+		if time.Now().Add(wait).After(deadline) {
+			log.Fatalf("Database is unreachable after %d attempts: %v\n", attempt, err)
+		}
+		log.Printf("Waiting for the database (attempt %d): %v - retrying in %s\n", attempt, err, wait)
+		select {
+		case <-ctx.Done():
+			log.Fatalln("Stopped while waiting for the database.")
+		case <-time.After(wait):
+		}
+		if wait *= 2; wait > 10*time.Second {
+			wait = 10 * time.Second
+		}
 	}
 }
 
@@ -621,10 +727,10 @@ func resolveJWTSecret() []byte {
 	return b
 }
 
-func expireUnpaidBookingsLoop(db *gorm.DB, bookings *service.BookingService, auth *service.AuthService, rewards *service.RewardService) {
+func expireUnpaidBookingsLoop(ctx context.Context, db *gorm.DB, bookings *service.BookingService, auth *service.AuthService, rewards *service.RewardService) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	for ; ; <-ticker.C {
+	for {
 		runJob("expiring unpaid bookings", func(ctx context.Context) error {
 			n, err := bookings.ExpireUnpaidBookings(ctx)
 			if n > 0 {
@@ -645,6 +751,11 @@ func expireUnpaidBookingsLoop(db *gorm.DB, bookings *service.BookingService, aut
 		})
 		runJob("pruning old failed logins", auth.PruneLoginFailures)
 		runJob("pruning old idempotency keys", func(ctx context.Context) error { return handler.PruneIdempotencyKeys(ctx, db) })
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 

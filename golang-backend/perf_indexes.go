@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log"
@@ -51,7 +52,9 @@ var perfIndexes = []perfIndex{
 // half-way (crash, redeploy) leaves an INVALID index that IF NOT EXISTS
 // would skip forever, so those are dropped and rebuilt. Failures only log:
 // the app is correct without these indexes.
-func buildPerfIndexes(dsn string) {
+// Stops when ctx is cancelled (shutdown): a build cut off half-way is left
+// unfinished and rebuilt on the next start (see below).
+func buildPerfIndexes(ctx context.Context, dsn string) {
 	db, err := openSetupDB(dsn)
 	if err != nil {
 		log.Printf("WARNING: performance indexes skipped - could not open a connection: %v\n", err)
@@ -65,7 +68,7 @@ func buildPerfIndexes(dsn string) {
 
 	// Builds on big tables are slow by nature; report them below instead of
 	// as GORM "SLOW SQL" warnings.
-	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)})
+	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent), Context: ctx})
 
 	trigram := true
 	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm").Error; err != nil {
@@ -77,6 +80,9 @@ func buildPerfIndexes(dsn string) {
 	start := time.Now()
 	built, failed := 0, 0
 	for _, ix := range perfIndexes {
+		if ctx.Err() != nil {
+			return // shutting down
+		}
 		if ix.trigram && !trigram {
 			continue
 		}
@@ -99,6 +105,10 @@ func buildPerfIndexes(dsn string) {
 		}
 		t := time.Now()
 		if err := db.Exec("CREATE INDEX CONCURRENTLY IF NOT EXISTS " + ix.name + " ON " + ix.table + " " + ix.def).Error; err != nil {
+			if ctx.Err() != nil {
+				log.Printf("Index %s: build stopped by shutdown - it is rebuilt on the next start.\n", ix.name)
+				return
+			}
 			log.Printf("WARNING: could not build index %s: %v\n", ix.name, err)
 			failed++
 			continue

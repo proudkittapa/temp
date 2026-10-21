@@ -58,11 +58,13 @@ function shutdown(exitCode = 0) {
   shuttingDown = true;
   console.log('[Orchestrator] Shutting down services politely...');
   children.forEach(c => killTree(c, 'SIGTERM'));
-  // Force anything still running after 5 seconds.
+  // The backend finishes requests in progress and closes the database
+  // first (up to its SHUTDOWN_TIMEOUT_SECONDS, 30 by default); force
+  // anything still running after 35 seconds.
   setTimeout(() => {
     children.forEach(c => killTree(c, 'SIGKILL'));
     process.exit(exitCode);
-  }, 5000).unref();
+  }, 35000).unref();
   const waitForAll = setInterval(() => {
     if (children.every(c => c.exited || !c.pid)) {
       clearInterval(waitForAll);
@@ -112,13 +114,42 @@ if (apiMode) {
   });
 }
 
-// 2. Vite frontend on port 3000
-console.log('[Orchestrator] Starting Vite Frontend on port 3000...');
-start('Vite', 'npx', ['vite', '--port=3000', '--host=0.0.0.0'], {
-  shell: true,
-  env: {
-    ...process.env,
-    ...(apiMode ? { VITE_DATA_SOURCE: 'api' } : {}),
-    DISABLE_HMR: 'true'
+// 2. Vite frontend on port 3000 - in API mode only once the backend says
+// it is ready (database connected and set up), so the first page load
+// doesn't hit a backend that isn't listening yet.
+function startVite() {
+  if (shuttingDown) return;
+  console.log('[Orchestrator] Starting Vite Frontend on port 3000...');
+  start('Vite', 'npx', ['vite', '--port=3000', '--host=0.0.0.0'], {
+    shell: true,
+    env: {
+      ...process.env,
+      ...(apiMode ? { VITE_DATA_SOURCE: 'api' } : {}),
+      DISABLE_HMR: 'true'
+    }
+  });
+}
+
+async function waitForBackend() {
+  console.log('[Orchestrator] Waiting for the backend to be ready (compiling, connecting to the database)...');
+  const deadline = Date.now() + 180000; // first `go run` compiles everything
+  while (!shuttingDown && Date.now() < deadline) {
+    try {
+      const res = await fetch('http://127.0.0.1:8080/readyz');
+      if (res.ok) {
+        console.log('[Orchestrator] Backend is ready.');
+        return;
+      }
+    } catch {
+      // not listening yet
+    }
+    await new Promise(r => setTimeout(r, 1000));
   }
-});
+  if (!shuttingDown) console.warn('[Orchestrator] Backend not ready after 3 minutes - starting the frontend anyway.');
+}
+
+if (apiMode) {
+  waitForBackend().then(startVite);
+} else {
+  startVite();
+}

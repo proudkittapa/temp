@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Graceful start-up and shutdown
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `0877cee`)
+- **Changed:**
+  - `golang-backend/main.go`: the server waits for the database before
+    doing anything else (`connectDB`: retry with backoff 1 s → 10 s, up to
+    `DB_CONNECT_TIMEOUT_SECONDS`=60, then exits with the last error;
+    Ctrl+C while waiting stops it). It listens only after the schema and
+    index setup is done.
+  - New `GET /healthz` (process up) and `GET /readyz` (503 until set up,
+    then pings the database).
+  - SIGINT/SIGTERM: stop accepting connections, let requests in progress
+    finish (`srv.Shutdown`, up to `SHUTDOWN_TIMEOUT_SECONDS`=30), wait for
+    the background jobs (minute job loop, performance-index builds) to
+    stop, close the database pool, log "Stopped cleanly.".
+  - `perf_indexes.go`: takes the shutdown context; an index build cut off
+    by shutdown is rebuilt on the next start (existing logic).
+  - `dev-runner.js`: in API mode Vite starts only after `/readyz` answers
+    (up to 3 min for the first `go run` compile); force-kill after 35 s
+    instead of 5 s so the backend's graceful shutdown can finish.
+  - Docs: `.env.example`, `docs/features.html` settings table, TODO 8b
+    (healthcheck + `stop_grace_period` for the future docker-compose).
+- **Verified:** `go vet`, `go build`.
+  - DB down at start: "Waiting for the database (attempt 1..3)", the port
+    stayed closed; after Postgres started → "Database is ready.", then
+    listening, `/readyz` = ready.
+  - SIGTERM during a booking held by a 3 s row lock: new connections
+    refused, the in-flight booking returned 200, the process exited after
+    2.2 s with "Stopped cleanly.".
+  - `node dev-runner.js --api`: "Backend is ready." printed before Vite
+    started; Ctrl+C → backend "Stopped cleanly.", both processes exited,
+    ports free.
+- **Not done / follow-ups:** the bug review of a33e71d..396d334 (live
+  refresh, no-show, perf indexes) came back with 12 findings - fixed in the
+  next entry.
+
+---
+
 ## 2026-10-21 — Known bugs fixed (locks, expiry job, DB backstops, demo users)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

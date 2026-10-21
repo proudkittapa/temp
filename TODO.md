@@ -107,7 +107,7 @@ Each needs a yes/no from the owner before it is built.
 ### 8b. Real server
 - [ ] **Host:** a small Linux VPS in Singapore (DigitalOcean / Vultr / AWS Lightsail, about US$6-12/month) + optionally a domain (about US$10-15/year). A VPS rather than Render/Railway because slip images are saved on the server's disk (`golang-backend/uploads/`), which their cheaper plans wipe on restart, and Postgres there is a separate paid service.
 - [ ] **Deployment files in the repo** (not written yet):
-  - `docker-compose.yml`: Postgres (data in a volume), the Go backend (`uploads/` in a volume), Caddy.
+  - `docker-compose.yml`: Postgres (data in a volume), the Go backend (`uploads/` in a volume), Caddy. The backend already waits for Postgres on start and shuts down cleanly on SIGTERM (see `.env.example`), so no wait-for script is needed; use `GET /readyz` as the backend's healthcheck and give it `stop_grace_period: 35s` (Docker's default of 10 s is shorter than `SHUTDOWN_TIMEOUT_SECONDS`).
   - `golang-backend/Dockerfile`: builds the whole package (`go build .`, not `main.go` alone - see WORKLOG 2026-10-21).
   - Frontend build: `VITE_DATA_SOURCE=api npm run build` → `dist/` (demo login buttons are left out of production builds).
   - `Caddyfile`: serve `dist/`, send `/api/*` to the backend on port 8080, automatic HTTPS for the domain.

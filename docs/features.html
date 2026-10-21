@@ -226,6 +226,7 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
     <tr><td><code>DB_MAX_OPEN_CONNS</code></td><td>จำนวนการเชื่อมต่อฐานข้อมูลสูงสุด (ต้องน้อยกว่าที่ PostgreSQL รับได้)</td><td>20</td></tr>
     <tr><td><code>DB_LOCK_TIMEOUT_MS</code></td><td>รอรายการที่ถูกล็อกนานสุดก่อนตอบ "ระบบไม่ว่าง"</td><td>5000 (5 วินาที)</td></tr>
     <tr><td><code>DB_STATEMENT_TIMEOUT_MS</code></td><td>กันคำสั่งค้าง (สำรอง — คำขอปกติหยุดเองที่ 30 วินาที รายงาน 90 วินาที)</td><td>90000</td></tr>
+    <tr><td><code>DB_CONNECT_TIMEOUT_SECONDS</code> · <code>SHUTDOWN_TIMEOUT_SECONDS</code></td><td>ตอนเปิด: รอฐานข้อมูลพร้อมนานสุดกี่วินาที (ระหว่างนี้ยังไม่รับคำขอ) · ตอนปิด: รอคำขอที่ค้างอยู่ทำให้เสร็จนานสุดกี่วินาที แล้วจึงปิดฐานข้อมูล. ตรวจสถานะ: <code>/healthz</code> (เซิร์ฟเวอร์ทำงาน) · <code>/readyz</code> (พร้อมรับงาน)</td><td>60 · 30</td></tr>
     <tr><td><code>TRUSTED_PROXIES</code></td><td>IP ของ reverse proxy (เช่น Caddy) เพื่อให้จำกัดการล็อกอินผิดตาม IP จริง</td><td>ไม่ตั้ง = ใช้ IP ที่เชื่อมต่อตรง</td></tr>
     <tr><td><code>NO_SHOW_GRACE_MINUTES</code> · <code>NO_SHOW_RESALE_PRICE_PERCENT</code></td><td>บันทึก "ไม่มา" ได้หลังเริ่มกี่นาที · ราคาขายต่อชั่วโมงที่ลูกค้าไม่มา (% ของราคาปกติ)</td><td>15 · 50</td></tr>
     <tr><td><code>VITE_DATA_SOURCE</code> · <code>VITE_API_BASE_URL</code></td><td>หน้าเว็บ: <code>api</code> = ใช้ฐานข้อมูลจริง · ที่อยู่ API</td><td>ไม่ตั้ง = โหมดทดลองในเบราว์เซอร์ · <code>/api/v1</code></td></tr>
