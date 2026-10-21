@@ -116,7 +116,7 @@ func main() {
 	// Schema setup (migrations, index builds, data fixes) can take longer
 	// than the request time limits on a big database, so it runs on its own
 	// connection without them, closed once the setup is done.
-	setupDB, err := gorm.Open(postgres.Open(pgConnString), &gorm.Config{})
+	setupDB, err := openSetupDB(pgConnString)
 	if err != nil {
 		log.Fatalf("Critical error opening the setup connection: %v\n", err)
 	}
@@ -160,6 +160,9 @@ func main() {
 	if sqlSetup, err := setupDB.DB(); err == nil {
 		sqlSetup.Close()
 	}
+	// Speed-up indexes build in the background (perf_indexes.go): on a big
+	// database they can take minutes, and the server needn't wait for them.
+	go buildPerfIndexes(pgConnString)
 
 	// 2. Initialize Repositories & Services Slices
 	bkRepo := repository.NewBookingRepository(db)
@@ -850,6 +853,12 @@ func warnDuplicatePhones(db *gorm.DB) {
 		log.Printf("WARNING: %d phone number(s) belong to more than one account (%s); merge them so walk-in points go to the right account.\n",
 			len(phones), strings.Join(phones, ", "))
 	}
+}
+
+// openSetupDB opens a connection for schema work (migrations, index
+// builds) without the request time limits withDBTimeouts adds.
+func openSetupDB(dsn string) (*gorm.DB, error) {
+	return gorm.Open(postgres.Open(dsn), &gorm.Config{})
 }
 
 // withDBTimeouts adds server-side limits to the connection string unless it

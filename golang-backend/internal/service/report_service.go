@@ -320,7 +320,10 @@ func (s *ReportService) AuditLogs(ctx context.Context, q AuditQuery) ([]model.Au
 	}
 	if term := strings.TrimSpace(q.Search); term != "" {
 		like := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(term)) + "%"
-		db = db.Where("LOWER(user_name) LIKE ? OR LOWER(action) LIKE ? OR LOWER(target_id) LIKE ? OR LOWER(COALESCE(reason, '')) LIKE ?", like, like, like, like)
+		// Same expression as the trigram index idx_audit_logs_search_trgm
+		// (auditSearchExpr in perf_indexes.go) - keep the two identical.
+		db = db.Where("lower(coalesce(user_name, '') || ' ' || coalesce(action, '') || ' ' || "+
+			"coalesce(target_id, '') || ' ' || coalesce(reason, '')) LIKE ?", like)
 	}
 	var total int64
 	if err := db.Count(&total).Error; err != nil {

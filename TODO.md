@@ -20,8 +20,7 @@ Cheap and blocking first, then what changes what customers/staff see
    wait, do it right after; today's separate sign-ins work).
 6. **Deploy to a real server with HTTPS** - section 8 (8a: free tunnel from
    the Mac for testers now; 8b: VPS + Docker + Caddy for customers).
-   **Before real customers (8b): section 11 "Go-live" items** - database
-   indexes (not needed while the data is fake), retry protection, live
+   **Before real customers (8b): section 11 "Go-live" items** - retry protection, live
    refresh, smaller customer download.
 7. **Test on real phones** - section 6 and section 3 (real phones, inside the
    LINE app); scan the PromptPay QR with two Thai banking apps.
@@ -143,14 +142,7 @@ Done 2026-10-21 (see WORKLOG.md).
 Full review: three reviewers (backend performance, concurrency/money, frontend) + spot checks. Done the same day: database pool cap + statement/lock/idle timeouts + request deadlines (section below, "done"), walk-in PromptPay no longer auto-expires.
 
 ### Go-live (do before real customers - not needed while the data is fake)
-- [ ] **Database indexes** (build with `CREATE INDEX CONCURRENTLY` in `ensureIndexes`, main.go - plain CREATE INDEX blocks writes on big tables):
-  - `order_items (order_id)` - every sale view, rental return, void, day summary and dashboard scans order_items without it.
-  - `bookings (user_id, date DESC, start_time)` - my-bookings and the unpaid-booking cap on every online booking.
-  - `payments (slip_uploaded_at, created_at) WHERE status = 'SLIP_UPLOADED'` and `payments (created_at) WHERE status = 'PENDING'` - slip queue, expiry job.
-  - `bookings (date, end_time) WHERE status = 'CONFIRMED'` - the every-minute "finished" job; `bookings (date) WHERE status = 'PENDING_PAYMENT'` - dashboard.
-  - `vouchers (expires_at) WHERE status = 'ACTIVE'`, `vouchers (user_id, created_at DESC)`, `vouchers (booking_id) WHERE booking_id IS NOT NULL`.
-  - `orders (created_at) WHERE status = 'PREPARING'` (open rentals), `audit_logs (target_type, created_at DESC)`, `users (role, created_at DESC)`, `day_offs (date)`, `shifts (opened_at) WHERE closed_at IS NULL`.
-  - Member search / audit search: `pg_trgm` GIN on `lower(users.name)`, `lower(audit_logs.user_name)`, `lower(audit_logs.target_id)`; `users.phone text_pattern_ops` for the prefix match.
+- [x] **Database indexes** - done 2026-10-21 (`golang-backend/perf_indexes.go`): 16 indexes (order items, my bookings, slip queue, expiry/finished jobs, vouchers, open rentals, audit by type, users by role, phone prefix, closures by date, shifts, and pg_trgm search on member names and the audit log). Built CONCURRENTLY in the background after startup, so they work on an empty database and on one full of data without blocking writes; an index left unfinished by an interrupted build is rebuilt on the next start.
 - [ ] **Phone lookups use a regex over every user row** (`repository/user.go` canonicalPhoneSQL: login, register, walk-in, checkout): normalise all stored phones once (merge duplicates), then compare `phone = ?`; split login's email-OR-phone into two indexed queries.
 - [x] Retry protection: every app write (not sign-in or slip upload) sends an `Idempotency-Key` reused while the same action is retried; the server (`handler/idempotency.go`, table `idempotency_keys`, pruned after 24 h) replays the first success, answers 409 while it is still running, releases the key on failure. Done 2026-10-21.
 - [ ] **Live refresh:** slip queue, the selected date's bookings and the customer's payment screen poll every 10-15 s while the page is visible and refetch on focus (today nothing updates until a click). Payment screen should follow the server status (expired / approved).

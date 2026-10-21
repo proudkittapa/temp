@@ -18,6 +18,35 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Performance indexes (empty or existing database)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
+- **Commit(s):** this commit
+- **Changed:**
+  - `golang-backend/perf_indexes.go` (new): the 16 indexes from TODO section 11
+    (each matched against its real query). Built with `CREATE INDEX
+    CONCURRENTLY IF NOT EXISTS` in a goroutine after startup, on its own
+    connection without the request time limits (`openSetupDB`), so a big
+    existing database keeps taking bookings while they build and the server
+    starts at once. An INVALID index (build cut off by a crash/redeploy) is
+    dropped and rebuilt. `pg_trgm` is created if allowed (a trusted
+    extension: the database owner can, e.g. on Render); otherwise the two
+    search indexes are skipped with a warning. Failures only log.
+  - Audit-log search now matches one expression (`auditSearchExpr`: user,
+    action, target id and reason joined) so a trigram index can serve it;
+    `perf_indexes_test.go` checks the query and the index use the same text.
+- **Verified:** `go vet`, `go test ./...` pass. Real Postgres 16 as a
+  non-superuser owner: empty database → 16 built in 35 ms, all valid;
+  restart → nothing rebuilt; ~950k rows (50k users, 300k bookings /
+  payments / audit rows) with the indexes dropped and one marked invalid →
+  API answered after ~0.7 s while all 16 built in 10 s, the invalid one was
+  rebuilt; EXPLAIN shows each index used (my bookings, slip queue, expiry and
+  finished jobs, member phone+name search incl. Thai, audit search); audit and
+  member search results through the API are correct.
+- **Not done / follow-ups:** with several servers starting at once they'd
+  race on the same build (harmless: one fails with a warning) - covered by
+  the "startup migrations unlocked" item in TODO section 11.
+
 ## 2026-10-21 — Points only from court bookings
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
