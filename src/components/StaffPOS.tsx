@@ -269,6 +269,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setStaffUser(null);
     setReviewQueue([]);
     setSeenSlip({});
+    setGridError(null);
+    setStaffApiError(null);
     setDaySummary(null);
     setTodayBookingsApi([]);
     setShift(null);

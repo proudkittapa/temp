@@ -286,11 +286,16 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   // Physical courts: a full court and its half-court sides share one
   // mutex group and count once.
   const physicalCourtCount = () => api.USE_BACKEND ? dash?.physicalCourts ?? 0 : new Set(courts.map(c => c.mutexGroupId || c.id)).size;
-  // A re-sold no-show hour counts once - through the resale booking (as the
-  // server's report).
+  // A no-show hour that a later paid booking re-used (same or conflicting
+  // court) is filled by that booking: counted once, as the server's report.
   const occupiedShare = (list: Booking[]) => {
-    const resold = new Set(bookings.filter(b => b.resaleOf && isPaidBooking(b)).map(b => b.resaleOf));
-    return list.reduce((sum, b) => b.status === BookingStatus.NO_SHOW && resold.has(b.id) ? sum
+    const reused = (ns: Booking) => {
+      const nsCourt = courts.find(c => c.id === ns.courtId);
+      return bookings.some(r => r.id !== ns.id && r.date === ns.date && r.startTime === ns.startTime && isPaidBooking(r) &&
+        r.createdAt > ns.createdAt && (r.courtId === ns.courtId || (!!nsCourt && !!courts.find(c => c.id === r.courtId) &&
+          courtsConflict(nsCourt, courts.find(c => c.id === r.courtId)!))));
+    };
+    return list.reduce((sum, b) => b.status === BookingStatus.NO_SHOW && reused(b) ? sum
       : sum + (courts.find(c => c.id === b.courtId)?.shareOfGroup ?? 1), 0);
   };
 

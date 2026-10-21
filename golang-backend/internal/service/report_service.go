@@ -69,11 +69,18 @@ func (s *ReportService) physicalCourts(db *gorm.DB) (int64, error) {
 	return n, err
 }
 
-// notResoldNoShow (one ? = paidStatuses) leaves out a no-show hour that was
-// re-sold: the paid resale booking fills that court-time, and counting both
-// put occupancy above 100%. A no-show nobody re-bought still counts - the
-// hour was sold and paid. Revenue keeps counting both (both paid).
-const notResoldNoShow = "NOT (b.status = 'NO_SHOW' AND EXISTS (SELECT 1 FROM bookings r WHERE r.resale_of = b.id AND r.status IN ?))"
+// notResoldNoShow (one ? = paidStatuses) leaves out a no-show hour that a
+// later paid booking re-used: on the same court, or a conflicting one (the
+// full court over a half, a half under the full court). That booking fills
+// the court-time; counting both put occupancy above 100%. Matched by court
+// and hour rather than bookings.resale_of, which names only one no-show
+// (both halves no-shows, then the full court sold, is one court-hour). A
+// no-show nobody re-bought still counts - the hour was sold and paid.
+// Revenue keeps counting both (both paid).
+const notResoldNoShow = "NOT (b.status = 'NO_SHOW' AND EXISTS (SELECT 1 FROM bookings r " +
+	"JOIN courts rc ON rc.id = r.court_id JOIN courts bc ON bc.id = b.court_id " +
+	"WHERE r.id <> b.id AND r.date = b.date AND r.start_time = b.start_time AND r.status IN ? AND r.created_at > b.created_at " +
+	"AND (r.court_id = b.court_id OR (rc.mutex_group_id = bc.mutex_group_id AND (rc.share_of_group >= 1 OR bc.share_of_group >= 1)))))"
 
 // occupiedShare sums the court share (1, or 0.5 for a half court) of the
 // paid bookings matching where/args, grouped by groupBy when set.

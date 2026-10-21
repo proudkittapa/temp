@@ -57,7 +57,7 @@ function shutdown(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log('[Orchestrator] Shutting down services politely...');
-  children.forEach(c => killTree(c, 'SIGTERM'));
+  children.forEach(c => killTree(c, c.stopSignal || 'SIGTERM'));
   // The backend finishes requests in progress and closes the database
   // first (up to its SHUTDOWN_TIMEOUT_SECONDS, 30 by default); force
   // anything still running after 35 seconds.
@@ -101,7 +101,7 @@ if (apiMode) {
   // matches the Vite proxy in vite.config.ts. DATABASE_URL is deliberately
   // not set: the backend reads it from .env (or .env.example).
   console.log('[Orchestrator] Starting Go Backend on port 8080...');
-  start('Go Backend', 'go', ['run', '.'], {
+  const backend = start('Go Backend', 'go', ['run', '.'], {
     cwd: path.join(__dirname, 'golang-backend'),
     shell: isWindows,
     env: {
@@ -112,6 +112,11 @@ if (apiMode) {
       SEED_DEMO_USERS: process.env.SEED_DEMO_USERS || 'true'
     }
   });
+  // SIGINT, not SIGTERM: `go run` dies at once on SIGTERM, leaving the
+  // server it started orphaned with a broken log pipe (its next log line
+  // killed it mid-request); on SIGINT it waits while the server - same
+  // process group - shuts down cleanly.
+  backend.stopSignal = 'SIGINT';
 }
 
 // 2. Vite frontend on port 3000 - in API mode only once the backend says

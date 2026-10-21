@@ -93,6 +93,13 @@ func main() {
 	// down gracefully (see the end of main).
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// The first signal starts a clean shutdown; after it, signals act as
+	// usual again, so a second Ctrl+C / SIGTERM ends the process at once
+	// (e.g. while startup work or the drain below is still running).
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 
 	// 1. Database configurations setup
 	pgConnString := os.Getenv("DATABASE_URL")
@@ -372,8 +379,8 @@ func main() {
 
 	// Health checks for Docker / the reverse proxy (outside /api/v1: no auth,
 	// no body limits): /healthz = the process is up; /readyz = it serves
-	// requests and the database answers (503 while shutting down, so a
-	// proxy stops sending traffic first).
+	// requests and the database answers (503 until startup is done, or while
+	// the database is unreachable).
 	var ready atomic.Bool
 	router.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	router.GET("/readyz", func(c *gin.Context) {
@@ -424,11 +431,13 @@ func main() {
 	// taken), then shut down in order: stop taking requests and let those in
 	// flight finish (up to SHUTDOWN_TIMEOUT_SECONDS, default 30), stop the
 	// background work, and only then close the database connections.
+	exitCode := 0
 	select {
 	case err := <-serveErr:
 		ready.Store(false)
 		if !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("ERROR: HTTP server stopped: %v\n", err)
+			exitCode = 1 // a failure, so restart policies (on-failure) apply
 		}
 		stop()
 	case <-ctx.Done():
@@ -439,6 +448,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
+		srv.Close() // close the connections of requests still running
 		log.Printf("WARNING: requests still running after %s were cut off: %v\n", grace, err)
 	}
 	log.Println("HTTP server stopped. Waiting for background jobs...")
@@ -451,6 +461,10 @@ func main() {
 	}
 	if err := sqlDB.Close(); err != nil {
 		log.Printf("WARNING: closing the database connections: %v\n", err)
+	}
+	if exitCode != 0 {
+		log.Println("Stopped after an error.")
+		os.Exit(exitCode)
 	}
 	log.Println("Stopped cleanly.")
 }
@@ -465,7 +479,10 @@ func connectDB(ctx context.Context, dsn string) (*gorm.DB, *sql.DB) {
 	for attempt := 1; ; attempt++ {
 		// Quiet while retrying (this function logs each attempt itself);
 		// the normal logger (slow-query warnings etc.) once connected.
-		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+		// No automatic ping: it has no time limit, so a database host that
+		// accepts the connection and never answers hung startup (and
+		// ignored Ctrl+C). The ping below is bounded and stops on a signal.
+		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), DisableAutomaticPing: true})
 		if err == nil {
 			db.Logger = logger.Default
 			var sqlDB *sql.DB

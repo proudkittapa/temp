@@ -114,6 +114,8 @@ const RETRY_WINDOW_MS = 2 * 60 * 1000;
 const newIdempotencyKey = () => typeof crypto !== 'undefined' && crypto.randomUUID
   ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 
+const READ_TIMEOUT_MS = 20000;
+
 async function request<T>(
   path: string,
   opts: { method?: string; body?: unknown; form?: FormData; session?: SessionKind } = {}
@@ -140,16 +142,26 @@ async function request<T>(
     headers['Idempotency-Key'] = pending.key;
   }
 
+  // Reads give up after READ_TIMEOUT_MS: the screens skip a refresh while
+  // one is still running, so a request stuck on a dead connection (minutes
+  // of TCP retries) would otherwise freeze them with no error shown.
+  // Writes are left to finish - their outcome matters, and a retry reuses
+  // the Idempotency-Key.
+  const abort = method === 'GET' ? new AbortController() : undefined;
+  const timer = abort ? setTimeout(() => abort.abort(), READ_TIMEOUT_MS) : undefined;
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}${path}`, { method, headers, body });
+    res = await fetch(`${API_BASE_URL}${path}`, { method, headers, body, signal: abort?.signal });
   } catch {
+    if (abort?.signal.aborted) throw new ApiError('เซิร์ฟเวอร์ตอบช้าเกินไป กรุณาลองใหม่', 0);
     throw new ApiError(import.meta.env.DEV
       ? 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (is the Go backend running on :8080?)'
       : 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่', 0);
   }
   let json: { success?: boolean; error?: string; data?: unknown } | null = null;
-  try { json = await res.json(); } catch { /* not JSON - handled below */ }
+  try { json = await res.json(); } catch { /* not JSON (or timed out) - handled below */ }
+  clearTimeout(timer);
+  if (abort?.signal.aborted && !json) throw new ApiError('เซิร์ฟเวอร์ตอบช้าเกินไป กรุณาลองใหม่', 0);
   if (!res.ok || !json || json.success === false) {
     // An expired/invalid token: drop it so the UI falls back to logged-out -
     // unless the stored session is already a newer one (signed in again,
@@ -311,8 +323,10 @@ export async function refreshMe(kind: SessionKind): Promise<User | null> {
     saveSession(kind, { ...session, user });
     return user;
   } catch (e) {
-    if (e instanceof ApiError && e.status === 401) return null;
+    // Checked first: a 401 for the old token says nothing about a newer
+    // session stored meanwhile.
     if (getSession(kind)?.token !== session.token) return getSession(kind)?.user ?? null;
+    if (e instanceof ApiError && e.status === 401) return null;
     return session.user; // backend unreachable: keep showing the cached user
   }
 }

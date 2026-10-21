@@ -553,9 +553,20 @@ export function noShowFreedShare(court: Court, date: string, hour: string, booki
 export function resalePrice(court: Court, date: string, hour: string, bookings: Booking[], courts: Court[], normal: number): number | undefined {
   const freed = noShowFreedShare(court, date, hour, bookings, courts);
   if (freed === 0) return undefined;
-  const list = calculatePrice(court.type, date, hour, MemberType.NORMAL, court);
-  if (!list.isOpen) return undefined;
-  return Math.min(normal, roundBaht(list.total * freed * noShowRules().resalePercent / 100 + normal * (1 - freed)));
+  const list = listPrice(court, date, hour);
+  if (list === undefined) return undefined;
+  return Math.min(normal, roundBaht(list * freed * noShowRules().resalePercent / 100 + normal * (1 - freed)));
+}
+
+// The slot's price before any member discount (not even a NORMAL-tier one):
+// the rule's hourly price, at the half-court rate for a half court - the
+// server's SlotQuoter.ListPrice.
+export function listPrice(court: Court, date: string, hour: string): number | undefined {
+  const rule = findPricingRule(court.type, date, parseInt(hour, 10));
+  if (!rule) return undefined;
+  const half = court.shareOfGroup < 1
+    ? StorageService.get<PricingConfig>('pricing_config', DEFAULT_PRICING_CONFIG).halfCourtRatePercent / 100 : 1;
+  return roundBaht(rule.pricePerHour * half);
 }
 
 function findBookingAt(courtId: string, date: string, hour: string, bookings: Booking[], courts: Court[], match: (b: Booking) => boolean): Booking | undefined {

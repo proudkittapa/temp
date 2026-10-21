@@ -18,6 +18,57 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Review fixes for the graceful lifecycle and the resale fixes
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `f13923a`)
+- **Changed:** 8 confirmed findings of a review of ebca032..f13923a.
+  1. `dev-runner.js`: stops the Go backend with SIGINT. On SIGTERM `go run`
+     died at once, leaving the real server orphaned with a broken log pipe
+     (its next log line killed it, mid-request) - so the graceful shutdown
+     never happened under `npm run dev:api`.
+  2. `connectDB`: `DisableAutomaticPing` - GORM's own ping had no time
+     limit, so a database host that accepts and never answers hung startup
+     forever and ignored Ctrl+C. Only the bounded `PingContext` remains.
+  3. A failed listener (port taken) exits with status 1 ("Stopped after an
+     error."), so restart policies apply; it exited 0 before.
+  4. After the first signal, signals act normally again: a second Ctrl+C /
+     SIGTERM ends the process at once. `srv.Close()` after the drain time
+     runs out, so the limit holds.
+  5. Occupancy: a no-show is left out when any later paid booking uses the
+     same or a conflicting court that hour (was: only the one named by
+     `resale_of` - both halves no-shows + full court resold counted 1.5).
+     Server `notResoldNoShow` and AdminPanel `occupiedShare`.
+  6. `api.ts`: GET requests time out after 20 s ("เซิร์ฟเวอร์ตอบช้าเกินไป").
+     The refresh skips a tick while a load runs, so one request stuck on a
+     dead connection froze the screen with no error. Writes have no
+     timeout (their outcome matters; retries reuse the idempotency key).
+  7. `mockData.ts` `listPrice`: resale list price without the NORMAL tier
+     discount, as the server's `ListPrice` (the preview disagreed if an
+     admin gave NORMAL a discount).
+  8. `refreshMe`: the newer-session check runs before the 401 return.
+  - Also: `/readyz` comment corrected; staff logout clears the load-error
+    banners.
+- **Verified:** `go vet`, `go test ./...`, `tsc`, `vitest` 60/60.
+  - Silent DB host (accepts, never answers): Ctrl+C stops the wait at
+    once; with `DB_CONNECT_TIMEOUT_SECONDS=8` it exits 1 after 2 attempts.
+  - Port taken: "ERROR: ... address already in use", exit status 1.
+  - `node dev-runner.js --api`, Ctrl+C during a booking held 3 s by a row
+    lock: the booking returned 201, backend logged "Stopped cleanly.",
+    no process left running.
+  - Second SIGTERM during the drain: the process ended at once.
+  - Occupancy live: both halves no-show then the full court sold -> 1
+    court-hour (0.3% of 19 courts x 16 h), not 1.5.
+- **Not done / follow-ups (suspected, not fixed):** a second instance
+  starting while the first builds an index CONCURRENTLY waits in
+  `ensureIndexes` (setup connection has no lock_timeout) - only matters
+  with several instances; `/readyz` has no drain delay before the listener
+  closes (fine for one instance); `seenSlip` pins the version when the
+  queue loads, not when the card is first looked at (an extra click at
+  worst).
+
+---
+
 ## 2026-10-21 — Review fixes: live refresh, no-show resale, index builds
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
