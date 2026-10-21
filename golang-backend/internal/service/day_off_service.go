@@ -129,7 +129,8 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 		}
 		res.DayOff = d
 
-		q := tx.Where("date = ? AND status != ?", in.Date, model.BookingCancelled)
+		// A no-show no longer holds its court: nobody to contact.
+		q := tx.Where("date = ? AND status NOT IN ?", in.Date, []model.BookingStatus{model.BookingCancelled, model.BookingNoShow})
 		if in.CourtID != nil {
 			q = q.Where("court_id IN ?", coveredCourtIDs)
 		}

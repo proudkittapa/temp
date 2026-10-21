@@ -519,7 +519,7 @@ export function findNoShow(courtId: string, date: string, hour: string, bookings
 
 // No-show rules (server settings, cached with the pricing config): marking
 // is allowed from graceMinutes after the start; a freed hour costs the
-// court's normal hourly price x resalePercent (no member / half-court rate).
+// court's normal non-member price x resalePercent (see resalePrice).
 export function noShowRules(): { graceMinutes: number; resalePercent: number } {
   const c = StorageService.get<Partial<PricingConfig>>('pricing_config', {});
   return { graceMinutes: c.noShowGraceMinutes ?? 15, resalePercent: c.noShowResalePercent ?? 50 };
@@ -529,9 +529,33 @@ export function noShowRules(): { graceMinutes: number; resalePercent: number } {
 export function noShowOpenAt(date: string, startTime: string): Date {
   return new Date(new Date(`${date}T${startTime}:00+07:00`).getTime() + noShowRules().graceMinutes * 60000);
 }
-export function resalePrice(court: Court, date: string, hour: string): number | undefined {
-  const rule = findPricingRule(court.type, date, parseInt(hour, 10));
-  return rule ? roundBaht(rule.pricePerHour * noShowRules().resalePercent / 100) : undefined;
+// How much of court (0..1) no-shows freed at this hour - same rule as the
+// server (noShowFreedShare): all of it when the no-show held the same court
+// or the full court over this half; for the full court, the share of the
+// halves that were no-shows.
+export function noShowFreedShare(court: Court, date: string, hour: string, bookings: Booking[], courts: Court[]): number {
+  let share = 0;
+  const counted = new Set<string>();
+  for (const b of bookings) {
+    if (b.status !== BookingStatus.NO_SHOW || b.date !== date || b.startTime !== hour || counted.has(b.courtId)) continue;
+    const other = courts.find(c => c.id === b.courtId);
+    if (!other || !courtsConflict(court, other)) continue;
+    counted.add(other.id);
+    if (other.id === court.id || isHubCourt(other)) return 1;
+    share += other.shareOfGroup;
+  }
+  return Math.min(share, 1);
+}
+// The price of an hour that no-shows freed (some of), or undefined if none
+// did - same rule as the server (planSlots): the freed share at the court's
+// normal non-member price (half-court rate included) x resalePercent, the
+// rest at `normal` (this customer's usual price), never above `normal`.
+export function resalePrice(court: Court, date: string, hour: string, bookings: Booking[], courts: Court[], normal: number): number | undefined {
+  const freed = noShowFreedShare(court, date, hour, bookings, courts);
+  if (freed === 0) return undefined;
+  const list = calculatePrice(court.type, date, hour, MemberType.NORMAL, court);
+  if (!list.isOpen) return undefined;
+  return Math.min(normal, roundBaht(list.total * freed * noShowRules().resalePercent / 100 + normal * (1 - freed)));
 }
 
 function findBookingAt(courtId: string, date: string, hour: string, bookings: Booking[], courts: Court[], match: (b: Booking) => boolean): Booking | undefined {

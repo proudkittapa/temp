@@ -18,6 +18,71 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Review fixes: live refresh, no-show resale, index builds
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `ebca032`)
+- **Changed:** the 12 confirmed findings of a review of a33e71d..396d334.
+  1. Slip approval: each card remembers the slip version (upload time) it
+     first showed; approve/reject send that one, not the version the 15 s
+     refresh brought in. A replaced slip shows `#slip-changed-notice` and
+     blocks both buttons until staff click "ตรวจสลิปใหม่แล้ว"
+     (`StaffPOS.tsx` `seenSlip`).
+  2. `api.refreshMe` no longer writes the old session back if the user
+     signed out or someone else signed in while `/auth/me` was in flight.
+  3. New `useLiveLoad` (`src/useLiveTick.ts`): a refresh tick never drops
+     the load in progress and is skipped while one runs (before, a load
+     slower than the interval was cancelled on every tick: frozen data, no
+     error banner, piled-up requests). Used by the staff main/grid loads
+     and the customer grid load. The grid has its own error state, so the
+     banner no longer flickers. Storage events wake only a visible tab, at
+     most every 3 s; pricing rules and member discounts load in a fixed
+     order, so two tabs can't keep waking each other.
+  4. and 6. Resale price (`booking_service.go` `noShowFreedShare`,
+     `SlotQuoter.ListPrice`; `mockData.ts` `noShowFreedShare`/
+     `resalePrice`): the freed share of the court at percent x the normal
+     non-member price **with the half-court rate** (half 250 -> 125, was
+     250 = no discount, and 500 at 100%); a full court over one no-show
+     half: that half discounted, the other at the normal price (375); never
+     above the customer's normal price. Percent range now 1-100 (0 made
+     free QR bookings). **Departs from the earlier "percent replaces the
+     half-court rate" note - flagged for the owner in TODO 12.**
+  5. Browser-only PromptPay walk-in on a resale hour: QR and pending box
+     use the booked amount (were the full price); `resaleOf` is stored.
+     Local no-show re-reads the booking and refuses a second mark (it took
+     the point back twice).
+  7. Occupancy (dashboard and hourly chart, server and browser) counts a
+     re-sold no-show once (`notResoldNoShow` in `report_service.go`).
+  8. Admin day grid ignores no-shows.  9. Day-off "affected bookings"
+     leaves out no-shows.  10. Payment screen hides slip upload once
+     REJECTED.
+  11. `buildPerfIndexes`: one connection, `statement_timeout`/`lock_timeout`
+     0 even if DATABASE_URL sets them, and `pg_try_advisory_lock(4204)` so
+     a second instance skips instead of dropping the first one's
+     half-built index.
+  12. The new double-booking index is created before the old one is
+     dropped (old kept if the create fails); `IsLiveSlotConflict` knows
+     both names.
+- **Verified:** `go vet`, `go test ./...` (new `TestNoShowFreedShare`),
+  `tsc`, `vitest` 60/60 (resale tests rewritten).
+  - Live API: half normal 250; full court over a no-show half 375
+    (`resale_of` set); same half after its no-show 125; the other half
+    250 with no resale. Dashboard loads.
+  - Live startup: old index recreated by hand -> dropped on start; a
+    dropped perf index rebuilt; with lock 4204 held elsewhere -> "another
+    instance is building them - skipped here", built on the next start.
+  - Playwright (API mode): staff slip queue open, customer re-uploads ->
+    after the refresh the notice shows and approve is disabled; after
+    acknowledging, approve works; no page errors.
+- **Not done / follow-ups:** `planSlots` reads no-shows outside its
+  transaction (a booking at the very moment of a no-show mark pays full
+  price - harmless). The receipt modal's booking isn't refreshed by the
+  live tick (the server refuses stale actions). No undo for a no-show
+  (owner decision, TODO 12). The audit search now matches across fields
+  (e.g. "admin create") - left as is.
+
+---
+
 ## 2026-10-21 — Graceful start-up and shutdown
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

@@ -82,3 +82,35 @@ func TestRuleForHourTreatsUncoveredHoursAsClosed(t *testing.T) {
 		}
 	}
 }
+
+func TestNoShowFreedShare(t *testing.T) {
+	group := "bball-1"
+	full := model.Court{ID: "full", MutexGroupID: &group, ShareOfGroup: 1}
+	halfB := model.Court{ID: "half-b", MutexGroupID: &group, ShareOfGroup: 0.5}
+	halfC := model.Court{ID: "half-c", MutexGroupID: &group, ShareOfGroup: 0.5}
+	solo := model.Court{ID: "bad-1", ShareOfGroup: 1}
+	courts := map[string]model.Court{full.ID: full, halfB.ID: halfB, halfC.ID: halfC, solo.ID: solo}
+	ns := func(court string) model.Booking {
+		return model.Booking{ID: "ns-" + court, CourtID: court, StartTime: "09:00", Status: model.BookingNoShow}
+	}
+	cases := []struct {
+		name    string
+		court   model.Court
+		noShows []model.Booking
+		want    float64
+	}{
+		{"same court", solo, []model.Booking{ns("bad-1")}, 1},
+		{"half under a no-show full court", halfB, []model.Booking{ns("full")}, 1},
+		{"full court over one no-show half", full, []model.Booking{ns("half-b")}, 0.5},
+		{"full court over both halves", full, []model.Booking{ns("half-b"), ns("half-c")}, 1},
+		{"same half twice (resale was a no-show too)", full, []model.Booking{ns("half-b"), ns("half-b")}, 0.5},
+		{"the other half frees nothing", halfC, []model.Booking{ns("half-b")}, 0},
+		{"another hour", solo, []model.Booking{{CourtID: "bad-1", StartTime: "10:00"}}, 0},
+	}
+	for _, c := range cases {
+		got, of := noShowFreedShare(c.court, "09:00", c.noShows, courts)
+		if got != c.want || (got > 0) != (of != nil) {
+			t.Errorf("%s: got %v (of %v), want %v", c.name, got, of, c.want)
+		}
+	}
+}

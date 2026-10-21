@@ -21,10 +21,17 @@ var ErrSlotTaken = errors.New("slot already booked")
 // in main.go). The row locks and overlap checks normally stop a clash first.
 const LiveSlotIndex = "idx_bookings_held_slot"
 
-// IsLiveSlotConflict reports an insert/update that LiveSlotIndex refused.
+// OldLiveSlotIndex is LiveSlotIndex before no-shows freed the court; it is
+// dropped at startup once LiveSlotIndex exists (ensureIndexes) and kept if
+// that failed.
+const OldLiveSlotIndex = "idx_bookings_live_slot"
+
+// IsLiveSlotConflict reports an insert/update that LiveSlotIndex (or the old
+// index, while it is still there) refused.
 func IsLiveSlotConflict(err error) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == LiveSlotIndex
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+		(pgErr.ConstraintName == LiveSlotIndex || pgErr.ConstraintName == OldLiveSlotIndex)
 }
 
 type BookingRepository struct {

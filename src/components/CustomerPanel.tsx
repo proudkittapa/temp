@@ -6,7 +6,7 @@ import {
 } from '../types';
 import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime, businessInfo } from '../mockData';
 import { prepareSlipImage, SlipImageError } from '../slipImage';
-import { useLiveTick } from '../useLiveTick';
+import { useLiveLoad, useLiveTick } from '../useLiveTick';
 import * as api from '../api';
 import { canUseCounter, canUseSettings } from '../permissions';
 import { notify, ask } from './Dialog';
@@ -255,67 +255,63 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const myLineMessages = loggedInUser
     ? lineMessages.filter(m => normalizePhone(m.recipientPhone) === normalizePhone(loggedInUser.phone || ''))
     : [];
-  useEffect(() => {
+  useLiveLoad(async isCurrent => {
     if (!api.USE_BACKEND || !selectedDate) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        // Check the session first: if it lapsed, fall back to logged-out
-        // and load the public views, instead of letting the logged-in-only
-        // calls fail the whole load.
-        const me = loggedInUserId ? await api.refreshMe('customer') : null;
-        if (cancelled) return;
-        if (loggedInUserId && !me) {
-          setLoggedInUser(null);
-          clearCustomerScreen();
-          setAuthError('⏰ เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
-          return; // loggedInUserId changes, so this effect re-runs logged out
-        }
-        if (me) setLoggedInUser(me);
-
-        // What the grid needs must all arrive; the extras (rewards, vouchers,
-        // the price preview's pricing cache) may fail on their own without
-        // leaving the grid on the previous date's bookings.
-        // syncPricingCache refreshes the pricing the price preview reads, so
-        // it shows what the server will actually charge.
-        const extras = Promise.allSettled([
-          api.syncPricingCache(),
-          api.listRewards(),
-          me ? api.myVouchers() : Promise.resolve([] as api.VoucherInfo[])
-        ]);
-        const [apiCourts, dayBookings, mine, closures] = await Promise.all([
-          api.listCourts(),
-          api.listBookingsByDate(selectedDate),
-          me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
-          api.listDaysOff(selectedDate, selectedDate)
-        ]);
-        const [, rewards, vouchers] = await extras;
-        if (cancelled) return;
-        if (rewards.status === 'fulfilled') {
-          setApiRewards(rewards.value.map(r => ({ id: r.id, name: r.name, cost: r.pointsCost, description: '', emoji: r.emoji })));
-        }
-        if (vouchers.status === 'fulfilled') {
-          setRedemptions(vouchers.value.map(v => ({
-            id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId,
-            rewardName: `${v.rewardEmoji} ${v.rewardName}`, pointsSpent: v.pointsSpent, claimCode: v.code,
-            redeemedAt: formatDate(v.createdAt)
-          })));
-        }
-        setDaysOff(closures);
-        // The customer's own rows carry their details; prefer them over the
-        // copies in the by-date list.
-        const mineById = new Map(mine.bookings.map(b => [b.id, b]));
-        setCourts(apiCourts);
-        setBookings([...dayBookings.filter(b => !mineById.has(b.id)), ...mine.bookings]);
-        setPayments(mine.payments);
-        setLoadedDate(selectedDate);
-        setApiError(null);
-      } catch (err) {
-        if (!cancelled) setApiError(err instanceof Error ? err.message : String(err));
+    try {
+      // Check the session first: if it lapsed, fall back to logged-out
+      // and load the public views, instead of letting the logged-in-only
+      // calls fail the whole load.
+      const me = loggedInUserId ? await api.refreshMe('customer') : null;
+      if (!isCurrent()) return;
+      if (loggedInUserId && !me) {
+        setLoggedInUser(null);
+        clearCustomerScreen();
+        setAuthError('⏰ เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
+        return; // loggedInUserId changes, so this effect re-runs logged out
       }
-    })();
-    return () => { cancelled = true; };
-  }, [triggerRefresh, selectedDate, loggedInUserId, liveTick]);
+      if (me) setLoggedInUser(me);
+
+      // What the grid needs must all arrive; the extras (rewards, vouchers,
+      // the price preview's pricing cache) may fail on their own without
+      // leaving the grid on the previous date's bookings.
+      // syncPricingCache refreshes the pricing the price preview reads, so
+      // it shows what the server will actually charge.
+      const extras = Promise.allSettled([
+        api.syncPricingCache(),
+        api.listRewards(),
+        me ? api.myVouchers() : Promise.resolve([] as api.VoucherInfo[])
+      ]);
+      const [apiCourts, dayBookings, mine, closures] = await Promise.all([
+        api.listCourts(),
+        api.listBookingsByDate(selectedDate),
+        me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
+        api.listDaysOff(selectedDate, selectedDate)
+      ]);
+      const [, rewards, vouchers] = await extras;
+      if (!isCurrent()) return;
+      if (rewards.status === 'fulfilled') {
+        setApiRewards(rewards.value.map(r => ({ id: r.id, name: r.name, cost: r.pointsCost, description: '', emoji: r.emoji })));
+      }
+      if (vouchers.status === 'fulfilled') {
+        setRedemptions(vouchers.value.map(v => ({
+          id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId,
+          rewardName: `${v.rewardEmoji} ${v.rewardName}`, pointsSpent: v.pointsSpent, claimCode: v.code,
+          redeemedAt: formatDate(v.createdAt)
+        })));
+      }
+      setDaysOff(closures);
+      // The customer's own rows carry their details; prefer them over the
+      // copies in the by-date list.
+      const mineById = new Map(mine.bookings.map(b => [b.id, b]));
+      setCourts(apiCourts);
+      setBookings([...dayBookings.filter(b => !mineById.has(b.id)), ...mine.bookings]);
+      setPayments(mine.payments);
+      setLoadedDate(selectedDate);
+      setApiError(null);
+    } catch (err) {
+      if (isCurrent()) setApiError(err instanceof Error ? err.message : String(err));
+    }
+  }, [triggerRefresh, selectedDate, loggedInUserId], liveTick);
 
   // The payment screen follows the server: the payment as last loaded
   // (approved, rejected, expired, refunded), not the copy from when it was
@@ -2008,7 +2004,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               </div>
 
               {/* Upload Slip Selector Simulator - not once the payment is settled */}
-              <div className={`space-y-4${currentPayment?.status === PaymentStatus.VERIFIED || currentPayment?.status === PaymentStatus.REFUNDED ? ' hidden' : ''}`}>
+              <div className={`space-y-4${currentPayment?.status === PaymentStatus.VERIFIED || currentPayment?.status === PaymentStatus.REFUNDED || currentPayment?.status === PaymentStatus.REJECTED ? ' hidden' : ''}`}>
                 <div className="bg-slate-50 p-4 rounded-xl border border-dashed border-slate-200">
                   <span className="block text-xs font-semibold text-slate-700 mb-2">โอนแล้ว ส่งรูปสลิปที่นี่:</span>
                   

@@ -77,9 +77,10 @@ func (s *PriceEngineService) NewSlotQuoter(ctx context.Context, date string, mem
 // operating hours, so an uncovered hour is a closed hour rather than
 // something to price at a fallback rate (which also let a 03:00 half-court
 // booking slip past the off-peak-only check as priceType NORMAL).
-// BasePrice is the rule's hourly price for the sport and hour with no
-// member or half-court adjustment (the no-show resale price starts here).
-func (q *SlotQuoter) BasePrice(courtType model.CourtType, hour int) (float64, error) {
+// ListPrice is the slot's price before any member discount: the rule's
+// hourly price, at the half-court rate for a half court. The no-show resale
+// price is a percentage of it.
+func (q *SlotQuoter) ListPrice(courtType model.CourtType, hour int, isHalfCourt bool) (float64, error) {
 	rules, ok := q.rules[courtType]
 	if !ok {
 		var err error
@@ -92,7 +93,7 @@ func (q *SlotQuoter) BasePrice(courtType model.CourtType, hour int) (float64, er
 	if rule == nil {
 		return 0, fmt.Errorf("no price for %s at %02d:00", courtType, hour)
 	}
-	return rule.PricePerHour, nil
+	return RoundBaht(ApplyRateAdjustments(rule.PricePerHour, isHalfCourt, q.halfCourtRate, 0)), nil
 }
 
 func (q *SlotQuoter) Quote(courtType model.CourtType, hour int, isHalfCourt bool) (amount float64, priceType string, open bool, err error) {

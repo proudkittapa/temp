@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -61,12 +62,39 @@ const (
 
 // No-show rules (owner decisions 2026-10-21): staff can mark a no-show
 // from NO_SHOW_GRACE_MINUTES after the hour starts (default 15); the hour is
-// then free, and booking it costs the court's normal hourly price x
-// NO_SHOW_RESALE_PRICE_PERCENT / 100 (default 50, 100 = full price) - in
-// place of member and half-court discounts.
+// then free, and booking it costs the court's normal (non-member) price -
+// half-court rate included - x NO_SHOW_RESALE_PRICE_PERCENT / 100 (default
+// 50, 100 = full price), in place of the member discount and never more
+// than the customer's normal price (see noShowFreedShare for half courts).
 func NoShowGraceMinutes() int { return envIntRange("NO_SHOW_GRACE_MINUTES", 15, 0, 120) }
 func NoShowResalePercent() int {
-	return envIntRange("NO_SHOW_RESALE_PRICE_PERCENT", 50, 0, 100)
+	return envIntRange("NO_SHOW_RESALE_PRICE_PERCENT", 50, 1, 100) // 0 would make free bookings (0-baht QR)
+}
+
+// noShowFreedShare is how much of court (0..1) no-shows freed at this hour,
+// and the no-show it re-sells: all of it when the no-show held the same
+// court or the full court over this half; when court is the full court,
+// the share of the halves that were no-shows (the other half was free).
+func noShowFreedShare(court model.Court, start string, noShows []model.Booking, courts map[string]model.Court) (float64, *string) {
+	share := 0.0
+	var of *string
+	counted := map[string]bool{}
+	for _, ns := range noShows {
+		other, ok := courts[ns.CourtID]
+		if !ok || ns.StartTime != start || counted[other.ID] || !model.CourtsConflict(court, other) {
+			continue
+		}
+		counted[other.ID] = true
+		if of == nil {
+			id := ns.ID
+			of = &id
+		}
+		if other.ID == court.ID || other.IsHub() {
+			return 1, of
+		}
+		share += other.ShareOfGroup
+	}
+	return math.Min(share, 1), of
 }
 
 func envIntRange(name string, def, min, max int) int {
@@ -599,17 +627,17 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 		if court.OffPeakOnly && priceType != "OFFPEAK" {
 			return nil, fmt.Errorf("%w: %s can only be booked during off-peak hours", ErrSlotUnavailable, court.Name)
 		}
-		var resaleOf *string
-		for _, ns := range noShows {
-			if other, ok := courtByID[ns.CourtID]; ok && ns.StartTime == sl.StartTime && model.CourtsConflict(court, other) {
-				id := ns.ID
-				resaleOf = &id
-				base, err := quoter.BasePrice(court.Type, hour)
-				if err != nil {
-					return nil, fmt.Errorf("pricing calculation failed: %w", err)
-				}
-				amount = RoundBaht(base * float64(NoShowResalePercent()) / 100)
-				break
+		freed, resaleOf := noShowFreedShare(court, sl.StartTime, noShows, courtByID)
+		if freed > 0 {
+			list, err := quoter.ListPrice(court.Type, hour, court.ShareOfGroup < 1)
+			if err != nil {
+				return nil, fmt.Errorf("pricing calculation failed: %w", err)
+			}
+			// The freed part at the resale rate, the rest (the other half of
+			// a full court) at the normal price - never above the normal
+			// price for this customer.
+			if resale := RoundBaht(list*freed*float64(NoShowResalePercent())/100 + amount*(1-freed)); resale < amount {
+				amount = resale
 			}
 		}
 		planned = append(planned, plannedSlot{court: court, startTime: sl.StartTime, endTime: endTime, amount: amount, priceType: priceType, resaleOf: resaleOf})

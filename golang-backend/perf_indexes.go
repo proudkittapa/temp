@@ -25,6 +25,10 @@ type perfIndex struct {
 	trigram          bool // needs the pg_trgm extension
 }
 
+// perfIndexLockKey: one instance builds the indexes at a time
+// (pg_try_advisory_lock; 4201-4203 are taken, see main.go).
+const perfIndexLockKey = 4204
+
 var perfIndexes = []perfIndex{
 	{"idx_order_items_order_id", "order_items", "(order_id)", false},                                 // every sale view, return, void, day summary
 	{"idx_bookings_user_date", "bookings", "(user_id, date DESC, start_time)", false},                // my bookings, unpaid-booking cap
@@ -69,6 +73,30 @@ func buildPerfIndexes(ctx context.Context, dsn string) {
 	// Builds on big tables are slow by nature; report them below instead of
 	// as GORM "SLOW SQL" warnings.
 	db = db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent), Context: ctx})
+
+	// One connection, so the settings and the lock below hold for every
+	// statement. No time limits even if DATABASE_URL sets some (a build cut
+	// off by statement_timeout is left INVALID and redone on every start).
+	// Only one instance builds at a time: a second one starting meanwhile
+	// (two replicas, a rolling deploy) would take the first one's
+	// half-built index for an interrupted build, drop it and start again.
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+	if err := db.Exec("SET statement_timeout = 0; SET lock_timeout = 0").Error; err != nil {
+		log.Printf("WARNING: performance indexes skipped - %v\n", err)
+		return
+	}
+	var locked bool
+	if err := db.Raw("SELECT pg_try_advisory_lock(?)", perfIndexLockKey).Scan(&locked).Error; err != nil || !locked {
+		if err != nil {
+			log.Printf("WARNING: performance indexes skipped - %v\n", err)
+		} else {
+			log.Println("Performance indexes: another instance is building them - skipped here.")
+		}
+		return
+	}
+	// Released when the connection closes (deferred above).
 
 	trigram := true
 	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS pg_trgm").Error; err != nil {

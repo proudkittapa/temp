@@ -43,13 +43,16 @@ type PricingSnapshot struct {
 func (s *PricingAdminService) Snapshot(ctx context.Context) (*PricingSnapshot, error) {
 	db := s.db.WithContext(ctx)
 	snap := &PricingSnapshot{NoShowGraceMinutes: NoShowGraceMinutes(), NoShowResalePercent: NoShowResalePercent()}
-	if err := db.Order("court_type, day_type, start_hour").Find(&snap.Rules).Error; err != nil {
+	// A fixed order (id breaks ties): the screens cache this and other open
+	// tabs reload when the cached copy changes, so a shuffled order made
+	// tabs keep waking each other.
+	if err := db.Order("court_type, day_type, start_hour, id").Find(&snap.Rules).Error; err != nil {
 		return nil, err
 	}
 	if err := db.First(&snap.Config, "id = ?", "global").Error; err != nil {
 		return nil, fmt.Errorf("failed to load pricing config: %w", err)
 	}
-	if err := db.Find(&snap.MemberDiscounts).Error; err != nil {
+	if err := db.Order("member_type").Find(&snap.MemberDiscounts).Error; err != nil {
 		return nil, err
 	}
 	return snap, nil

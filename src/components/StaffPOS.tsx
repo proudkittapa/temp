@@ -9,7 +9,7 @@ import * as api from '../api';
 import { notify, ask, askText, dialog } from './Dialog';
 import DemoLogins, { DEMO_STAFF, DEMO_ADMINS } from './DemoLogins';
 import MemberPhoneInput from './MemberPhoneInput';
-import { useLiveTick } from '../useLiveTick';
+import { useLiveLoad, useLiveTick } from '../useLiveTick';
 import { can, canUseCounter, Permission } from '../permissions';
 import { Check, X, ShoppingCart, Activity, AlertTriangle, ShieldCheck, Receipt, Plus, Minus, CheckCircle2, AlertOctagon } from 'lucide-react';
 
@@ -143,7 +143,28 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [staffIdentity, setStaffIdentity] = useState<string>('');
   const [staffPassword, setStaffPassword] = useState<string>('');
   const [staffApiError, setStaffApiError] = useState<string | null>(null);
+  // The walk-in grid's own load error: kept apart from staffApiError, which
+  // the main load clears on success - sharing one made the banner flicker
+  // on and off with whichever load finished last.
+  const [gridError, setGridError] = useState<string | null>(null);
   const [reviewQueue, setReviewQueue] = useState<api.PaymentForReview[]>([]);
+  // The slip version (upload time) each card first showed staff. Approve and
+  // reject send this, not the latest reloaded one: the queue refreshes every
+  // 15 s, and a slip the customer replaced while staff were checking the old
+  // one in another tab must not be approved unseen - the server refuses the
+  // mismatch, and the card asks staff to look at the new slip first.
+  const [seenSlip, setSeenSlip] = useState<Record<string, string | undefined>>({});
+  useEffect(() => {
+    setSeenSlip(prev => {
+      const missing = reviewQueue.filter(r => !(r.payment.id in prev));
+      if (missing.length === 0) return prev;
+      const next = { ...prev };
+      missing.forEach(r => { next[r.payment.id] = r.payment.slipUploadedAt; });
+      return next;
+    });
+  }, [reviewQueue]);
+  const slipVersionShown = (paymentId: string) =>
+    paymentId in seenSlip ? seenSlip[paymentId] : reviewQueue.find(r => r.payment.id === paymentId)?.payment.slipUploadedAt;
   // API mode: today's booking money by method, for the cash-drawer report.
   const [daySummary, setDaySummary] = useState<api.DaySummary | null>(null);
   // API mode: today's bookings for the day report - `bookings` holds the
@@ -162,14 +183,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // other counters' bookings and sales) and when staff come back to it.
   const liveTick = useLiveTick(15000);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
-  useEffect(() => {
+  useLiveLoad(isCurrent => {
     if (!api.USE_BACKEND || !staffUserId) return;
-    let cancelled = false;
     const isManager = can(staffUser, 'view_reports');
-    Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals(),
+    return Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals(),
       api.currentShift(), isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[]), api.listBookingsByDate(getTodayDateStr(), 'staff')])
       .then(([queue, summary, prods, dayOrders, rentals, openShift, history, todays]) => {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setTodayBookingsApi(todays);
         setShift(openShift);
         setShiftHistory(history);
@@ -182,49 +202,45 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         setLastSyncAt(Date.now());
       })
       .catch(err => {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         if (err instanceof api.ApiError && err.status === 401) setStaffUser(null);
         setStaffApiError(err.message);
       });
-    return () => { cancelled = true; };
-  }, [triggerRefresh, staffUserId, staffRole, liveTick]);
+  }, [triggerRefresh, staffUserId, staffRole], liveTick);
 
   // API mode: the walk-in grid shows the backend's bookings for the chosen
   // date (online + walk-in), so the counter can't sell a slot that was
   // already booked online. Also re-validates the staff session.
-  useEffect(() => {
+  useLiveLoad(async isCurrent => {
     if (!api.USE_BACKEND || !staffUserId || !walkinDate) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const me = await api.refreshMe('staff');
-        if (cancelled) return;
-        if (!me || !canUseCounter(me)) {
-          // Signed out, or the role lost its counter permissions.
-          setStaffUser(null);
-          setStaffApiError('เซสชันพนักงานหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
-          return;
-        }
-        // Name or role changed by an admin since sign-in.
-        setStaffUser(me);
-        const [apiCourts, dayBookings, closures] = await Promise.all([
-          api.listCourts(),
-          api.listBookingsByDate(walkinDate, 'staff'),
-          api.listDaysOff(walkinDate, walkinDate),
-          // Price previews read it; a failure here mustn't block the grid.
-          api.syncPricingCache().catch(() => undefined)
-        ]);
-        if (cancelled) return;
-        setCourts(apiCourts);
-        setBookings(dayBookings);
-        setDaysOff(closures);
-        setLoadedDate(walkinDate);
-      } catch (err) {
-        if (!cancelled) setStaffApiError(err instanceof Error ? err.message : String(err));
+    try {
+      const me = await api.refreshMe('staff');
+      if (!isCurrent()) return;
+      if (!me || !canUseCounter(me)) {
+        // Signed out, or the role lost its counter permissions.
+        setStaffUser(null);
+        setStaffApiError('เซสชันพนักงานหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
+        return;
       }
-    })();
-    return () => { cancelled = true; };
-  }, [triggerRefresh, staffUserId, walkinDate, liveTick]);
+      // Name or role changed by an admin since sign-in.
+      setStaffUser(me);
+      const [apiCourts, dayBookings, closures] = await Promise.all([
+        api.listCourts(),
+        api.listBookingsByDate(walkinDate, 'staff'),
+        api.listDaysOff(walkinDate, walkinDate),
+        // Price previews read it; a failure here mustn't block the grid.
+        api.syncPricingCache().catch(() => undefined)
+      ]);
+      if (!isCurrent()) return;
+      setCourts(apiCourts);
+      setBookings(dayBookings);
+      setDaysOff(closures);
+      setLoadedDate(walkinDate);
+      setGridError(null);
+    } catch (err) {
+      if (isCurrent()) setGridError(err instanceof Error ? err.message : String(err));
+    }
+  }, [triggerRefresh, staffUserId, walkinDate], liveTick);
 
   const handleStaffLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -252,6 +268,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     api.logout('staff');
     setStaffUser(null);
     setReviewQueue([]);
+    setSeenSlip({});
     setDaySummary(null);
     setTodayBookingsApi([]);
     setShift(null);
@@ -509,7 +526,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const paidInCash = walkinPayMethod === PaymentMethod.CASH;
     const settledNow = paidInCash || useVoucher;
     // An hour freed by a no-show is re-sold at the resale price (as the server).
-    const resale = courtObj && findNoShow(courtObj.id, walkinDate, walkinSlot, bookings, courts) ? resalePrice(courtObj, walkinDate, walkinSlot) : undefined;
+    const resaleOf = courtObj ? findNoShow(courtObj.id, walkinDate, walkinSlot, bookings, courts) : undefined;
+    const resale = courtObj ? resalePrice(courtObj, walkinDate, walkinSlot, bookings, courts, priceDetail.total) : undefined;
     const amount = useVoucher ? 0 : resale ?? priceDetail.total;
 
     const bookingId = 'bk-walkin-' + Date.now();
@@ -526,6 +544,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       startTime: walkinSlot,
       endTime: (parseInt(walkinSlot.split(':')[0], 10) + 1).toString().padStart(2, '0') + ':00',
       isHalfCourt: isActuallyHalf,
+      ...(resale !== undefined && resaleOf ? { resaleOf: resaleOf.id } : {}),
       priceType: priceDetail.priceType,
       totalAmount: amount,
       // Cash is in the drawer (or a voucher paid for it), so it's confirmed
@@ -537,7 +556,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       createdBy: 'u-staff-1'
     };
 
-    const qrPayload = settledNow ? undefined : generatePromptPayPayload(LOCAL_PROMPTPAY_ID, priceDetail.total);
+    const qrPayload = settledNow ? undefined : generatePromptPayPayload(LOCAL_PROMPTPAY_ID, amount);
     const newPayment: Payment = {
       id: 'pay-walkin-' + Date.now(),
       bookingId: bookingId,
@@ -575,7 +594,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         paymentId: newPayment.id,
         bookingCode: bkCode,
         date: walkinDate,
-        amount: priceDetail.total,
+        amount,
         qrPayload: qrPayload || '',
         label: `${courtObj?.name || ''} ${walkinDate} ${walkinSlot}-${newBooking.endTime} (${walkinName})`
       });
@@ -600,7 +619,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       const entry = reviewQueue.find(r => r.payment.id === paymentId);
       // Send the slip version staff were shown, so the server refuses the
       // approval if the customer swapped the slip in the meantime.
-      return api.verifyPayment(paymentId, entry?.payment.slipUploadedAt)
+      return api.verifyPayment(paymentId, slipVersionShown(paymentId))
         .then(res => {
           if (entry) {
             // One line per booked hour: a group can span courts and
@@ -705,7 +724,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
     if (api.USE_BACKEND) {
       const entry = reviewQueue.find(r => r.payment.id === paymentId);
-      return api.rejectPayment(paymentId, reason, entry?.payment.slipUploadedAt)
+      return api.rejectPayment(paymentId, reason, slipVersionShown(paymentId))
         .then(res => {
           if (entry) {
             pushLineMessage(entry.bookings[0]?.userPhone || '', `❌ การจองถูกยกเลิกเนื่องจากตรวจสอบความถูกต้องสลิปไม่ผ่าน\nรหัส: ${res.bookingCode}\nเหตุผล: ${reason}\nหากมีข้อสงสัยติดต่อ LINE OA ได้นะคะ`, "CANCELLED");
@@ -981,7 +1000,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       return;
     }
     const court = courts.find(c => c.id === booking.courtId);
-    const resale = court ? resalePrice(court, booking.date, booking.startTime) : undefined;
+    // The price the freed hour will sell at (a walk-in, non-member).
+    const resale = court ? resalePrice(court, booking.date, booking.startTime, [{ ...booking, status: BookingStatus.NO_SHOW }], courts,
+      calculatePrice(court.type, booking.date, booking.startTime, MemberType.NORMAL, court).total) : undefined;
     if (!(await ask(`บันทึกว่าลูกค้าไม่มาใช้สนาม ${booking.startTime}-${booking.endTime} (${booking.bookingCode})?\nไม่คืนเงิน · สนามจะว่างให้ขายต่อ${resale !== undefined ? ` ราคาพิเศษ ${formatBaht(resale)} บาท` : ''}`, { okLabel: 'บันทึกไม่มา' }))) return;
     const done = () => {
       onAddAuditLog('BOOKING_NO_SHOW', 'Booking', booking.id, { status: booking.status }, { status: BookingStatus.NO_SHOW });
@@ -992,7 +1013,17 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (api.USE_BACKEND) {
       return api.markNoShow(booking.id).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
     }
-    StorageService.set('bookings', StorageService.get<Booking[]>('bookings', []).map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
+    // Re-read: the screen's copy may be stale, and marking twice would take
+    // the point back twice (the server refuses a second mark).
+    const stored = StorageService.get<Booking[]>('bookings', []);
+    const current = stored.find(b => b.id === booking.id)?.status;
+    if (current !== BookingStatus.CONFIRMED && current !== BookingStatus.COMPLETED) {
+      notify('บันทึกไม่สำเร็จ: การจองนี้ไม่ได้อยู่ในสถานะยืนยันแล้ว');
+      closeBookingDetail();
+      onRefreshAll();
+      return;
+    }
+    StorageService.set('bookings', stored.map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
     if (booking.totalAmount > 0) { // a free (voucher) hour earned no point to take back
       StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -1, 'staff', { note: `No-show ${booking.date} ${booking.startTime}` });
     }
@@ -1670,9 +1701,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     <div className="space-y-6">
       {/* A failed load leaves the previous data on screen - say so on every
           tab, not only on the slips tab. */}
-      {api.USE_BACKEND && staffApiError && (
+      {api.USE_BACKEND && (staffApiError || gridError) && (
         <p id="staff-load-error" role="alert" className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-4 py-2">
-          ⚠️ โหลดข้อมูลล่าสุดไม่สำเร็จ ข้อมูลที่เห็นอาจไม่เป็นปัจจุบัน: {staffApiError}{' '}
+          ⚠️ โหลดข้อมูลล่าสุดไม่สำเร็จ ข้อมูลที่เห็นอาจไม่เป็นปัจจุบัน: {staffApiError || gridError}{' '}
           <button type="button" onClick={onRefreshAll} className="underline font-bold">ลองใหม่</button>
         </p>
       )}
@@ -2152,7 +2183,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                         }
 
                         // An hour freed by a no-show: free, at the resale price.
-                        const resale = findNoShow(court.id, walkinDate, time, bookings, courts) ? resalePrice(court, walkinDate, time) : undefined;
+                        const resale = resalePrice(court, walkinDate, time, bookings, courts, priceBase.total);
                         const shownPrice = resale ?? priceBase.total;
 
                         if (isActiveSelection) {
@@ -2243,6 +2274,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     if (!bookingObj) return null;
                     const groupHours = slipQueueBookings.filter(b => b.bookingCode === bookingObj.bookingCode).length;
                     const courtName = courts.find(c => c.id === bookingObj.courtId)?.name || 'สนาม';
+                    const slipChanged = api.USE_BACKEND && pay.id in seenSlip && seenSlip[pay.id] !== pay.slipUploadedAt;
 
                     return (
                       <div key={pay.id} className="bg-slate-50 hover:bg-slate-100 p-4 rounded-xl border border-slate-200 text-xs space-y-2 relative transition">
@@ -2262,6 +2294,19 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                             <p className="text-[9px] text-slate-400">อัพโหลดเมื่อ: {pay.slipUploadedAt ? formatDateTime(pay.slipUploadedAt) : 'ไม่ระบุ'}</p>
                           </div>
                         </div>
+
+                        {slipChanged && (
+                          <div id="slip-changed-notice" className="bg-amber-50 border border-amber-300 text-amber-900 rounded-lg p-2 text-[11px] font-bold flex items-center justify-between gap-2">
+                            <span>⚠️ ลูกค้าส่งสลิปใหม่ระหว่างที่ตรวจ - ตรวจสลิปใหม่ด้านล่างก่อนอนุมัติ/ปฏิเสธ</span>
+                            <button
+                              type="button"
+                              onClick={() => setSeenSlip(prev => ({ ...prev, [pay.id]: pay.slipUploadedAt }))}
+                              className="shrink-0 bg-amber-600 hover:bg-amber-500 text-white px-2 py-1 rounded"
+                            >
+                              ตรวจสลิปใหม่แล้ว
+                            </button>
+                          </div>
+                        )}
 
                         {/* Interactive check actions */}
                         <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
@@ -2292,19 +2337,20 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           )}
 
                           <button
+                            disabled={slipChanged}
                             onClick={() => {
                               setRejectId(pay.id);
                               setRejectReason('');
                             }}
-                            className="bg-slate-200 hover:bg-slate-300 text-slate-700 py-1.5 px-3 rounded text-[11px] font-bold transition"
+                            className="disabled:opacity-40 bg-slate-200 hover:bg-slate-300 text-slate-700 py-1.5 px-3 rounded text-[11px] font-bold transition"
                           >
                             ❌ ปฏิเสธ
                           </button>
                           
                           <button
                             type="button"
-                            disabled={busy} onClick={guarded(() => handleVerifySlip(pay.id))}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
+                            disabled={busy || slipChanged} onClick={guarded(() => handleVerifySlip(pay.id))}
+                            className="disabled:opacity-40 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
                           >
                             <Check className="h-3.5 w-3.5" /> อนุมัติสล็อตจอง
                           </button>

@@ -286,8 +286,13 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   // Physical courts: a full court and its half-court sides share one
   // mutex group and count once.
   const physicalCourtCount = () => api.USE_BACKEND ? dash?.physicalCourts ?? 0 : new Set(courts.map(c => c.mutexGroupId || c.id)).size;
-  const occupiedShare = (list: Booking[]) =>
-    list.reduce((sum, b) => sum + (courts.find(c => c.id === b.courtId)?.shareOfGroup ?? 1), 0);
+  // A re-sold no-show hour counts once - through the resale booking (as the
+  // server's report).
+  const occupiedShare = (list: Booking[]) => {
+    const resold = new Set(bookings.filter(b => b.resaleOf && isPaidBooking(b)).map(b => b.resaleOf));
+    return list.reduce((sum, b) => b.status === BookingStatus.NO_SHOW && resold.has(b.id) ? sum
+      : sum + (courts.find(c => c.id === b.courtId)?.shareOfGroup ?? 1), 0);
+  };
 
   // Recharts chart data, all from recorded bookings and orders: the six
   // months up to the dashboard date.
@@ -1810,7 +1815,8 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                           // half-court side, but two half-court sides do NOT
                           // block each other), not just this exact court id.
                           const matchedBooking = gridBookings.find(b => {
-                            if (b.date !== dashboardSelectedDate || b.status === BookingStatus.CANCELLED) return false;
+                            // A no-show frees the court (findConflictingBooking).
+                            if (b.date !== dashboardSelectedDate || b.status === BookingStatus.CANCELLED || b.status === BookingStatus.NO_SHOW) return false;
                             const bookedCourt = courts.find(c => c.id === b.courtId);
                             if (!bookedCourt || !courtsConflict(court, bookedCourt)) return false;
                             const startH = parseInt(b.startTime.split(':')[0], 10);

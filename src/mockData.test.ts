@@ -184,9 +184,28 @@ describe('calculatePrice (FR-2)', () => {
 });
 
 describe('resalePrice (no-show resale, same rule as the server)', () => {
-  it('is the normal hourly price x 50% by default - no member or half-court rate', () => {
-    expect(resalePrice(standalone, '2026-06-15', '09:00')).toBe(90); // 180 * 50%
-    expect(resalePrice(halfB, '2026-06-15', '09:00')).toBe(250); // 500 * 50%, not the half-court 250 * 50%
+  const courts = [fullCourt, halfB, halfC, standalone];
+  const noShowOn = (courtId: string) => makeBooking({ courtId, date: '2026-06-15', startTime: '09:00', status: BookingStatus.NO_SHOW });
+
+  it('is the normal non-member price x 50% by default', () => {
+    expect(resalePrice(standalone, '2026-06-15', '09:00', [noShowOn('bad-1')], courts, 180)).toBe(90); // 180 * 50%
+  });
+
+  it('keeps the half-court rate: a freed half costs half of the normal half price', () => {
+    expect(resalePrice(halfB, '2026-06-15', '09:00', [noShowOn('b_half_b')], courts, 250)).toBe(125); // 500 * 50% * 50%
+    // a no-show on the full court frees each half too
+    expect(resalePrice(halfC, '2026-06-15', '09:00', [noShowOn('b_full_a')], courts, 250)).toBe(125);
+  });
+
+  it('a full court over one no-show half: only that half is discounted', () => {
+    expect(resalePrice(fullCourt, '2026-06-15', '09:00', [noShowOn('b_half_b')], courts, 500)).toBe(375); // 125 + 250
+    expect(resalePrice(fullCourt, '2026-06-15', '09:00', [noShowOn('b_half_b'), noShowOn('b_half_c')], courts, 500)).toBe(250);
+  });
+
+  it('is never above the customer\'s normal price, and undefined without a no-show', () => {
+    expect(resalePrice(standalone, '2026-06-15', '09:00', [noShowOn('bad-1')], courts, 80)).toBe(80); // member price already lower
+    expect(resalePrice(halfC, '2026-06-15', '09:00', [noShowOn('b_half_b')], courts, 250)).toBeUndefined(); // the other half
+    expect(resalePrice(standalone, '2026-06-15', '10:00', [noShowOn('bad-1')], courts, 180)).toBeUndefined();
   });
 });
 

@@ -941,9 +941,13 @@ func ensureIndexes(db *gorm.DB) {
 		// different court rows - the overlap check covers those.
 		// (A no-show frees its hour for resale, so it doesn't hold the slot;
 		// replaces idx_bookings_live_slot, which counted no-shows.)
-		{"old live-slot index", "DROP INDEX IF EXISTS idx_bookings_live_slot"},
+		// The new index first, and the old one dropped only once the new one
+		// exists: if the create fails (e.g. old data violates it), the old
+		// backstop stays instead of none.
 		{"bookings held slot", "CREATE UNIQUE INDEX IF NOT EXISTS " + repository.LiveSlotIndex +
 			" ON bookings (court_id, date, start_time) WHERE status NOT IN ('CANCELLED', 'NO_SHOW')"},
+		{"old live-slot index", "DO $$ BEGIN IF to_regclass('" + repository.LiveSlotIndex + "') IS NOT NULL THEN " +
+			"DROP INDEX IF EXISTS " + repository.OldLiveSlotIndex + "; END IF; END $$"},
 		{"audit_logs.created_at", "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at)"},
 		{"points ledger ref", "CREATE INDEX IF NOT EXISTS idx_points_ledger_ref ON points_ledger_entries (ref_type, ref_id)"},
 	}

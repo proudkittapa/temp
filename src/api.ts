@@ -303,10 +303,16 @@ export async function refreshMe(kind: SessionKind): Promise<User | null> {
   if (!session) return null;
   try {
     const user = toUser(await request<ApiUser>('/auth/me', { session: kind }));
+    // Signed out, or someone else signed in (another tab, the next staff
+    // member at a shared counter), while this was in flight: writing the
+    // old session back would undo that. The screens poll this every few
+    // seconds, so the window is real.
+    if (getSession(kind)?.token !== session.token) return getSession(kind)?.user ?? null;
     saveSession(kind, { ...session, user });
     return user;
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return null;
+    if (getSession(kind)?.token !== session.token) return getSession(kind)?.user ?? null;
     return session.user; // backend unreachable: keep showing the cached user
   }
 }

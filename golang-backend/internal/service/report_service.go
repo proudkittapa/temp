@@ -69,6 +69,12 @@ func (s *ReportService) physicalCourts(db *gorm.DB) (int64, error) {
 	return n, err
 }
 
+// notResoldNoShow (one ? = paidStatuses) leaves out a no-show hour that was
+// re-sold: the paid resale booking fills that court-time, and counting both
+// put occupancy above 100%. A no-show nobody re-bought still counts - the
+// hour was sold and paid. Revenue keeps counting both (both paid).
+const notResoldNoShow = "NOT (b.status = 'NO_SHOW' AND EXISTS (SELECT 1 FROM bookings r WHERE r.resale_of = b.id AND r.status IN ?))"
+
 // occupiedShare sums the court share (1, or 0.5 for a half court) of the
 // paid bookings matching where/args, grouped by groupBy when set.
 func (s *ReportService) occupiedShare(db *gorm.DB, where string, args ...any) (float64, error) {
@@ -76,7 +82,7 @@ func (s *ReportService) occupiedShare(db *gorm.DB, where string, args ...any) (f
 	// Only active courts: capacity counts active courts, so hours on a
 	// court closed since would push occupancy past 100%.
 	err := db.Raw("SELECT COALESCE(SUM(c.share_of_group), 0) FROM bookings b JOIN courts c ON c.id = b.court_id AND c.is_active "+
-		"WHERE b.status IN ? AND "+where, append([]any{paidStatuses}, args...)...).Scan(&v).Error
+		"WHERE b.status IN ? AND "+notResoldNoShow+" AND "+where, append([]any{paidStatuses, paidStatuses}, args...)...).Scan(&v).Error
 	return v, err
 }
 
@@ -171,8 +177,8 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		Share     float64
 	}
 	if err := db.Raw("SELECT b.start_time, COALESCE(SUM(c.share_of_group), 0) AS share FROM bookings b "+
-		"JOIN courts c ON c.id = b.court_id AND c.is_active WHERE b.status IN ? AND b.date >= ? AND b.date <= ? GROUP BY b.start_time",
-		paidStatuses, start, date).Scan(&hourly).Error; err != nil {
+		"JOIN courts c ON c.id = b.court_id AND c.is_active WHERE b.status IN ? AND "+notResoldNoShow+" AND b.date >= ? AND b.date <= ? GROUP BY b.start_time",
+		paidStatuses, paidStatuses, start, date).Scan(&hourly).Error; err != nil {
 		return nil, err
 	}
 	byHour := map[string]float64{}
