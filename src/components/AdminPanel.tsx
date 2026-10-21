@@ -1270,8 +1270,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wb = XLSX.read(evt.target?.result as ArrayBuffer, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json<any>(ws);
@@ -1364,7 +1363,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         notify('เกิดข้อผิดพลาดขณะแกะไฟล์สเปรดชีต Excel: ' + err.message);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   // Monthly CSV exports (FR-7.4): the booking register and the counter

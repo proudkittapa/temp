@@ -34,7 +34,9 @@ export default function MemberPhoneInput({ id, value, onChange, onPick, placehol
       if (api.USE_BACKEND) {
         list = await api.searchMembers(q).catch(() => []);
       } else {
-        const digits = q ? normalizePhone(q).replace(/\D/g, '') : '';
+        // "+66 845" while typing -> "0845"
+        const raw = q.replace(/\D/g, '');
+        const digits = !raw ? '' : q.startsWith('+66') ? '0' + raw.slice(2) : raw.startsWith('0066') ? '0' + raw.slice(4) : normalizePhone(q);
         const name = q.toLowerCase();
         list = StorageService.get<User[]>('users', [])
           .filter(u => u.role === UserRole.CUSTOMER && u.isActive !== false &&

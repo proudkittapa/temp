@@ -18,6 +18,24 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Member search with +66; Excel read as ArrayBuffer
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `5ec9bed`)
+- **Changed:**
+  - Member dropdown: a partial number typed with the country code
+    ("+66 845", "0066 81") now matches (`user_service.go` partialPhone +
+    test; same rule in `MemberPhoneInput.tsx` local mode).
+  - Admin Excel import reads files with `readAsArrayBuffer` / XLSX
+    `type: 'array'` instead of the deprecated `readAsBinaryString`.
+    (`AdminPanel.tsx`)
+- **Verified:** go vet + go test (new `partial_phone_test.go`), tsc,
+  vitest 53/53; live `GET /staff/members?q=+66 845` → 0845678901. Excel
+  import not re-clicked in a browser.
+- **Not done / follow-ups:** Excel import preview (TODO section 7).
+
+---
+
 ## 2026-10-21 — Automatic retry of deadlocks / serialization failures
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

@@ -87,13 +87,28 @@ func (s *UserService) SearchMembers(ctx context.Context, q string) ([]MemberMatc
 		Where("role = ? AND is_active", model.RoleCustomer)
 	if q == "" {
 		// no filter - the first page of the list
-	} else if digits := repository.NormalizePhone(q); digits != "" {
+	} else if digits := partialPhone(q); digits != "" {
 		tx = tx.Where("(phone LIKE ? OR name ILIKE ?)", esc.Replace(digits)+"%", "%"+esc.Replace(q)+"%")
 	} else {
 		tx = tx.Where("name ILIKE ?", "%"+esc.Replace(q)+"%")
 	}
 	err := tx.Order("name").Limit(20).Select("id, name, phone, member_type, points").Scan(&out).Error
 	return out, err
+}
+
+// partialPhone is NormalizePhone for a number still being typed: a leading
+// +66 / 0066 becomes 0 even before the number is complete ("+66 845" ->
+// "0845").
+func partialPhone(q string) string {
+	d := repository.NormalizePhone(q)
+	t := strings.TrimSpace(q)
+	switch {
+	case strings.HasPrefix(t, "+66") && strings.HasPrefix(d, "66"):
+		return "0" + d[2:]
+	case strings.HasPrefix(d, "0066"):
+		return "0" + d[4:]
+	}
+	return d
 }
 
 // SetRole changes a user's role (admin only - the route enforces it), e.g.
