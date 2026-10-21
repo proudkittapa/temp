@@ -16,9 +16,10 @@ import (
 var ErrSlotTaken = errors.New("slot already booked")
 
 // LiveSlotIndex is the database backstop against double booking: one
-// non-cancelled booking per court, date and start hour (see ensureIndexes
+// booking that still holds the court (not cancelled, not a no-show) per
+// court, date and start hour (see ensureIndexes
 // in main.go). The row locks and overlap checks normally stop a clash first.
-const LiveSlotIndex = "idx_bookings_live_slot"
+const LiveSlotIndex = "idx_bookings_held_slot"
 
 // IsLiveSlotConflict reports an insert/update that LiveSlotIndex refused.
 func IsLiveSlotConflict(err error) bool {
@@ -93,8 +94,10 @@ func (r *BookingRepository) CheckOverlapTx(
 	mutexCourtIDs := model.ConflictingCourtIDs(court, groupCourts)
 
 	var bookings []model.Booking
-	if err := tx.Where("court_id IN ? AND date = ? AND status != ? AND NOT (end_time <= ? OR start_time >= ?)",
-		mutexCourtIDs, date, model.BookingCancelled, startVal, endVal).
+	// A no-show's hour is free again (it can be re-sold); only bookings that
+	// still hold the court count.
+	if err := tx.Where("court_id IN ? AND date = ? AND status NOT IN ? AND NOT (end_time <= ? OR start_time >= ?)",
+		mutexCourtIDs, date, []model.BookingStatus{model.BookingCancelled, model.BookingNoShow}, startVal, endVal).
 		Find(&bookings).Error; err != nil {
 		return fmt.Errorf("failed to scan schedule blocks: %w", err)
 	}
@@ -112,7 +115,7 @@ func (r *BookingRepository) FetchSlotsForGantt(ctx context.Context, date string,
 	var results []model.Booking
 	query := r.db.WithContext(ctx).Table("bookings").Select("bookings.id, bookings.booking_code, bookings.court_id, bookings.user_id, to_char(bookings.date, 'YYYY-MM-DD') as date, bookings.start_time, bookings.end_time, bookings.is_half_court, bookings.price_type, bookings.total_amount, bookings.status").
 		Joins("join courts on bookings.court_id = courts.id").
-		Where("bookings.date = ? AND bookings.status != 'CANCELLED'", date)
+		Where("bookings.date = ? AND bookings.status NOT IN ('CANCELLED', 'NO_SHOW')", date)
 
 	if courtType != "" {
 		query = query.Where("courts.type = ?", courtType)

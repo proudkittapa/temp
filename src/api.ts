@@ -192,7 +192,7 @@ interface ApiBooking {
   customer_name?: string; customer_phone?: string;
   start_time: string; end_time: string; is_half_court: boolean; price_type: string;
   total_amount: number; status: string; is_event_block: boolean; event_name?: string;
-  notes?: string; created_by: string; cancellation_reason?: string; created_at: string;
+  notes?: string; created_by: string; cancellation_reason?: string; resale_of?: string; created_at: string;
   payment?: { method: string; status: string; verified_at?: string; verified_by_name?: string }; // staff date list: the group's payment
 }
 interface ApiPayment {
@@ -248,7 +248,7 @@ const toBooking = (b: ApiBooking, user?: { name: string; phone: string }): Booki
   notes: b.notes,
   createdAt: b.created_at,
   createdBy: b.created_by,
-  cancellationReason: b.cancellation_reason,
+  cancellationReason: b.cancellation_reason, resaleOf: b.resale_of,
   paymentMethod: b.payment?.method as PaymentMethod | undefined,
   paymentStatus: b.payment?.status as PaymentStatus | undefined,
   paymentVerifiedAt: b.payment?.verified_at,
@@ -470,10 +470,11 @@ export async function updateBusiness(b: { name: string; address: string; phone: 
 }
 
 async function getPricing(): Promise<PricingSnapshot> {
-  const d = await request<{ rules: ApiPricingRule[]; config: ApiPricingConfig; member_discounts: ApiMemberDiscount[] }>('/pricing');
+  const d = await request<{ rules: ApiPricingRule[]; config: ApiPricingConfig; member_discounts: ApiMemberDiscount[];
+    no_show_grace_minutes?: number; no_show_resale_percent?: number }>('/pricing');
   return {
     rules: d.rules.map(toRule),
-    config: toPricingConfig(d.config),
+    config: { ...toPricingConfig(d.config), noShowGraceMinutes: d.no_show_grace_minutes ?? 15, noShowResalePercent: d.no_show_resale_percent ?? 50 },
     memberDiscounts: d.member_discounts.map(toDiscount)
   };
 }

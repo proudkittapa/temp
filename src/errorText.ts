@@ -155,6 +155,7 @@ const RULES: Rule[] = [
 
   // General
   [/(?:^|: )name is required/i, 'กรุณาใส่ชื่อ (ไม่เกิน 100 ตัวอักษร)'],
+  [/a no-show can be marked from (\d+) minutes after the hour starts/i, m => `บันทึก "ไม่มา" ได้หลังเริ่มเวลาไปแล้ว ${m[1]} นาที`],
   [/the same request is still being processed/i, 'รายการเดิมกำลังบันทึกอยู่ กรุณาตรวจผลก่อนกดซ้ำ'],
   [/Idempotency-Key was used for another request|invalid Idempotency-Key/i, 'ส่งรายการซ้ำไม่ถูกต้อง กรุณารีเฟรชหน้าแล้วลองใหม่'],
   [/the request took too long - please try again/i, 'ระบบตอบช้าเกินไป กรุณาลองใหม่อีกครั้ง'],

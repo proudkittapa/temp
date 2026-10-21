@@ -18,6 +18,46 @@ Entry format:
 
 ---
 
+## 2026-10-21 — No-show frees the court; resale at 50% after a 15-minute grace
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `8b7542a`)
+- **Changed:** TODO section 12 (decided by the owner earlier today).
+  - Settings `NO_SHOW_GRACE_MINUTES` (15) and `NO_SHOW_RESALE_PRICE_PERCENT`
+    (50), also in `GET /pricing` as `no_show_grace_minutes` /
+    `no_show_resale_percent` for the screens. (`booking_service.go`,
+    `pricing_admin_service.go`, `.env.example`)
+  - MarkNoShow allowed only from start + grace (Thai message added).
+  - A NO_SHOW no longer holds the court: `CheckOverlapTx`, the gantt
+    query, and the double-booking index - now `idx_bookings_held_slot`
+    `WHERE status NOT IN ('CANCELLED','NO_SHOW')` (the old
+    `idx_bookings_live_slot` is dropped at startup).
+  - Resale: `planSlots` finds a NO_SHOW on a conflicting court at that
+    hour and prices the slot at the rule's hourly price x percent
+    (`SlotQuoter.BasePrice`, no member/half-court rate); the booking stores
+    `resale_of` = the no-show's id. Online bookings can't take a started
+    hour, so resale is at the counter.
+  - Frontend: `findConflictingBooking` ignores NO_SHOW; new `findNoShow`,
+    `resalePrice`, `noShowRules`, `noShowOpenAt` (mockData). Staff grid
+    shows the freed hour "🟢 ว่าง · ลูกค้าไม่มา · ราคาพิเศษ" with the resale
+    price; the no-show button is disabled until the grace time (shows
+    when) and its confirmation says no refund + the resale price; the day
+    list labels a no-show "ไม่มา · สนามว่างแล้ว". Browser-only walk-ins use
+    the resale price too. Unit tests for both.
+  - Docs: TODO section 12 ticked + order of work tidied (tablet, no-show,
+    small improvements done), feature guide, checklist 4b.1e.
+- **Verified:** go vet + go test, tsc, vitest (no-show/resale tests added).
+  Live (22:19 Bangkok, 22:00 hour): with grace 60 the no-show is refused;
+  with 15 it's accepted; walk-in on another court 200; resale walk-in by a
+  discounted member 100 with `resale_of` set; a second walk-in for the
+  same hour refused; online booking refused (already started); new index
+  present, old one gone. Playwright: no-show button → confirm (no refund,
+  100 baht) → cell turns "🟢 ว่าง 100฿ ลูกค้าไม่มา · ราคาพิเศษ", selecting
+  it shows 100฿; no page errors. The disabled-before-grace button state
+  was not clicked through (needs a booking under 15 min old).
+
+---
+
 ## 2026-10-21 — Live refresh (staff every 15 s, customer 30 s / 10 s on payment)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

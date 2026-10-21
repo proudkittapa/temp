@@ -827,8 +827,11 @@ func ensureIndexes(db *gorm.DB) {
 		// Backstop against double booking: one live booking per court, date
 		// and start hour (bookings are whole hours). Full vs half courts are
 		// different court rows - the overlap check covers those.
-		{"bookings live slot", "CREATE UNIQUE INDEX IF NOT EXISTS " + repository.LiveSlotIndex +
-			" ON bookings (court_id, date, start_time) WHERE status <> 'CANCELLED'"},
+		// (A no-show frees its hour for resale, so it doesn't hold the slot;
+		// replaces idx_bookings_live_slot, which counted no-shows.)
+		{"old live-slot index", "DROP INDEX IF EXISTS idx_bookings_live_slot"},
+		{"bookings held slot", "CREATE UNIQUE INDEX IF NOT EXISTS " + repository.LiveSlotIndex +
+			" ON bookings (court_id, date, start_time) WHERE status NOT IN ('CANCELLED', 'NO_SHOW')"},
 		{"audit_logs.created_at", "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at)"},
 		{"points ledger ref", "CREATE INDEX IF NOT EXISTS idx_points_ledger_ref ON points_ledger_entries (ref_type, ref_id)"},
 	}

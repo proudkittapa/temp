@@ -4,6 +4,8 @@ import {
   isHubCourt,
   findConflictingBooking,
   isCourtSlotAvailable,
+  findNoShow,
+  resalePrice,
   calculatePrice,
   getDayType,
   generatePromptPayPayload,
@@ -127,6 +129,20 @@ describe('findConflictingBooking / isCourtSlotAvailable', () => {
   });
 });
 
+describe('no-show frees the court for resale', () => {
+  const courts = [fullCourt, halfB, halfC, standalone];
+
+  it("a no-show doesn't hold its court or its basketball group", () => {
+    const bookings = [makeBooking({ courtId: 'b_full_a', startTime: '10:00', status: BookingStatus.NO_SHOW })];
+    expect(isCourtSlotAvailable('b_full_a', '2026-09-20', '10:00', bookings, courts)).toBe(true);
+    expect(isCourtSlotAvailable('b_half_b', '2026-09-20', '10:00', bookings, courts)).toBe(true);
+    // ...and that free hour is the re-sellable one (any conflicting court)
+    expect(findNoShow('b_half_c', '2026-09-20', '10:00', bookings, courts)?.status).toBe(BookingStatus.NO_SHOW);
+    expect(findNoShow('bad-1', '2026-09-20', '10:00', bookings, courts)).toBeUndefined();
+    expect(findNoShow('b_full_a', '2026-09-20', '11:00', bookings, courts)).toBeUndefined();
+  });
+});
+
 describe('getDayType', () => {
   it('classifies Saturday/Sunday as WEEKEND', () => {
     expect(getDayType('2026-09-19')).toBe(DayType.WEEKEND); // Saturday
@@ -164,6 +180,13 @@ describe('calculatePrice (FR-2)', () => {
     // b_half_b at 500 base * 0.5 half-court rate = 250, then * 0.85 student discount
     const result = calculatePrice(CourtType.BASKETBALL, '2026-06-15', '09:00', MemberType.STUDENT, court('b_half_b'));
     expect(result.total).toBe(212.5); // 250 * 0.85, kept to the satang (NFR-4)
+  });
+});
+
+describe('resalePrice (no-show resale, same rule as the server)', () => {
+  it('is the normal hourly price x 50% by default - no member or half-court rate', () => {
+    expect(resalePrice(standalone, '2026-06-15', '09:00')).toBe(90); // 180 * 50%
+    expect(resalePrice(halfB, '2026-06-15', '09:00')).toBe(250); // 500 * 50%, not the half-court 250 * 50%
   });
 });
 

@@ -62,6 +62,10 @@ describe('thaiErrorText', () => {
     expect(thaiErrorText('the request took too long - please try again')).toBe('ระบบตอบช้าเกินไป กรุณาลองใหม่อีกครั้ง');
   });
 
+  it('translates the no-show grace message', () => {
+    expect(thaiErrorText('invalid state for this action: a no-show can be marked from 15 minutes after the hour starts')).toBe('บันทึก "ไม่มา" ได้หลังเริ่มเวลาไปแล้ว 15 นาที');
+  });
+
   it('passes unknown and already-Thai messages through', () => {
     expect(thaiErrorText('something new happened')).toBe('something new happened');
     expect(thaiErrorText('ไม่พบสินค้านี้')).toBe('ไม่พบสินค้านี้');

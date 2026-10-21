@@ -620,8 +620,9 @@ func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, act
 			return err
 		}
 		now := s.now()
-		if day.Add(time.Duration(hour) * time.Hour).After(now) {
-			return fmt.Errorf("%w: the hour hasn't started yet", ErrInvalidState)
+		grace := NoShowGraceMinutes()
+		if day.Add(time.Duration(hour)*time.Hour + time.Duration(grace)*time.Minute).After(now) {
+			return fmt.Errorf("%w: a no-show can be marked from %d minutes after the hour starts", ErrInvalidState, grace)
 		}
 		before := b.Status
 		upd := tx.Model(&model.Booking{}).Where("id = ? AND status = ?", b.ID, before).Updates(map[string]interface{}{"status": model.BookingNoShow, "updated_at": now})

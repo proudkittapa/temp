@@ -34,11 +34,15 @@ type PricingSnapshot struct {
 	Rules           []model.PricingRule    `json:"rules"`
 	Config          model.PricingConfig    `json:"config"`
 	MemberDiscounts []model.MemberDiscount `json:"member_discounts"`
+	// The no-show rules (server settings), for the screens' buttons and
+	// price previews.
+	NoShowGraceMinutes  int `json:"no_show_grace_minutes"`
+	NoShowResalePercent int `json:"no_show_resale_percent"`
 }
 
 func (s *PricingAdminService) Snapshot(ctx context.Context) (*PricingSnapshot, error) {
 	db := s.db.WithContext(ctx)
-	snap := &PricingSnapshot{}
+	snap := &PricingSnapshot{NoShowGraceMinutes: NoShowGraceMinutes(), NoShowResalePercent: NoShowResalePercent()}
 	if err := db.Order("court_type, day_type, start_hour").Find(&snap.Rules).Error; err != nil {
 		return nil, err
 	}

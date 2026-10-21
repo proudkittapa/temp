@@ -20,18 +20,19 @@ Cheap and blocking first, then what changes what customers/staff see
    wait, do it right after; today's separate sign-ins work).
 6. **Deploy to a real server with HTTPS** - section 8 (8a: free tunnel from
    the Mac for testers now; 8b: VPS + Docker + Caddy for customers).
-   **Before real customers (8b): section 11 "Go-live" items** - retry protection, live
-   refresh, smaller customer download.
+   **Before real customers (8b): section 11 "Go-live" items left** - phone
+   lookups, smaller customer download, demo users out of the bundle.
 7. **Test on real phones** - section 6 and section 3 (real phones, inside the
    LINE app); scan the PromptPay QR with two Thai banking apps.
 8. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
    notifications (section 2).
 9. **Forgot password** - section 4 (needs an SMS provider, or LINE from step 8).
-10. **Staff POS and Admin on a tablet** - section 3.
-11. **No-show: re-sell the court at half price** - section 12 (before
-    launch if no-shows are common).
-12. **Remaining small improvements** - section 7: refunds split by method,
-    report year picker, Excel import preview, rental deposit, tidy-ups.
+10. ~~**Staff POS and Admin on a tablet**~~ - done 2026-10-21 (section 3).
+11. ~~**No-show: re-sell the court at half price**~~ - done 2026-10-21 (section 12).
+12. **Remaining improvements** - section 7 and section 11 (refund split, year
+    picker, Excel preview, rental deposit, live refresh, retry protection,
+    indexes are done; left: concurrency tests, phone lookups, smaller customer
+    download, kept deposits in reports).
 
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
 Each needs a yes/no from the owner before it is built.
@@ -183,13 +184,14 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] Slip upload: type check and downscale to ≤1600 px JPEG when not JPG/PNG/WebP or over 1.5 MB (`src/slipImage.ts`); CSV formula guard covers leading spaces/tab/CR and leaves numbers alone. Done 2026-10-21.
 - [ ] Small: token in localStorage + no CSP; 7-9 px text; unused deps (`@google/genai`, `express`, `dotenv`, `motion`); cash refunds don't reduce the drawer (section 0).
 
-## 12. No-show: free the court and re-sell it (all decided 2026-10-21)
+## 12. No-show: free the court and re-sell it (all decided 2026-10-21) - done 2026-10-21
+Done: `NO_SHOW_GRACE_MINUTES` / `NO_SHOW_RESALE_PRICE_PERCENT` (sent to the screens in `GET /pricing`), overlap check and the double-booking index (`idx_bookings_held_slot`, replaces `idx_bookings_live_slot`) ignore NO_SHOW, resale price in `planSlots` (`bookings.resale_of` = the no-show's id), staff grid shows "ลูกค้าไม่มา · ราคาพิเศษ", the no-show button waits for the grace period. Resale is effectively counter-only (online bookings must start in the future).
 Today a no-show keeps the money (no refund, the hour's point is taken back) but the hour stays blocked: only CANCELLED bookings free a court (`repository.CheckOverlapTx` and the unique index in `ensureIndexes`, main.go). So nobody else can play that hour.
-- [ ] **Grace period 15 minutes:** the 🚫 ไม่มาใช้สนาม button (and `POST /staff/bookings/:id/no-show`) works only from 15 minutes after the hour's start (today: from the start). Make it an env value, `NO_SHOW_GRACE_MINUTES=15`.
-- [ ] **No-show frees the court:** a NO_SHOW hour no longer blocks that court (and its basketball group) in the overlap check, the unique index (`WHERE status NOT IN ('CANCELLED','NO_SHOW')`, rebuilt in `ensureIndexes`) and the availability grid. The no-show customer's payment stays kept and counts as income.
-- [ ] **Re-sell at a discount:** another customer (online or walk-in at the counter) can book the freed hour for **half price** by default - env `NO_SHOW_RESALE_PRICE_PERCENT=50` (100 = full price). The server computes the price; the grid shows the freed hour with the discounted price and a label (e.g. "ว่าง (ลูกค้าไม่มา) ราคาพิเศษ").
-- [ ] The discount applies only to the freed hour and only while it is still that hour (it has already started, so normally a counter walk-in); decided: the resale percent **replaces** other discounts (member discount, half-court rate) - the price is the court's normal hourly price × the percent.
-- [ ] If the original customer arrives late after the hour was re-sold, the counter shows the hour as taken by the new booking; the no-show stays recorded (no refund).
-- [ ] Reports/day summary: both the kept no-show payment and the resale booking count as income; audit log records who marked the no-show and the resale.
-- [ ] Browser-only mode: same rules in `mockData.ts` / StaffPOS; add to `TESTING_CHECKLIST.md`.
+- [x] **Grace period 15 minutes:** the 🚫 ไม่มาใช้สนาม button (and `POST /staff/bookings/:id/no-show`) works only from 15 minutes after the hour's start (today: from the start). Make it an env value, `NO_SHOW_GRACE_MINUTES=15`.
+- [x] **No-show frees the court:** a NO_SHOW hour no longer blocks that court (and its basketball group) in the overlap check, the unique index (`WHERE status NOT IN ('CANCELLED','NO_SHOW')`, rebuilt in `ensureIndexes`) and the availability grid. The no-show customer's payment stays kept and counts as income.
+- [x] **Re-sell at a discount:** another customer (online or walk-in at the counter) can book the freed hour for **half price** by default - env `NO_SHOW_RESALE_PRICE_PERCENT=50` (100 = full price). The server computes the price; the grid shows the freed hour with the discounted price and a label (e.g. "ว่าง (ลูกค้าไม่มา) ราคาพิเศษ").
+- [x] The discount applies only to the freed hour and only while it is still that hour (it has already started, so normally a counter walk-in); decided: the resale percent **replaces** other discounts (member discount, half-court rate) - the price is the court's normal hourly price × the percent.
+- [x] If the original customer arrives late after the hour was re-sold, the counter shows the hour as taken by the new booking; the no-show stays recorded (no refund).
+- [x] Reports/day summary: both the kept no-show payment and the resale booking count as income; audit log records who marked the no-show and the resale.
+- [x] Browser-only mode: same rules in `mockData.ts` / StaffPOS; add to `TESTING_CHECKLIST.md`.
 - Decided: marking a no-show **always** frees the court (no separate button).

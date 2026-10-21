@@ -124,6 +124,9 @@ export interface PricingConfig {
   // open.
   openHour?: number;
   closeHour?: number;
+  // No-show rules from the server (read-only here).
+  noShowGraceMinutes?: number;
+  noShowResalePercent?: number;
   // The business on receipts and the payment screen (admin setting).
   // vatRegistered: receipts are abbreviated tax invoices with VAT 7%.
   businessName?: string;
@@ -177,6 +180,7 @@ export interface Booking {
   createdAt: string;
   createdBy: string; // userId or 'customer'
   cancellationReason?: string;
+  resaleOf?: string; // re-sold after this no-show booking (resale price)
   // API mode, staff views only: how the booking's group was paid, and who
   // took the money when.
   paymentMethod?: PaymentMethod;

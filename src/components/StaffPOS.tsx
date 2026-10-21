@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift
 } from '../types';
-import { StorageService, findClosure, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf, formatDate, formatDateTime, businessInfo, formatTaxId } from '../mockData';
+import { StorageService, findClosure, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf, formatDate, formatDateTime, businessInfo, formatTaxId, findNoShow, resalePrice, noShowOpenAt } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import { notify, ask, askText, dialog } from './Dialog';
@@ -508,7 +508,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const isActuallyHalf = courtObj ? courtObj.shareOfGroup < 1 : false;
     const paidInCash = walkinPayMethod === PaymentMethod.CASH;
     const settledNow = paidInCash || useVoucher;
-    const amount = useVoucher ? 0 : priceDetail.total;
+    // An hour freed by a no-show is re-sold at the resale price (as the server).
+    const resale = courtObj && findNoShow(courtObj.id, walkinDate, walkinSlot, bookings, courts) ? resalePrice(courtObj, walkinDate, walkinSlot) : undefined;
+    const amount = useVoucher ? 0 : resale ?? priceDetail.total;
 
     const bookingId = 'bk-walkin-' + Date.now();
     const bkCode = `BK${walkinDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -974,11 +976,18 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Any staff: the customer didn't come for this (already started) hour.
   // The hour's loyalty point is taken back; the payment is kept.
   const handleMarkNoShow = async (booking: Booking) => {
-    if (!(await ask(`บันทึกว่าลูกค้าไม่มาใช้สนาม ${booking.startTime}-${booking.endTime} (${booking.bookingCode})?`, { okLabel: 'บันทึกไม่มา' }))) return;
+    if (Date.now() < noShowOpenAt(booking.date, booking.startTime).getTime()) {
+      notify('ยังบันทึก "ไม่มา" ไม่ได้ — รอให้เลยเวลาเริ่มตามที่กำหนดก่อน');
+      return;
+    }
+    const court = courts.find(c => c.id === booking.courtId);
+    const resale = court ? resalePrice(court, booking.date, booking.startTime) : undefined;
+    if (!(await ask(`บันทึกว่าลูกค้าไม่มาใช้สนาม ${booking.startTime}-${booking.endTime} (${booking.bookingCode})?\nไม่คืนเงิน · สนามจะว่างให้ขายต่อ${resale !== undefined ? ` ราคาพิเศษ ${formatBaht(resale)} บาท` : ''}`, { okLabel: 'บันทึกไม่มา' }))) return;
     const done = () => {
       onAddAuditLog('BOOKING_NO_SHOW', 'Booking', booking.id, { status: booking.status }, { status: BookingStatus.NO_SHOW });
       closeBookingDetail();
       onRefreshAll();
+      notify(`บันทึกไม่มาแล้ว — ${court?.name ?? 'สนาม'} ${booking.startTime} ว่างแล้ว ขายต่อได้${resale !== undefined ? ` ราคา ${formatBaht(resale)} บาท` : ''}`);
     };
     if (api.USE_BACKEND) {
       return api.markNoShow(booking.id).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
@@ -1942,6 +1951,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       <div className="flex flex-col gap-1 items-end">
                         {b.status === BookingStatus.PENDING_PAYMENT ? (
                           <span className="text-[9px] bg-amber-100 text-amber-800 font-extrabold px-1.5 py-0.5 rounded-md">รอชำระเงิน</span>
+                        ) : b.status === BookingStatus.NO_SHOW ? (
+                          <span className="text-[9px] bg-violet-100 text-violet-800 font-extrabold px-1.5 py-0.5 rounded-md">ไม่มา · สนามว่างแล้ว</span>
                         ) : (
                           <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded-md">ยืนยันแล้ว</span>
                         )}
@@ -2140,6 +2151,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                           );
                         }
 
+                        // An hour freed by a no-show: free, at the resale price.
+                        const resale = findNoShow(court.id, walkinDate, time, bookings, courts) ? resalePrice(court, walkinDate, time) : undefined;
+                        const shownPrice = resale ?? priceBase.total;
+
                         if (isActiveSelection) {
                           return (
                             <td 
@@ -2148,7 +2163,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                               title="เลือกช่องสนามและชั่วโมงเวลานี้อยู่!"
                             >
                               <span className="block text-[8.5px] font-black uppercase text-white">⭐ จะจองคิว</span>
-                              <span className="block text-[9px] font-mono leading-none">{priceBase.total}฿</span>
+                              <span className="block text-[9px] font-mono leading-none">{shownPrice}฿</span>
                             </td>
                           );
                         }
@@ -2168,10 +2183,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                             }`}
                           >
                             <span className="block text-[8px] font-bold text-slate-500">🟢 ว่าง</span>
-                            <span className="block text-[9.5px] font-mono font-black text-[#1e293b]">{priceBase.total}฿</span>
-                            <span className="text-[7.5px] text-slate-400 italic block font-mono">
-                              {isPeak ? '⚡ Peak' : 'Off-Peak'}
-                            </span>
+                            <span className="block text-[9.5px] font-mono font-black text-[#1e293b]">{shownPrice}฿</span>
+                            {resale !== undefined
+                              ? <span className="noshow-resale text-[7.5px] text-violet-700 font-bold block">ลูกค้าไม่มา · ราคาพิเศษ</span>
+                              : <span className="text-[7.5px] text-slate-400 italic block font-mono">{isPeak ? '⚡ Peak' : 'Off-Peak'}</span>}
                           </td>
                         );
                       })}
@@ -3102,6 +3117,9 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               const b = selectedReceiptBooking;
               const timing = slotTiming(b.date, b.startTime);
               const canNoShow = (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED) && timing.started;
+              // Allowed from the grace period after the start (server setting).
+              const noShowFrom = noShowOpenAt(b.date, b.startTime);
+              const noShowYet = Date.now() >= noShowFrom.getTime();
               const canCancel = canManageBookings && (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING_PAYMENT);
               // Not while a slip waits for review (approve/reject it instead).
               const ids = new Set(bookingGroupOf(b, bookingPool()).map(x => x.id));
@@ -3114,7 +3132,11 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     <button type="button" disabled={busy} onClick={guarded(() => handleMarkPaidInCash(b))} className="disabled:opacity-50 flex-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold py-1.5 rounded-lg">💵 รับเงินสดแล้ว</button>
                   )}
                   {canNoShow && (
-                    <button type="button" disabled={busy} onClick={guarded(() => handleMarkNoShow(b))} className="disabled:opacity-50 flex-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold py-1.5 rounded-lg">🚫 ไม่มาใช้สนาม</button>
+                    <button type="button" id="no-show-button" disabled={busy || !noShowYet} onClick={guarded(() => handleMarkNoShow(b))}
+                      title={noShowYet ? 'สนามจะว่างให้ขายต่อในราคาพิเศษ' : undefined}
+                      className="disabled:opacity-50 flex-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold py-1.5 rounded-lg">
+                      🚫 ไม่มาใช้สนาม{noShowYet ? '' : ` (กดได้ตั้งแต่ ${noShowFrom.toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false })})`}
+                    </button>
                   )}
                   {canCancel && (
                     <button type="button" disabled={busy} onClick={guarded(() => handleCancelBooking(b))} className="disabled:opacity-50 flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1.5 rounded-lg">✖ ยกเลิก / คืนเงิน</button>

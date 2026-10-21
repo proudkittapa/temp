@@ -505,8 +505,38 @@ export function findConflictingBooking(
   bookings: Booking[],
   courts: Court[]
 ): Booking | undefined {
+  // A no-show's hour is free again (re-sold at the resale price - see
+  // findNoShow), like a cancelled one.
+  return findBookingAt(courtId, date, hour, bookings, courts,
+    b => b.status !== BookingStatus.CANCELLED && b.status !== BookingStatus.NO_SHOW);
+}
+
+// The no-show at this court (or its basketball group) and hour, if any: the
+// hour is free and costs resalePrice() - same rule as the server.
+export function findNoShow(courtId: string, date: string, hour: string, bookings: Booking[], courts: Court[]): Booking | undefined {
+  return findBookingAt(courtId, date, hour, bookings, courts, b => b.status === BookingStatus.NO_SHOW);
+}
+
+// No-show rules (server settings, cached with the pricing config): marking
+// is allowed from graceMinutes after the start; a freed hour costs the
+// court's normal hourly price x resalePercent (no member / half-court rate).
+export function noShowRules(): { graceMinutes: number; resalePercent: number } {
+  const c = StorageService.get<Partial<PricingConfig>>('pricing_config', {});
+  return { graceMinutes: c.noShowGraceMinutes ?? 15, resalePercent: c.noShowResalePercent ?? 50 };
+}
+// Whether staff may mark a no-show for the hour starting at startTime on
+// date yet (graceMinutes after it starts, Bangkok time), and from when.
+export function noShowOpenAt(date: string, startTime: string): Date {
+  return new Date(new Date(`${date}T${startTime}:00+07:00`).getTime() + noShowRules().graceMinutes * 60000);
+}
+export function resalePrice(court: Court, date: string, hour: string): number | undefined {
+  const rule = findPricingRule(court.type, date, parseInt(hour, 10));
+  return rule ? roundBaht(rule.pricePerHour * noShowRules().resalePercent / 100) : undefined;
+}
+
+function findBookingAt(courtId: string, date: string, hour: string, bookings: Booking[], courts: Court[], match: (b: Booking) => boolean): Booking | undefined {
   const court = courts.find(c => c.id === courtId);
-  const activeAt = (b: Booking) => b.date === date && b.startTime === hour && b.status !== BookingStatus.CANCELLED;
+  const activeAt = (b: Booking) => b.date === date && b.startTime === hour && match(b);
 
   if (!court) {
     return bookings.find(b => b.courtId === courtId && activeAt(b));

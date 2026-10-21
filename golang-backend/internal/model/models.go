@@ -287,9 +287,12 @@ type Booking struct {
 	CancellationReason *string       `json:"cancellation_reason,omitempty" db:"cancellation_reason" gorm:"column:cancellation_reason"`
 	// CancelKind* - set with every cancellation (the reason text is for
 	// people; this is what the code relies on).
-	CancelKind *string   `json:"cancel_kind,omitempty" db:"cancel_kind" gorm:"column:cancel_kind;type:varchar(16)"`
-	CreatedAt  time.Time `json:"created_at" db:"created_at" gorm:"column:created_at"`
-	UpdatedAt  time.Time `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
+	CancelKind *string `json:"cancel_kind,omitempty" db:"cancel_kind" gorm:"column:cancel_kind;type:varchar(16)"`
+	// ResaleOf: this hour was re-sold after a no-show (that booking's id),
+	// at the no-show resale price.
+	ResaleOf  *string   `json:"resale_of,omitempty" db:"resale_of" gorm:"column:resale_of;type:varchar(64)"`
+	CreatedAt time.Time `json:"created_at" db:"created_at" gorm:"column:created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
 }
 
 // WalkInUserID is Booking.UserID for counter bookings by someone without an

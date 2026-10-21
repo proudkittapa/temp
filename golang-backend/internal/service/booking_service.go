@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +58,28 @@ const (
 	DefaultOpenHour  = 7
 	DefaultCloseHour = 23
 )
+
+// No-show rules (owner decisions 2026-10-21): staff can mark a no-show
+// from NO_SHOW_GRACE_MINUTES after the hour starts (default 15); the hour is
+// then free, and booking it costs the court's normal hourly price x
+// NO_SHOW_RESALE_PRICE_PERCENT / 100 (default 50, 100 = full price) - in
+// place of member and half-court discounts.
+func NoShowGraceMinutes() int { return envIntRange("NO_SHOW_GRACE_MINUTES", 15, 0, 120) }
+func NoShowResalePercent() int {
+	return envIntRange("NO_SHOW_RESALE_PRICE_PERCENT", 50, 0, 100)
+}
+
+func envIntRange(name string, def, min, max int) int {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < min || n > max {
+		return def
+	}
+	return n
+}
 
 // Bangkok is the complex's local time zone; "today" and "has this slot
 // already passed" are judged in it, not in the server's zone.
@@ -187,6 +210,7 @@ type plannedSlot struct {
 	endTime   string
 	amount    float64
 	priceType string
+	resaleOf  *string // a no-show's booking id: re-sold at the resale price
 }
 
 // CreateBookings books every requested slot under one booking code with a
@@ -390,6 +414,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 				IsHalfCourt: p.court.ShareOfGroup < 1,
 				PriceType:   p.priceType,
 				TotalAmount: p.amount,
+				ResaleOf:    p.resaleOf,
 				Status:      status,
 				Notes:       notesVal,
 				CreatedBy:   createdBy,
@@ -517,6 +542,21 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 	if err != nil {
 		return nil, err
 	}
+	// Hours freed by a no-show this date: booking one is a resale.
+	var noShows []model.Booking
+	if err := s.db.WithContext(ctx).Where("date = ? AND status = ?", input.Date, model.BookingNoShow).Find(&noShows).Error; err != nil {
+		return nil, err
+	}
+	courtByID := map[string]model.Court{}
+	if len(noShows) > 0 {
+		all, err := s.courtRepo.FetchAll(ctx, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range all {
+			courtByID[c.ID] = c
+		}
+	}
 
 	seen := map[string]bool{}
 	planned := make([]plannedSlot, 0, len(input.Slots))
@@ -559,7 +599,20 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 		if court.OffPeakOnly && priceType != "OFFPEAK" {
 			return nil, fmt.Errorf("%w: %s can only be booked during off-peak hours", ErrSlotUnavailable, court.Name)
 		}
-		planned = append(planned, plannedSlot{court: court, startTime: sl.StartTime, endTime: endTime, amount: amount, priceType: priceType})
+		var resaleOf *string
+		for _, ns := range noShows {
+			if other, ok := courtByID[ns.CourtID]; ok && ns.StartTime == sl.StartTime && model.CourtsConflict(court, other) {
+				id := ns.ID
+				resaleOf = &id
+				base, err := quoter.BasePrice(court.Type, hour)
+				if err != nil {
+					return nil, fmt.Errorf("pricing calculation failed: %w", err)
+				}
+				amount = RoundBaht(base * float64(NoShowResalePercent()) / 100)
+				break
+			}
+		}
+		planned = append(planned, plannedSlot{court: court, startTime: sl.StartTime, endTime: endTime, amount: amount, priceType: priceType, resaleOf: resaleOf})
 	}
 
 	sort.Slice(planned, func(i, j int) bool {
