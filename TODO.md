@@ -150,7 +150,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] Walk-in grid while loading another date: now shows "กำลังโหลด…", greyed and not clickable, and booking is refused until that date's data is in (it used to show every slot free). Done 2026-10-21.
 - [ ] **Customers download the staff/admin app** (one 436 KB gzip bundle, ~70% xlsx + recharts): lazy-load StaffPOS/AdminPanel, `await import('xlsx')` in the Excel handlers, charts in a lazy component.
 - [x] `index.html`: `lang="th"`, real title and description. Done 2026-10-21.
-- [ ] Demo users/passwords (`DEFAULT_USERS`) are in the production bundle - gate behind browser-only mode.
+- [x] Demo users/passwords are no longer in a `VITE_DATA_SOURCE=api` build (checked: no demo email or password in `dist`). Done 2026-10-21.
 
 ### Scaling to 2+ servers
 - [ ] Slip images are on the server's own disk - move to shared storage (S3/GCS or a shared volume) before a second server.
@@ -162,9 +162,10 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] Booking cancel / no-show now cancel unused rewards bought with those points (shared `coverPointsWithRewards` with VoidOrder); a reward already handed over is reported (`points_short`), the cancel still goes ahead. Done 2026-10-21. (Browser-only mode doesn't do the clawback.)
 - [x] Lock order: rental return now locks order → item → drawer → stock, void locks its items and restocks in checkout's sorted order. Done 2026-10-21. (MarkPaidInCash drawer-before-closure vs CreateBookings closure-before-drawer is still open; both shared locks, only matters with a queued close + day-off.)
 - [x] `CancelBookings` (and the expiry job's counter) reset per retry attempt. Done 2026-10-21.
-- [ ] `SaveSlip` on an EXPIRED payment doesn't take the user lock, so the unpaid cap can be exceeded; expiry job can starve behind 500 un-expirable rows (keyset paging).
-- [ ] `LockCourtGroupTx` uses a mutex group read before the transaction - re-read after locking the court row.
-- [ ] Database backstops: CHECK `points >= 0`, `stock >= 0`, `refund_amount <= amount`; unique "one open shift"; money columns `numeric(12,2)` instead of float.
+- [x] `SaveSlip` takes the customer's lock first (as CreateBookings); the expiry job closes orphan payments (booking rows gone) instead of re-picking them forever. Done 2026-10-21.
+- [x] `LockCourtGroupTx` re-reads the court's group inside the transaction and re-checks it on the locked row (retries if regrouped meanwhile). Done 2026-10-21.
+- [x] Database backstops: CHECK constraints (points, stock, variant stock ≥ 0; refund within the payment; deposit settled within what was taken) and a unique "one open shift" index (`ensureConstraints`, main.go); a violation answers 409. Done 2026-10-21.
+- [ ] Money columns `numeric(12,2)` instead of float (amounts are rounded to the satang in code today).
 
 - [ ] Kept rental deposits (`orders.deposit_kept`) are not in any income report or CSV, and the staff day ledger's expected cash leaves out deposits still held (the shift count includes them) - decide whether kept deposits are income, then add them.
 

@@ -44,6 +44,11 @@ func respondError(c *gin.Context, err error) {
 	if repository.IsLiveSlotConflict(err) {
 		err = repository.ErrSlotTaken
 	}
+	if repository.IsCheckViolation(err) {
+		log.Printf("CHECK VIOLATION %s %s: %v", c.Request.Method, c.FullPath(), err)
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": "invalid state for this action: the change would break a data rule (e.g. stock, points or a refund out of range)"})
+		return
+	}
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		status = http.StatusNotFound

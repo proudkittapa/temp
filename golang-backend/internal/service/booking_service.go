@@ -809,10 +809,18 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 				return nil // a slip arrived in the meantime
 			}
 			group, _, err := s.bookingGroup(tx, locked.BookingID)
+			now := s.now()
+			if errors.Is(err, ErrNotFound) {
+				// Its booking rows are gone: close the payment so it leaves the
+				// queue (otherwise it is picked again every minute, and 500 of
+				// them would keep newer payments from ever expiring).
+				return tx.Model(locked).Updates(map[string]interface{}{
+					"status": model.PaymentExpired, "expired_at": now, "refund_reason": "Expired: booking not found", "updated_at": now,
+				}).Error
+			}
 			if err != nil {
 				return err
 			}
-			now := s.now()
 			if err := tx.Model(locked).Updates(map[string]interface{}{
 				"status": model.PaymentExpired, "expired_at": now, "refund_reason": reason, "updated_at": now,
 			}).Error; err != nil {
@@ -1142,6 +1150,18 @@ func slipAcceptable(p *model.Payment) error {
 func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash, actorID string) (string, error) {
 	var previous string
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		// The customer's row first (as CreateBookings does): a slip moves an
+		// EXPIRED payment back to "waiting", which counts toward the unpaid
+		// cap, so it must not race a new booking's cap check.
+		var owner model.Booking
+		if err := tx.Select("bookings.id", "bookings.user_id").Joins("JOIN payments ON payments.booking_id = bookings.id").
+			Where("payments.id = ?", paymentID).Take(&owner).Error; err == nil {
+			if err := lockGroupUser(tx, &owner); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 		p, err := lockPayment(tx, paymentID)
 		if err != nil {
 			return err

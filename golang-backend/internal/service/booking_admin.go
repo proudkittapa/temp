@@ -550,6 +550,15 @@ func (s *BookingService) MarkPaidInCash(ctx context.Context, paymentID, actorID,
 		if err := lockGroupUser(tx, root); err != nil {
 			return err
 		}
+		// An expired group is booked again (reReserve, under the date's
+		// closure lock): take that lock before the drawer, the order
+		// CreateBookings uses, so the two can't deadlock behind a queued
+		// shift close and day-off.
+		if p.Status == model.PaymentExpired {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock_shared(?, hashtext(?))", closureLockClass, root.Date).Error; err != nil {
+				return err
+			}
+		}
 		// Cash into the drawer: needs an open shift, and waits for a shift
 		// close in progress (see lockDrawerForCash) before taking the time.
 		if err := lockDrawerForCash(tx); err != nil {

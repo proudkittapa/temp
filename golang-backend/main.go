@@ -151,6 +151,7 @@ func main() {
 	ensureUserUniqueIndexes(setupDB)
 	runDataMigrations(setupDB) // before ensureIndexes: the slip index needs slip_released filled in
 	ensureIndexes(setupDB)
+	ensureConstraints(setupDB)
 	warnDuplicatePhones(setupDB)
 
 	// 1c. Seed the config rows the pricing engine needs to not error on a
@@ -923,4 +924,40 @@ func envInt(name string, def int) int {
 		return n
 	}
 	return def
+}
+
+// ensureConstraints adds database-level backstops for rules the code already
+// enforces under locks, so a future bug fails loudly instead of saving bad
+// data: points and stock never below zero, refunds within the payment,
+// deposits settled within what was taken, one open cash-drawer shift.
+// Each is added NOT VALID (no table scan, no long lock) and then validated;
+// if old data breaks one it stays unvalidated (still enforced for new
+// writes) and a warning names it.
+func ensureConstraints(db *gorm.DB) {
+	checks := []struct{ table, name, expr string }{
+		{"users", "chk_users_points_nonneg", "points >= 0"},
+		{"products", "chk_products_stock_nonneg", "stock >= 0"},
+		{"product_variants", "chk_variants_stock_nonneg", "stock >= 0"},
+		{"payments", "chk_payments_refund_within", "refund_amount >= 0 AND refund_amount <= amount + 0.005"},
+		{"orders", "chk_orders_deposit_within", "deposit_returned >= 0 AND deposit_kept >= 0 AND deposit_returned + deposit_kept <= deposit_amount + 0.005"},
+	}
+	for _, c := range checks {
+		var n int64
+		if err := db.Raw("SELECT count(*) FROM pg_constraint WHERE conname = ?", c.name).Scan(&n).Error; err != nil {
+			log.Printf("WARNING: could not check constraint %s: %v\n", c.name, err)
+			continue
+		}
+		if n == 0 {
+			if err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s) NOT VALID", c.table, c.name, c.expr)).Error; err != nil {
+				log.Printf("WARNING: could not add constraint %s: %v\n", c.name, err)
+				continue
+			}
+		}
+		if err := db.Exec(fmt.Sprintf("ALTER TABLE %s VALIDATE CONSTRAINT %s", c.table, c.name)).Error; err != nil {
+			log.Printf("WARNING: existing rows break %s (%s) - it holds for new writes only until they are fixed: %v\n", c.name, c.expr, err)
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open ON shifts ((true)) WHERE closed_at IS NULL").Error; err != nil {
+		log.Printf("WARNING: could not enforce one open shift (more than one is open?): %v\n", err)
+	}
 }

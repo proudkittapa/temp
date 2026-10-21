@@ -60,6 +60,13 @@ func RetryTx(db *gorm.DB, fn func(tx *gorm.DB) error) error {
 	}
 }
 
+// IsCheckViolation reports a write a CHECK constraint refused (23514) -
+// e.g. stock or points would go below zero (see ensureConstraints).
+func IsCheckViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23514"
+}
+
 // IsLockTimeout reports a row/advisory lock wait cut off by lock_timeout
 // (55P03): another request held the lock too long.
 func IsLockTimeout(err error) bool {

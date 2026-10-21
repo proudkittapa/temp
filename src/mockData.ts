@@ -794,7 +794,10 @@ export function initializeState() {
     StorageService.set('pricing_rules', DEFAULT_PRICING_RULES);
     StorageService.set('pricing_config', DEFAULT_PRICING_CONFIG);
     StorageService.set('products', DEFAULT_PRODUCTS);
-    StorageService.set('users', DEFAULT_USERS);
+    // The demo accounts (with their passwords) exist only in browser-only
+    // mode; in a VITE_DATA_SOURCE=api build this folds to [] and
+    // DEFAULT_USERS is dropped from the bundle.
+    StorageService.set('users', import.meta.env.VITE_DATA_SOURCE === 'api' ? [] : DEFAULT_USERS);
     StorageService.set('bookings', DEFAULT_BOOKINGS());
     StorageService.set('payments', DEFAULT_PAYMENTS());
     StorageService.set('orders', DEFAULT_ORDERS());

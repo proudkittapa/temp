@@ -54,25 +54,47 @@ func LockKey(c model.Court) string {
 // a half-court booking for the same hour both pass CheckOverlapTx before
 // either commits. Fails if the target court is inactive.
 func (r *BookingRepository) LockCourtGroupTx(tx *gorm.DB, court model.Court) ([]model.Court, error) {
-	q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Order("id")
-	if court.MutexGroupID != nil {
-		q = q.Where("mutex_group_id = ?", *court.MutexGroupID)
-	} else {
-		q = q.Where("id = ?", court.ID)
-	}
-	var group []model.Court
-	if err := q.Find(&group).Error; err != nil {
-		return nil, fmt.Errorf("failed to lock court group: %w", err)
-	}
-	for _, c := range group {
-		if c.ID == court.ID {
+	// The group is read fresh here, not taken from the caller's copy (read
+	// before the transaction): an admin may have just added or removed a
+	// half court. Rows are always locked in id order (no deadlocks), and the
+	// locked target row - re-read by FOR UPDATE - must still name the group
+	// that was locked; otherwise the grouping changed in between: try again.
+	for attempt := 0; attempt < 3; attempt++ {
+		var cur model.Court
+		if err := tx.Select("id", "mutex_group_id").Take(&cur, "id = ?", court.ID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, errors.New("boundary error: selected court does not exist")
+			}
+			return nil, fmt.Errorf("failed to read court group: %w", err)
+		}
+		q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Order("id")
+		if cur.MutexGroupID != nil {
+			q = q.Where("mutex_group_id = ? OR id = ?", *cur.MutexGroupID, court.ID)
+		} else {
+			q = q.Where("id = ?", court.ID)
+		}
+		var group []model.Court
+		if err := q.Find(&group).Error; err != nil {
+			return nil, fmt.Errorf("failed to lock court group: %w", err)
+		}
+		for _, c := range group {
+			if c.ID != court.ID {
+				continue
+			}
+			if !sameGroup(c.MutexGroupID, cur.MutexGroupID) {
+				break // regrouped meanwhile
+			}
 			if !c.IsActive {
 				return nil, fmt.Errorf("%w: %s is currently closed for booking", ErrSlotTaken, c.Name)
 			}
 			return group, nil
 		}
 	}
-	return nil, errors.New("boundary error: selected court does not exist")
+	return nil, errors.New("the court's grouping changed during the booking - please try again")
+}
+
+func sameGroup(a, b *string) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
 // CheckOverlapTx fails with ErrSlotTaken if [startVal, endVal) on date

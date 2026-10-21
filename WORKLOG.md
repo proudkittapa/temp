@@ -18,6 +18,41 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Known bugs fixed (locks, expiry job, DB backstops, demo users)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `396d334`)
+- **Changed:** the open correctness items of TODO section 11.
+  - `SaveSlip` locks the customer row before the payment (a slip moves an
+    EXPIRED payment back into the unpaid cap; it raced new bookings).
+  - Expiry job: a PENDING payment whose bookings are gone is closed as
+    EXPIRED instead of being re-picked every minute (500 of them blocked
+    all newer expiries).
+  - `LockCourtGroupTx` reads the court's mutex group inside the
+    transaction, locks in id order and re-checks the group on the locked
+    row (retries if an admin regrouped courts meanwhile).
+  - `MarkPaidInCash` on an expired group takes the date's closure lock
+    before the drawer lock (CreateBookings' order).
+  - `ensureConstraints` (main.go, at startup, NOT VALID then VALIDATE):
+    users.points ≥ 0, products/product_variants.stock ≥ 0, payments
+    refund within the amount, orders deposit returned+kept within the
+    deposit; unique index `idx_shifts_one_open`. CHECK violation → 409
+    with a Thai message.
+  - Demo accounts with passwords are folded out of API builds
+    (`initializeState`).
+- **Verified:** go vet + go test, tsc, vitest 57/57. Live: all 5 checks
+  validated on existing data; SQL negative stock and a second open shift
+  refused. Basketball halves 09:00 OK, full court refused; job expired a
+  backdated booking; late slip on it OK; cash on an expired group
+  (re-reserve path) VERIFIED. API build has no demo email/password.
+  Caught by these tests: my first SaveSlip change used an ambiguous
+  `Select("id")` with a join and broke every slip upload - fixed
+  (`bookings.id`) and both normal and late slips re-tested.
+- **Not done / follow-ups:** money as numeric; an independent review of
+  the live-refresh / no-show / index commits is running.
+
+---
+
 ## 2026-10-21 — No-show frees the court; resale at 50% after a 15-minute grace
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
