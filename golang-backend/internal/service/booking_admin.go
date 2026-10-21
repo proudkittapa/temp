@@ -644,8 +644,16 @@ type DaySummary struct {
 	Date              string  `json:"date"`
 	CashReceived      float64 `json:"cash_received"`
 	PromptPayVerified float64 `json:"promptpay_verified"`
+	// Refunds recorded that day of money counted as received (an approved
+	// payment), split by how it was paid; Refunded is their sum.
 	Refunded          float64 `json:"refunded"`
-	PaidBookings      int64   `json:"paid_bookings"`
+	RefundedCash      float64 `json:"refunded_cash"`
+	RefundedPromptPay float64 `json:"refunded_promptpay"`
+	// Refunds of transfers that were never approved (e.g. a waiting slip
+	// cancelled with a refund): not in the received totals, so not in
+	// Refunded either.
+	RefundedNotReceived float64 `json:"refunded_not_received"`
+	PaidBookings        int64   `json:"paid_bookings"`
 }
 
 // Summary totals payments approved on date by method (cash goes in the
@@ -671,10 +679,30 @@ func (s *BookingService) Summary(ctx context.Context, date string) (*DaySummary,
 	if out.PromptPayVerified, err = sum(model.PaymentPromptPay); err != nil {
 		return nil, err
 	}
-	if err := db.Model(&model.Refund{}).Select("COALESCE(SUM(amount), 0)").
-		Where("refunded_at >= ? AND refunded_at < ?", from, to).Scan(&out.Refunded).Error; err != nil {
+	var refunds []struct {
+		Method   model.PaymentMethod
+		Received bool
+		Total    float64
+	}
+	if err := db.Table("refunds r").Joins("JOIN payments p ON p.id = r.payment_id").
+		Select("p.method AS method, p.verified_at IS NOT NULL AS received, COALESCE(SUM(r.amount), 0) AS total").
+		Where("r.refunded_at >= ? AND r.refunded_at < ?", from, to).
+		Group("p.method, p.verified_at IS NOT NULL").Scan(&refunds).Error; err != nil {
 		return nil, err
 	}
+	for _, r := range refunds {
+		switch {
+		case !r.Received:
+			out.RefundedNotReceived += r.Total
+		case r.Method == model.PaymentCash:
+			out.RefundedCash += r.Total
+		default:
+			out.RefundedPromptPay += r.Total
+		}
+	}
+	out.RefundedCash, out.RefundedPromptPay = RoundBaht(out.RefundedCash), RoundBaht(out.RefundedPromptPay)
+	out.RefundedNotReceived = RoundBaht(out.RefundedNotReceived)
+	out.Refunded = out.RefundedCash + out.RefundedPromptPay
 	if err := db.Model(&model.Booking{}).Where("date = ? AND status IN ?", date, paidStatuses).Count(&out.PaidBookings).Error; err != nil {
 		return nil, err
 	}

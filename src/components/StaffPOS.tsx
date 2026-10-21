@@ -1497,11 +1497,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     const cashSumFromOrders = api.USE_BACKEND ? daySummary?.ordersCash ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.CASH));
     const qrSumFromOrders = api.USE_BACKEND ? daySummary?.ordersPromptpay ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.PROMPTPAY));
 
-    let cashFromBookings = 0, qrFromBookings = 0, refunded = 0;
+    let cashFromBookings = 0, qrFromBookings = 0, refundedCash = 0, refundedQr = 0, refundedNotReceived = 0;
     if (api.USE_BACKEND) {
       cashFromBookings = daySummary?.cashReceived ?? 0;
       qrFromBookings = daySummary?.promptpayVerified ?? 0;
-      refunded = daySummary?.refunded ?? 0;
+      refundedCash = daySummary?.refundedCash ?? 0;
+      refundedQr = daySummary?.refundedPromptpay ?? 0;
+      refundedNotReceived = daySummary?.refundedNotReceived ?? 0;
     } else {
       // Money received today, whatever day it was for - as the server
       // counts it: payments approved today (refunded ones too, their refund
@@ -1512,10 +1514,16 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         if (p.method === PaymentMethod.CASH) cashFromBookings += p.amount;
         else if (p.method === PaymentMethod.PROMPTPAY) qrFromBookings += p.amount;
       }
-      // Each refund on its own day (older data has only the running total).
-      refunded = payments.reduce((sum, p) => sum + (p.refunds
-        ? p.refunds.filter(r => localDateOf(r.at) === todayStr).reduce((n, r) => n + r.amount, 0)
-        : (p.refundedAt && localDateOf(p.refundedAt) === todayStr ? p.refundAmount || 0 : 0)), 0);
+      // Each refund on its own day (older data has only the running total),
+      // split like the server: by method, and money never approved apart.
+      for (const p of payments) {
+        const today = p.refunds
+          ? p.refunds.filter(r => localDateOf(r.at) === todayStr).reduce((n, r) => n + r.amount, 0)
+          : (p.refundedAt && localDateOf(p.refundedAt) === todayStr ? p.refundAmount || 0 : 0);
+        if (!p.verifiedAt) refundedNotReceived += today;
+        else if (p.method === PaymentMethod.CASH) refundedCash += today;
+        else refundedQr += today;
+      }
     }
     const bookingIncome = roundBaht(cashFromBookings + qrFromBookings);
 
@@ -1527,7 +1535,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       rentalIncome,
       cashExpected: roundBaht(cashFromBookings + cashSumFromOrders),
       qrExpected: roundBaht(qrFromBookings + qrSumFromOrders),
-      refunded: roundBaht(refunded),
+      refunded: roundBaht(refundedCash + refundedQr),
+      refundedCash: roundBaht(refundedCash),
+      refundedQr: roundBaht(refundedQr),
+      refundedNotReceived: roundBaht(refundedNotReceived),
       totalExpected: roundBaht(bookingIncome + fbIncome + rentalIncome)
     };
   };
@@ -2711,9 +2722,22 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 {blindCount
                   ? <p id="day-report-blind" className="text-[10px] text-slate-400 mt-2">ยอดเงินแสดงให้ผู้จัดการเท่านั้น (นับลิ้นชักแบบไม่เห็นยอด)</p>
                   : <p className="text-[10px] text-slate-400 mt-2">ค่าสนาม: {formatBaht(calculateLedger().bookingIncome)} (รวมเงินจองล่วงหน้าของวันอื่น) | ขายของ: {formatBaht(calculateLedger().fbIncome)} | ค่าเช่า: {formatBaht(calculateLedger().rentalIncome)}</p>}
-                {calculateLedger().refunded > 0 && (
-                  <p className="text-[10px] text-sky-700 font-bold mt-1">💸 คืนเงินวันนี้: {formatBaht(calculateLedger().refunded)} บาท</p>
-                )}
+                {(() => {
+                  const l = calculateLedger();
+                  return (<>
+                    {l.refunded > 0 && (
+                      <p id="day-refunds" className="text-[10px] text-sky-700 font-bold mt-1">
+                        💸 คืนเงินวันนี้: {formatBaht(l.refunded)} บาท
+                        <span className="font-normal"> (ของเงินสด {formatBaht(l.refundedCash)} · ของเงินโอน {formatBaht(l.refundedQr)})</span>
+                      </p>
+                    )}
+                    {l.refundedNotReceived > 0 && (
+                      <p id="day-refunds-not-received" className="text-[10px] text-slate-500 mt-0.5">
+                        + คืนเงินโอนที่ยังไม่ได้อนุมัติสลิป {formatBaht(l.refundedNotReceived)} บาท (ไม่ได้นับเป็นเงินรับ)
+                      </p>
+                    )}
+                  </>);
+                })()}
               </div>
 
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">

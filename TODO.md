@@ -82,7 +82,7 @@ Each needs a yes/no from the owner before it is built.
 - [ ] Scan the PromptPay QR with at least two Thai banking apps.
 
 ## 7. Smaller improvements found in the 2026-10-21 code review (not done)
-- [ ] Day summary: split refunds by method and count only refunds of money counted as received.
+- [x] Day summary: refunds split by method (cash / transfer) and only refunds of approved payments counted; refunds of never-approved slips shown apart. Done 2026-10-21.
 - [x] Automatic retry of deadlock/serialization errors: every transaction runs through `repository.RetryTx` (3 attempts). Done 2026-10-21.
 - [ ] Backend concurrency tests on a real Postgres (verify vs cancel, expiry vs slip upload, void vs shift close) - only a manual parallel-booking check was done.
 - [x] Database backstop against double booking: partial unique index `idx_bookings_live_slot` on (court_id, date, start_time) for non-cancelled rows; a hit returns 409 "slot already booked". Done 2026-10-21.

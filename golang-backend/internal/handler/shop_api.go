@@ -165,7 +165,8 @@ func (h *ShopHandler) DaySummary(c *gin.Context) {
 	}
 	data := gin.H{
 		"date": sum.Date, "cash_received": sum.CashReceived, "promptpay_verified": sum.PromptPayVerified,
-		"refunded": sum.Refunded, "paid_bookings": sum.PaidBookings,
+		"refunded": sum.Refunded, "refunded_cash": sum.RefundedCash, "refunded_promptpay": sum.RefundedPromptPay,
+		"refunded_not_received": sum.RefundedNotReceived, "paid_bookings": sum.PaidBookings,
 		"orders_cash": orders.Cash, "orders_promptpay": orders.PromptPay, "fb_sales": orders.FB,
 		"equipment_sales": orders.EquipmentSales, "rental_income": orders.Rentals, "orders_count": orders.Count,
 	}

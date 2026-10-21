@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Day summary: refunds split by method
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `3cef87d`)
+- **Changed:** `GET /staff/summary` gains refunded_cash, refunded_promptpay
+  and refunded_not_received; `refunded` is now only refunds of payments
+  that were approved (counted as received) = cash + promptpay. Refunds of
+  slips never approved are reported apart. (`booking_admin.go` Summary,
+  `shop_api.go`, `api.ts`). Staff day report shows "คืนเงินวันนี้: X
+  (ของเงินสด A · ของเงินโอน B)" and the not-received line; local mode
+  computes the same split. (`StaffPOS.tsx`)
+- **Verified:** go vet, tsc. Live on arena_fresh: DB refunds today = 180
+  approved transfer + 424 never-approved → API refunded 180,
+  refunded_promptpay 180, refunded_not_received 424, refunded_cash 0.
+- **Not done / follow-ups:** cash refunds still don't reduce the drawer's
+  expected cash (owner decision, TODO section 0).
+
+---
+
 ## 2026-10-21 — Feature guide: screenshots embedded
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
