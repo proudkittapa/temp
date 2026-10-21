@@ -18,10 +18,23 @@ Entry format:
 
 ---
 
+## 2026-10-21 — TODO ordered by what to do next
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `5987cce`)
+- **Changed:** `TODO.md` starts with "Order of work" (owner decisions ->
+  receipts/payment screen -> pre-launch safety -> deploy -> real-phone tests
+  -> LINE -> forgot password -> tablet layout -> small improvements) and has
+  a new section 8 "Deploy (production)" (it was missing; LINE and real-phone
+  testing need it). Docs only, no code change.
+- **Verified:** n/a (docs).
+
+---
+
 ## 2026-10-21 — Full code review: races, money rules, dead code
 
 - **Who:** Claude Code (Opus 5.5) with review/fix subagents, session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `c3109fb`)
+- **Commit(s):** `5987cce` (on `main`, parent `c3109fb`)
 - **Background:** Owner asked for a review of frontend and backend for bugs,
   race conditions, improvements and redundant code, and to fix them. Five
   read-only reviews (backend money paths, backend shop/auth/admin, customer

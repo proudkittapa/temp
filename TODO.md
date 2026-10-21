@@ -1,5 +1,27 @@
 # TODO (planned, not started)
 
+## Order of work (do top to bottom)
+Each step names the sections below. The order puts cheap, blocking items
+first and items that need outside accounts later.
+
+1. **Owner answers the decisions** - section 0, incl. the real business
+   name / address / tax ID and whether the business is VAT-registered. Each is
+   a yes/no; several are small code changes once decided.
+2. **Fix receipts and the payment screen** with those details - section 5,
+   plus "receipts show the print time and the viewer as cashier" (section 7).
+3. **Safety checks before going live** - section 7: database backstop against
+   double booking, concurrency tests and automatic retry of "busy" errors.
+4. **Deploy to a real server with HTTPS** - section 8. Needed for real-phone
+   testing, the LINE login callback and LINE webhooks.
+5. **Test on real phones** - section 6 and section 3 ("real phones / inside
+   the LINE app"); scan the PromptPay QR with two Thai banking apps.
+6. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
+   notifications (section 2).
+7. **Forgot password** - section 4 (needs an SMS provider, or LINE from step 6).
+8. **Staff POS and Admin on a tablet** - section 3.
+9. **Remaining small improvements** - section 7: refunds split by method,
+   report year picker, Excel import preview, rental deposit, tidy-ups.
+
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
 Each needs a yes/no from the owner before it is built.
 - [ ] **Cash with no shift open:** staff are warned before taking cash when no drawer shift is open (that cash is in no shift's count), but can still go ahead. Block it instead?
@@ -60,3 +82,8 @@ Each needs a yes/no from the owner before it is built.
 - [ ] Excel import: show a preview of parsed rows before saving; read files with `readAsArrayBuffer`.
 - [ ] Rental security deposit (FR-5.3) is not modelled.
 - [ ] Tidy-ups: drop `export` from symbols used only inside their file (api.ts, mockData.ts, Dialog.tsx); `bangkokNow` and `localDateOf` each build their own date formatter.
+
+## 8. Deploy (production)
+- [ ] A server or managed host for the Go backend + Postgres, the frontend built with `VITE_DATA_SOURCE=api npm run build`, served over HTTPS.
+- [ ] Production settings in `golang-backend/.env` (never in the repo): `GIN_MODE=release`, a long random `JWT_SECRET` (the server refuses to start without it in release mode), `DATABASE_URL`, `PROMPTPAY_ID`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES` behind a reverse proxy, and **no** `SEED_DEMO_USERS`.
+- [ ] Create the real admin account and remove/disable demo accounts; daily database backups and a tested restore; a place to keep slip images (`uploads/`) that survives redeploys.
