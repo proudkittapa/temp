@@ -9,6 +9,7 @@ import * as api from '../api';
 import { notify, ask, askText, dialog } from './Dialog';
 import DemoLogins, { DEMO_STAFF, DEMO_ADMINS } from './DemoLogins';
 import MemberPhoneInput from './MemberPhoneInput';
+import { useLiveTick } from '../useLiveTick';
 import { can, canUseCounter, Permission } from '../permissions';
 import { Check, X, ShoppingCart, Activity, AlertTriangle, ShieldCheck, Receipt, Plus, Minus, CheckCircle2, AlertOctagon } from 'lucide-react';
 
@@ -157,6 +158,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // replaces staffUser with the server's fresh copy on every refresh.
   const staffUserId = staffUser?.id;
   const staffRole = staffUser?.role;
+  // Live data: reload every 15 s while the screen is visible (new slips,
+  // other counters' bookings and sales) and when staff come back to it.
+  const liveTick = useLiveTick(15000);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   useEffect(() => {
     if (!api.USE_BACKEND || !staffUserId) return;
     let cancelled = false;
@@ -174,6 +179,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         setOrders(dayOrders);
         setActiveRentalOrders(rentals);
         setStaffApiError(null);
+        setLastSyncAt(Date.now());
       })
       .catch(err => {
         if (cancelled) return;
@@ -181,7 +187,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         setStaffApiError(err.message);
       });
     return () => { cancelled = true; };
-  }, [triggerRefresh, staffUserId, staffRole]);
+  }, [triggerRefresh, staffUserId, staffRole, liveTick]);
 
   // API mode: the walk-in grid shows the backend's bookings for the chosen
   // date (online + walk-in), so the counter can't sell a slot that was
@@ -218,7 +224,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       }
     })();
     return () => { cancelled = true; };
-  }, [triggerRefresh, staffUserId, walkinDate]);
+  }, [triggerRefresh, staffUserId, walkinDate, liveTick]);
 
   const handleStaffLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -297,7 +303,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     // (every booking action triggers one, which used to jump back to today).
     setWalkinDate(prev => prev || getTodayDateStr());
 
-  }, [triggerRefresh]);
+  }, [triggerRefresh, liveTick]);
 
   // Handle first load of selections
   useEffect(() => {
@@ -1675,7 +1681,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
           <div className="h-10 w-10 bg-emerald-950 text-emerald-400 rounded-xl flex items-center justify-center font-bold font-mono">POS</div>
           <div>
             <p className="text-xs font-bold">แผงทำงานพนักงานสปอร์ตคอมเพล็กซ์ (Staff Panel)</p>
-            <p className="text-[10px] text-slate-400">ผู้ใช้งาน: {staffUser ? staffUser.name : 'คุณ กิตติ (เดโม)'} | สิทธิ์ของคุณ: <span className="text-emerald-400 font-extrabold">{actingUser?.role}</span></p>
+            <p className="text-[10px] text-slate-400">ผู้ใช้งาน: {staffUser ? staffUser.name : 'คุณ กิตติ (เดโม)'} | สิทธิ์ของคุณ: <span className="text-emerald-400 font-extrabold">{actingUser?.role}</span>
+              {lastSyncAt && <span id="staff-last-sync"> · อัปเดตอัตโนมัติ {new Date(lastSyncAt).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour12: false })}</span>}</p>
           </div>
         </div>
 

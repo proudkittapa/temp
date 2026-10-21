@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime, businessInfo } from '../mockData';
 import { prepareSlipImage, SlipImageError } from '../slipImage';
+import { useLiveTick } from '../useLiveTick';
 import * as api from '../api';
 import { canUseCounter, canUseSettings } from '../permissions';
 import { notify, ask } from './Dialog';
@@ -126,6 +127,11 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
   // UI state
   const [activeStep, setActiveStep] = useState<number>(1); // 1: Select Slot, 2: Info & Checkout, 3: QR Payment & Upload Slip
+  // Live data: availability and the customer's payments reload while the
+  // page is visible - every 10 s on the payment screen (so "approved" or
+  // "expired" shows up by itself), 30 s elsewhere - and on returning from
+  // the banking app.
+  const liveTick = useLiveTick(activeStep === 3 ? 10000 : 30000);
 
   // One action at a time (booking, slip upload, redeem): a double tap on a
   // slow phone must not send it twice. Wraps the button handlers; `busy`
@@ -224,7 +230,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
     // Start on today (Bangkok); a refresh keeps the date the customer chose.
     setSelectedDate(prev => prev || getTodayDateStr());
-  }, [triggerRefresh]);
+  }, [triggerRefresh, liveTick]);
 
   // API mode: load courts, the selected date's bookings (for availability)
   // and the customer's own bookings+payments (for history) from the backend.
@@ -309,7 +315,16 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       }
     })();
     return () => { cancelled = true; };
-  }, [triggerRefresh, selectedDate, loggedInUserId]);
+  }, [triggerRefresh, selectedDate, loggedInUserId, liveTick]);
+
+  // The payment screen follows the server: the payment as last loaded
+  // (approved, rejected, expired, refunded), not the copy from when it was
+  // created.
+  useEffect(() => {
+    if (!currentPayment) return;
+    const fresh = payments.find(p => p.id === currentPayment.id);
+    if (fresh && (fresh.status !== currentPayment.status || fresh.slipUploadedAt !== currentPayment.slipUploadedAt)) setCurrentPayment(fresh);
+  }, [payments]);
 
   // Customer Auth Function Handlers
   const handleLogin = (e: React.FormEvent) => {
@@ -1935,7 +1950,17 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                 {/* The actual PromptPay (EMVCo) payload as a scannable QR code */}
                 <div className="bg-white border border-slate-200 p-3 rounded">
-                  {currentPayment?.status === PaymentStatus.EXPIRED ? (
+                  {currentPayment?.status === PaymentStatus.VERIFIED ? (
+                    <div id="payment-verified-notice" className="h-44 w-44 flex flex-col items-center justify-center text-center gap-1 text-sm text-emerald-700 font-bold">
+                      <span className="text-3xl">✅</span>
+                      ชำระเงินเรียบร้อย การจองยืนยันแล้ว
+                    </div>
+                  ) : currentPayment?.status === PaymentStatus.REJECTED || currentPayment?.status === PaymentStatus.REFUNDED ? (
+                    <div id="payment-closed-notice" className="h-44 w-44 flex flex-col items-center justify-center text-center gap-1 text-xs text-rose-700 font-bold">
+                      <span className="text-2xl">✖️</span>
+                      {currentPayment.status === PaymentStatus.REFUNDED ? 'การจองนี้ถูกยกเลิกและคืนเงินแล้ว' : 'สลิปไม่ผ่านการตรวจ การจองนี้ถูกยกเลิก'}
+                    </div>
+                  ) : currentPayment?.status === PaymentStatus.EXPIRED ? (
                     // The hold ran out: don't invite a new payment - only a
                     // slip for money already sent (late payment).
                     <div id="expired-payment-notice" className="h-44 w-44 flex flex-col items-center justify-center text-center gap-1 text-xs text-rose-700 font-bold">
@@ -1964,8 +1989,15 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       : <p className="text-[11px] font-bold text-rose-700">⌛ หมดเวลาชำระแล้ว ระบบอาจยกเลิกการจองนี้</p>;
                   })()}
                   {currentPayment?.status === PaymentStatus.SLIP_UPLOADED && (
-                    <p className="text-[11px] font-bold text-sky-700">📨 ส่งสลิปแล้ว รอพนักงานตรวจ — อัปโหลดใหม่ได้หากส่งผิดรูป</p>
+                    <p className="text-[11px] font-bold text-sky-700">📨 ส่งสลิปแล้ว รอพนักงานตรวจ — อัปโหลดใหม่ได้หากส่งผิดรูป (หน้านี้อัปเดตผลให้เอง)</p>
                   )}
+                  {currentPayment?.status === PaymentStatus.VERIFIED && (
+                    <p className="text-[11px] font-bold text-emerald-700">ดูการจองได้ที่ "รายการจองของฉัน" ด้านล่าง พบกันที่สนาม!</p>
+                  )}
+                  {currentPayment?.status === PaymentStatus.REJECTED && (() => {
+                    const reason = bookings.find(b => b.id === currentBooking.id)?.cancellationReason;
+                    return <p className="text-[11px] font-bold text-rose-700 max-w-xs">{reason ? `เหตุผล: ${reason} · ` : ''}หากโอนเงินแล้ว กรุณาติดต่อเคาน์เตอร์</p>;
+                  })()}
                   {currentPayment?.status === PaymentStatus.EXPIRED && (
                     <p className="text-[11px] font-bold text-rose-700 max-w-xs">
                       การจองนี้ถูกยกเลิกเพราะไม่ได้รับสลิปภายใน {PAYMENT_HOLD_MINUTES} นาที หากคุณโอนเงินไปแล้ว ส่งสลิปด้านล่าง —
@@ -1975,8 +2007,8 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 </div>
               </div>
 
-              {/* Upload Slip Selector Simulator */}
-              <div className="space-y-4">
+              {/* Upload Slip Selector Simulator - not once the payment is settled */}
+              <div className={`space-y-4${currentPayment?.status === PaymentStatus.VERIFIED || currentPayment?.status === PaymentStatus.REFUNDED ? ' hidden' : ''}`}>
                 <div className="bg-slate-50 p-4 rounded-xl border border-dashed border-slate-200">
                   <span className="block text-xs font-semibold text-slate-700 mb-2">โอนแล้ว ส่งรูปสลิปที่นี่:</span>
                   

@@ -18,6 +18,35 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Live refresh (staff every 15 s, customer 30 s / 10 s on payment)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `a33e71d`)
+- **Changed:** nothing updated until someone clicked (new slips, another
+  counter's walk-ins, a customer's payment approved/expired).
+  - New `src/useLiveTick.ts`: a counter bumped every N ms while the page
+    is visible, at once on returning to it (visibilitychange/focus, unless
+    it just ran) and on a storage event (browser-only mode, another tab).
+    Hidden tabs don't poll.
+  - StaffPOS: the existing data effects also depend on the tick (15 s);
+    header shows "อัปเดตอัตโนมัติ hh:mm:ss" after each successful load.
+  - CustomerPanel: same, 30 s (10 s on the payment step). The payment
+    screen now follows the reloaded payment (it kept the copy from when the
+    booking was made) and shows ✅ approved / ✖️ rejected or refunded
+    (with the reason) and hides the slip upload once settled.
+  - Admin panel doesn't poll (settings/reports).
+  - Docs: TODO live refresh ticked, feature guide limitation replaced,
+    checklist 4b.1d.
+- **Verified:** tsc, vitest 54/54. Playwright with two browsers and no
+  clicks: customer slip uploaded from outside → staff queue 0 → 1 after
+  13 s; staff approved from outside → customer payment screen shows
+  "ชำระเงินเรียบร้อย" after 3 s, upload box hidden; no page errors.
+- **Not done / follow-ups:** each staff tick re-runs ~12 requests (the
+  existing loads); fine for one venue, per-resource loading is in TODO
+  section 11 (performance).
+
+---
+
 ## 2026-10-21 — Performance indexes (empty or existing database)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
