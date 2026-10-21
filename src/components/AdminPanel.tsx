@@ -3,31 +3,27 @@ import * as XLSX from 'xlsx';
 import { 
   Court, CourtType, PricingRule, DayType, PriceType, 
   User, UserRole, MemberType, Booking, BookingStatus, 
-  Payment, PaymentStatus, PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig, LedgerEntryType
+  Payment, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig, LedgerEntryType
 } from '../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf, bangkokStamp, formatDateTime } from '../mockData';
+import { StorageService, findClosure, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf, bangkokStamp, formatDateTime } from '../mockData';
 import * as api from '../api';
 import { notify, ask, askText } from './Dialog';
 import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line 
 } from 'recharts';
-import { 
-  DollarSign, Eye, Calendar, Settings, Clock, ThumbsUp, Users, Coffee, 
-  Layers, Hammer, BarChart3, Save, Plus, Trash2, FileDown, Search, ArrowRight, Activity, ShieldCheck
-} from 'lucide-react';
+import { Settings, Users, FileDown, Search, ShieldCheck } from 'lucide-react';
 
 // Bookable hours per court per day (dashboard occupancy).
 const hoursPerDay = () => { const { open, close } = openingHours(); return close - open; };
 
 interface AdminPanelProps {
-  currentUserRole: UserRole;
   onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
   triggerRefresh: number;
   onRefreshAll: () => void;
 }
 
-export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefresh, onRefreshAll }: AdminPanelProps) {
+export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll }: AdminPanelProps) {
   const [courts, setCourts] = useState<Court[]>([]);
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -69,6 +65,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const [newCourtName, setNewCourtName] = useState<string>('');
   const [newCourtType, setNewCourtType] = useState<CourtType>(CourtType.BADMINTON);
   const [newCourtAllowHalf, setNewCourtAllowHalf] = useState<boolean>(false);
+  const [newCourtHalfOf, setNewCourtHalfOf] = useState<string>(''); // the full court a half court belongs to
 
   // Manage Special Day-Off state
   const [daysOff, setDaysOff] = useState<DayOff[]>([]);
@@ -80,14 +77,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const [newDayOffEndHour, setNewDayOffEndHour] = useState<number>(22);
 
   // User edit state
-  const [newUserName, setNewUserName] = useState<string>('');
   const [newUserRole, setNewUserRole] = useState<UserRole>(UserRole.STAFF);
-  const [newUserPhone, setNewUserPhone] = useState<string>('');
   
   // Advanced User Management States
   const [userIdToPromote, setUserIdToPromote] = useState<string>('');
   const [userSearchQuery, setUserSearchQuery] = useState<string>('');
   const [userRoleFilter, setUserRoleFilter] = useState<string>('');
+  const [userTierFilter, setUserTierFilter] = useState<string>('');
   const [userPendingChanges, setUserPendingChanges] = useState<Record<string, { role: UserRole; memberType: MemberType }>>({});
 
   // Discount rule edit state
@@ -126,7 +122,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     if (!original) return;
 
     if (api.USE_BACKEND) {
-      api.updateMemberDiscount({ ...original, name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive })
+      return api.updateMemberDiscount({ ...original, name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive })
         .then(() => {
           setEditingDiscounts(prev => {
             const next = { ...prev };
@@ -140,7 +136,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           notify(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
         })
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     const updatedList = memberDiscounts.map(d => {
@@ -289,7 +284,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       return {
         name: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
         'รายได้ค่าคอร์ท': roundBaht(bookings.filter(b => b.date.startsWith(key) && isPaidBooking(b)).reduce((s, b) => s + Number(b.totalAmount), 0)),
-        'รายได้เครื่องดื่ม/เช่าแร็ก': roundBaht(orders.filter(o => o.createdAt.startsWith(key) && o.status !== OrderStatus.CANCELLED).reduce((s, o) => s + Number(o.totalAmount), 0))
+        'รายได้เครื่องดื่ม/เช่าแร็ก': roundBaht(orders.filter(o => localDateOf(o.createdAt).startsWith(key) && o.status !== OrderStatus.CANCELLED).reduce((s, o) => s + Number(o.totalAmount), 0))
       };
     });
   };
@@ -365,8 +360,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       notify(`บันทึกเวลาเปิด-ปิด ${String(open).padStart(2, '0')}:00 - ${String(close).padStart(2, '0')}:00 แล้ว`);
     };
     if (api.USE_BACKEND) {
-      api.setOpeningHours(open, close).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
+      return api.setOpeningHours(open, close).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
     }
     StorageService.set('pricing_config', { ...StorageService.get<PricingConfig>('pricing_config', { id: 'global', halfCourtRatePercent: 50 }), openHour: open, closeHour: close });
     done();
@@ -388,8 +382,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       notify(`ตั้งค่าแล้ว: ลูกค้าจองออนไลน์ล่วงหน้าได้ ${days} วัน (ถึง ${lastBookableDate()})`);
     };
     if (api.USE_BACKEND) {
-      api.setMaxAdvanceDays(days).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
+      return api.setMaxAdvanceDays(days).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
     }
     StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), maxAdvanceDays: days });
     done();
@@ -427,7 +420,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
     if (api.USE_BACKEND) {
       const existing = editingRuleId ? pricingRules.find(r => r.id === editingRuleId) : undefined;
-      api.savePricingRule({ ...newRule, id: editingRuleId || '', isActive: existing ? existing.isActive : true })
+      return api.savePricingRule({ ...newRule, id: editingRuleId || '', isActive: existing ? existing.isActive : true })
         .then(saved => {
           onAddAuditLog(editingRuleId ? 'PRICING_UPDATED' : 'PRICING_CREATED', 'PricingRule', saved.id, existing ?? null, saved);
           setEditingRuleId(null);
@@ -437,7 +430,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           notify('บันทึกกติกาตั้งราคาเรียบร้อย! มีผลทันทีในกลไกเซิร์ฟเวอร์');
         })
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     const currentRules = StorageService.get<PricingRule[]>('pricing_rules', []);
@@ -477,13 +469,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     if (!(await ask('ลบกฎราคานี้? ชั่วโมงที่กฎนี้ครอบคลุมจะจองไม่ได้จนกว่าจะมีกฎใหม่', { okLabel: 'ลบกฎราคา', danger: true }))) return;
     if (api.USE_BACKEND) {
       const ruleToDelete = pricingRules.find(r => r.id === id);
-      api.deletePricingRule(id)
+      return api.deletePricingRule(id)
         .then(() => {
           onAddAuditLog('PRICING_DELETED', 'PricingRule', id, ruleToDelete, null);
           onRefreshAll();
         })
         .catch(err => notify(`ลบไม่สำเร็จ: ${err.message}`));
-      return;
     }
     const currentRules = StorageService.get<PricingRule[]>('pricing_rules', []);
     const ruleToDelete = currentRules.find(r => r.id === id);
@@ -500,17 +491,24 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const handleCreateCourt = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCourtName) return;
+    // A half court shares a full court's floor: it must name that court, so
+    // booking one blocks the other (as on the server).
+    const fullCourt = newCourtAllowHalf ? courts.find(c => c.id === newCourtHalfOf && c.type === newCourtType && c.shareOfGroup >= 1) : undefined;
+    if (newCourtAllowHalf && !fullCourt) {
+      notify('ครึ่งสนามต้องเลือกว่าเป็นครึ่งของสนามเต็มสนามใด (ประเภทเดียวกัน)');
+      return;
+    }
     if (api.USE_BACKEND) {
-      api.createCourt({ name: newCourtName, type: newCourtType, halfCourt: newCourtAllowHalf })
+      return api.createCourt({ name: newCourtName, type: newCourtType, halfCourt: newCourtAllowHalf, halfOf: fullCourt?.id })
         .then(c => {
           onAddAuditLog('COURT_CREATED', 'Court', c.id, null, c);
           setNewCourtName('');
           setNewCourtAllowHalf(false);
+          setNewCourtHalfOf('');
           onRefreshAll();
           notify(`เพิ่มสนาม "${c.name}" แล้ว ลูกค้าและพนักงานจองได้ทันที`);
         })
         .catch(err => notify(`เพิ่มสนามไม่สำเร็จ: ${err.message}`));
-      return;
     }
     const current = StorageService.get<Court[]>('courts', []);
     const cId = newCourtType.toLowerCase().substring(0, 3) + '-' + (current.length + 1) + '-' + Math.floor(100 + Math.random() * 900);
@@ -518,20 +516,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       id: cId,
       name: newCourtName,
       type: newCourtType,
-      // A court created here has no sibling sub-allocations, so "allow half"
-      // just books it at the half-court rate (Court.shareOfGroup) rather than
-      // joining a mutex group - there's nothing else in the group to conflict
-      // with yet. Previously this checkbox only toggled a cosmetic badge.
+      // A half court joins its full court's group (made on the spot if the
+      // full court had none), priced at the half-court rate.
       shareOfGroup: newCourtAllowHalf ? 0.5 : 1,
+      mutexGroupId: fullCourt ? (fullCourt.mutexGroupId || `grp-${fullCourt.id}`) : undefined,
       isActive: true,
       createdAt: new Date().toISOString()
     };
-    const updated = [...current, newC];
+    const updated = [...current.map(c => fullCourt && c.id === fullCourt.id && !c.mutexGroupId ? { ...c, mutexGroupId: newC.mutexGroupId } : c), newC];
     StorageService.set('courts', updated);
     setCourts(updated);
     onAddAuditLog('COURT_CREATED', 'Court', newC.id, null, newC);
     setNewCourtName('');
     setNewCourtAllowHalf(false);
+    setNewCourtHalfOf('');
     onRefreshAll();
     notify(`เพิ่มสนามกีฬา "${newC.name}" เข้าสู่คอมเพล็กซ์สำเร็จเรียบร้อยค่ะ!`);
   };
@@ -543,7 +541,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       const court = courts.find(c => c.id === id);
       if (!court) return;
       if (court.isActive && !(await ask(`ปิด "${court.name}" ไม่ให้จองใหม่?\n(การจองที่มีอยู่แล้วจะถามต่อว่าจะยกเลิกหรือไม่)`, { okLabel: 'ปิดสนาม', danger: true }))) return;
-      api.updateCourt(id, { isActive: !court.isActive })
+      return api.updateCourt(id, { isActive: !court.isActive })
         .then(async r => {
           onAddAuditLog('COURT_TOGGLED_ACTIVE', 'Court', id, { active: court.isActive }, { active: r.court.isActive });
           onRefreshAll();
@@ -552,7 +550,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             // still has (FR-6.3), recording a refund for paid hours.
             const list = r.upcoming.map(b => `- ${b.date} ${b.startTime}–${b.endTime} ${b.userName} (${b.bookingCode})${b.status === BookingStatus.PENDING_PAYMENT ? ' ยังไม่ชำระ' : ''}`).join('\n');
             if (!(await ask(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจอง ${r.upcoming.length} รายการ:\n${list}\n\nยกเลิกทั้งหมดเลยไหม? รายการที่ชำระแล้ว (หรือส่งสลิปแล้ว) จะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { title: 'การจองบนสนามที่ปิด', okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้ ติดต่อลูกค้าเอง', danger: true }))) return;
-            (async () => {
+            return (async () => {
               let refunded = 0, failed = 0;
               for (const b of r.upcoming) {
                 try {
@@ -571,7 +569,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           }
         })
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
     }
     const current = StorageService.get<Court[]>('courts', []);
     const updated = current.map(c => {
@@ -609,12 +606,28 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       setActiveAdminTab('dashboard');
     }
   }, [canEditPricing, activeAdminTab]);
+  // One save at a time: a double click must not create two products,
+  // closures, courts or pricing rules (the server doesn't refuse all such
+  // duplicates). Wraps the button/form handlers; `busy` greys them.
+  const busyRef = React.useRef(false);
+  const [busy, setBusy] = useState(false);
+  const guarded = <A extends unknown[]>(fn: (...args: A) => unknown) => async (...args: A) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try { await fn(...args); } finally { busyRef.current = false; setBusy(false); }
+  };
   const [adminIdentity, setAdminIdentity] = useState<string>('');
   const [adminPassword, setAdminPassword] = useState<string>('');
   const [adminApiError, setAdminApiError] = useState<string | null>(null);
 
+  // Effects key on the id and role: the session check below stores the
+  // server's fresh copy of the user (a role changed by another admin takes
+  // effect without signing in again).
+  const adminUserId = adminUser?.id;
+  const adminRole = adminUser?.role;
   useEffect(() => {
-    if (!api.USE_BACKEND || !adminUser) return;
+    if (!api.USE_BACKEND || !adminUserId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -626,6 +639,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setAdminApiError('เซสชันผู้จัดการหมดอายุหรือไม่มีสิทธิ์ กรุณาเข้าสู่ระบบอีกครั้ง');
           return;
         }
+        setAdminUser(me);
         const [closures, pricing, apiUsers, apiProducts, apiCourts, logs] = await Promise.all([
           api.listDaysOff(getTodayDateStr()), api.syncPricingCache(), api.listUsers(), api.adminListProducts(), api.adminListCourts(),
           // The audit trail is for admins only (RBAC).
@@ -642,25 +656,38 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         setMaxAdvanceDays(pricing.config.maxAdvanceDays ?? 30);
         setPricingRules(pricing.rules);
         setMemberDiscounts(pricing.memberDiscounts);
+        setAdminApiError(null);
       } catch (err) {
         if (!cancelled) setAdminApiError(err instanceof Error ? err.message : String(err));
       }
     })();
     return () => { cancelled = true; };
-  }, [triggerRefresh, adminUser]);
+  }, [triggerRefresh, adminUserId, adminRole]);
 
+  // The dashboard's date: its numbers, bookings and closures (the list
+  // above has closures from today on only, so a past date needs its own).
+  const [dashClosures, setDashClosures] = useState<DayOff[]>([]);
   useEffect(() => {
-    if (!api.USE_BACKEND || !adminUser) return;
+    if (!api.USE_BACKEND || !adminUserId) return;
     let cancelled = false;
-    Promise.all([api.dashboard(dashboardSelectedDate), api.listBookingsByDate(dashboardSelectedDate, 'admin')])
-      .then(([d, list]) => {
+    Promise.all([api.dashboard(dashboardSelectedDate), api.listBookingsByDate(dashboardSelectedDate, 'admin'),
+      api.listDaysOff(dashboardSelectedDate, dashboardSelectedDate)])
+      .then(([d, list, closures]) => {
         if (cancelled) return;
         setDash(d);
         setDashBookings(list);
+        setDashClosures(closures);
+        setAdminApiError(null);
       })
-      .catch(err => { if (!cancelled) setAdminApiError(err instanceof Error ? err.message : String(err)); });
+      .catch(err => {
+        if (cancelled) return;
+        // Don't leave the previous date's numbers under the new date.
+        setDash(null);
+        setDashBookings([]);
+        setAdminApiError(err instanceof Error ? err.message : String(err));
+      });
     return () => { cancelled = true; };
-  }, [triggerRefresh, adminUser, dashboardSelectedDate]);
+  }, [triggerRefresh, adminUserId, dashboardSelectedDate]);
 
   const handleAdminLogout = () => {
     api.logout('admin');
@@ -700,7 +727,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     }
 
     if (api.USE_BACKEND) {
-      api.createDayOff({
+      return api.createDayOff({
         date: newDayOffDate,
         courtId: newDayOffCourtId,
         reason: newDayOffReason,
@@ -726,7 +753,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           // recording a refund for hours that were already paid.
           const active = affectedBookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING_PAYMENT);
           if (active.length > 0 && await ask(`ยกเลิกการจองที่ได้รับผลกระทบ ${active.length} รายการเลยไหม?\nรายการที่ชำระแล้ว (หรือส่งสลิปแล้ว) จะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้', danger: true })) {
-            (async () => {
+            return (async () => {
               let refunded = 0, failed = 0;
               for (const b of active) {
                 try {
@@ -745,7 +772,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           }
         })
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     const current = StorageService.get<DayOff[]>('days_off', []);
@@ -775,14 +801,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
   const handleDeleteDayOff = async (id: string) => {
     if (!(await ask('ลบวันปิดนี้ และเปิดให้จองตามปกติ?', { okLabel: 'ลบวันปิด' }))) return;
     if (api.USE_BACKEND) {
-      api.deleteDayOff(id)
+      return api.deleteDayOff(id)
         .then(() => {
           onAddAuditLog('DAY_OFF_DELETED', 'DayOff', id, null, null);
           onRefreshAll();
           notify('ปลดบล็อกช่วงวันหยุดพิเศษและเปิดให้บริการปกติแล้วค่ะ');
         })
         .catch(err => notify(`ลบไม่สำเร็จ: ${err.message}`));
-      return;
     }
     const current = StorageService.get<DayOff[]>('days_off', []);
     const updated = current.filter(item => item.id !== id);
@@ -804,7 +829,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
     if (api.USE_BACKEND) {
       const before = users.find(u => u.id === userIdToPromote);
-      api.setUserRole(userIdToPromote, newUserRole)
+      return api.setUserRole(userIdToPromote, newUserRole)
         .then(updated => {
           setUsers(prev => prev.map(u => (u.id === updated.id ? updated : u)));
           onAddAuditLog('USER_PROMOTED_TO_OPERATOR_BY_ADMIN', 'User', updated.id, before ?? null, updated);
@@ -813,7 +838,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           notify(`🎉 เลื่อนสิทธิ์ให้คุณ "${updated.name}" เป็น "${updated.role}" เรียบร้อยแล้วค่ะ!`);
         })
         .catch(err => notify(`เลื่อนสิทธิ์ไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     const currentUsers = StorageService.get<User[]>('users', []);
@@ -975,14 +999,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   const handleToggleUserActive = (id: string, currentlyActive: boolean) => {
     if (api.USE_BACKEND) {
-      api.setUserActive(id, !currentlyActive)
+      return api.setUserActive(id, !currentlyActive)
         .then(updated => {
           setUsers(prev => prev.map(u => (u.id === id ? updated : u)));
           onAddAuditLog('USER_STATUS_TOGGLED', 'User', id, { isActive: currentlyActive }, { isActive: updated.isActive });
           onRefreshAll();
         })
         .catch(err => notify(`เปลี่ยนสถานะไม่สำเร็จ: ${err.message}`));
-      return;
     }
     const currentUsers = StorageService.get<User[]>('users', []);
     const updated = currentUsers.map(u => u.id === id ? { ...u, isActive: !currentlyActive } : u);
@@ -1000,23 +1023,25 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
       // (it is audit-logged with it).
       const reason = await askText(`เหตุผลในการ${diff > 0 ? 'เพิ่ม' : 'ลด'}แต้ม ${Math.abs(diff)} แต้ม (จำเป็น):`, { title: 'ปรับแต้ม' });
       if (!reason) return;
-      api.adjustPoints(userId, diff, reason)
+      return api.adjustPoints(userId, diff, reason)
         .then(balance => {
           setUsers(prev => prev.map(u => (u.id === userId ? { ...u, points: balance } : u)));
           onAddAuditLog('USER_POINTS_ADJUSTED_BY_ADMIN', 'User', userId, null, { diff, reason });
           onRefreshAll();
         })
         .catch(err => notify(`ปรับแต้มไม่สำเร็จ: ${err.message}`));
-      return;
     }
     // Through the points ledger, so the change is in the customer's points
     // history like every other one.
     const reason = await askText(`เหตุผลในการ${diff > 0 ? 'เพิ่ม' : 'ลด'}แต้ม ${Math.abs(diff)} แต้ม (จำเป็น):`, { title: 'ปรับแต้ม' });
     if (!reason) return;
-    StorageService.addLedgerEntry(userId, LedgerEntryType.ADJUST_MANUAL, diff, adminUser?.id || 'admin', { note: reason });
+    const applied = StorageService.addLedgerEntry(userId, LedgerEntryType.ADJUST_MANUAL, diff, adminUser?.id || 'admin', { note: reason });
     setUsers(StorageService.get<User[]>('users', []));
+    // Points never go below 0: a cut on an empty balance changes nothing,
+    // so nothing is logged.
+    if (applied === 0) { notify('แต้มเป็น 0 อยู่แล้ว ไม่มีอะไรเปลี่ยน'); return; }
 
-    onAddAuditLog('USER_POINTS_ADJUSTED_BY_ADMIN', 'User', userId, null, { diff, reason });
+    onAddAuditLog('USER_POINTS_ADJUSTED_BY_ADMIN', 'User', userId, null, { diff: applied, reason });
     onRefreshAll();
   };
 
@@ -1026,7 +1051,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     if (!newProductName || !newProductPrice) return;
 
     if (api.USE_BACKEND) {
-      api.createProducts([{ name: newProductName, category: newProductCat, price: Number(newProductPrice), isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental, stock: Number(newProductStock) }])
+      return api.createProducts([{ name: newProductName, category: newProductCat, price: Number(newProductPrice), isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental, stock: Number(newProductStock) }])
         .then(() => {
           setNewProductName('');
           setNewProductPrice(20);
@@ -1035,7 +1060,6 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           notify('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
         })
         .catch(err => notify(`เพิ่มสินค้าไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     const newProdId = 'pd-' + Date.now();
@@ -1080,10 +1104,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     if (!reason) return;
 
     if (api.USE_BACKEND) {
-      api.adjustStock(prodId, val, reason, variant?.id)
+      return api.adjustStock(prodId, val, reason, variant?.id)
         .then(updated => setProducts(list => list.map(p => p.id === prodId ? updated : p)))
         .catch(err => notify(`ปรับสต๊อกไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     const currentProds = StorageService.get<Product[]>('products', []);
@@ -1149,6 +1172,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
   const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Cleared so the same file can be picked again after fixing an error.
+    e.target.value = '';
     if (!file) return;
 
     const reader = new FileReader();
@@ -1169,6 +1194,10 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
         let importedCount = 0;
         const newProds: Product[] = [...currentProds];
         const apiRows: api.ProductInput[] = [];
+        // A product already in the catalog (or twice in the file) is skipped,
+        // so importing a corrected copy doesn't duplicate everything.
+        const knownNames = new Set((api.USE_BACKEND ? products : currentProds).map(p => p.name.trim().toLowerCase()));
+        const skipped: string[] = [];
 
         data.forEach((row: any) => {
           // The first column that has a value - a 0 price or 0 stock is a
@@ -1184,9 +1213,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           const isRentalVal = pick('เช่า', 'isRental', 'IsRental', 'เช่าเล่น') ?? false;
           const subCategoryVal = pick('หมวดย่อย', 'subCategory', 'SubCategory');
 
-          if (!name || priceVal === undefined || isNaN(Number(priceVal)) || Number(priceVal) < 0) {
-            return; // skip rows with invalid data
+          const cleanName = String(name ?? '').trim();
+          const price = Number(priceVal);
+          const stock = stockVal === undefined ? 50 : Number(stockVal);
+          // The server's limits, so browser-only mode accepts the same rows.
+          if (!cleanName || cleanName.length > 200 || priceVal === undefined || !Number.isFinite(price) || price < 0 || price > 100000 ||
+              !Number.isInteger(stock) || stock < 0 || stock > 100000) {
+            if (cleanName) skipped.push(`${cleanName} (ข้อมูลไม่ถูกต้อง)`);
+            return;
           }
+          if (knownNames.has(cleanName.toLowerCase())) {
+            skipped.push(`${cleanName} (มีอยู่แล้ว)`);
+            return;
+          }
+          knownNames.add(cleanName.toLowerCase());
 
           const category = String(categoryVal).toUpperCase() === 'EQUIPMENT' || String(categoryVal).includes('อุปกรณ์') || String(categoryVal).includes('เช่า')
             ? ProductCat.EQUIPMENT
@@ -1196,16 +1236,15 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           const isRental = category === ProductCat.EQUIPMENT && (isRentalVal === true || String(isRentalVal).toLowerCase() === 'true');
 
           apiRows.push({
-            name: String(name), category, price: Number(priceVal), isRental,
-            stock: stockVal === undefined || isNaN(Number(stockVal)) ? 50 : Number(stockVal), subCategory: subCategoryVal ? String(subCategoryVal) : undefined
+            name: cleanName, category, price, isRental, stock, subCategory: subCategoryVal ? String(subCategoryVal) : undefined
           });
-          const pId = 'pd-excel-' + Math.random().toString(36).substr(2, 9);
+          const pId = 'pd-excel-' + Math.random().toString(36).slice(2, 11);
           newProds.push({
             id: pId,
-            name: String(name),
+            name: cleanName,
             category: category,
-            price: Number(priceVal),
-            stock: stockVal === undefined || isNaN(Number(stockVal)) ? 50 : Number(stockVal),
+            price,
+            stock,
             isRental: isRental,
             isActive: true,
             subCategory: subCategoryVal ? String(subCategoryVal) : undefined
@@ -1213,11 +1252,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           importedCount++;
         });
 
+        const skippedNote = skipped.length ? `\n\nข้าม ${skipped.length} รายการ:\n${skipped.slice(0, 15).join('\n')}${skipped.length > 15 ? '\n…' : ''}` : '';
         if (importedCount > 0 && api.USE_BACKEND) {
           api.createProducts(apiRows)
             .then(list => {
               onRefreshAll();
-              notify(`นำเข้าสินค้า ${list.length} รายการเรียบร้อย`);
+              notify(`นำเข้าสินค้า ${list.length} รายการเรียบร้อย${skippedNote}`);
             })
             .catch(err => notify(`นำเข้าไม่สำเร็จ (ไม่มีรายการใดถูกบันทึก): ${err.message}`));
         } else if (importedCount > 0) {
@@ -1225,9 +1265,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           setProducts(newProds);
           onAddAuditLog('PRODUCTS_UPLOADED_VIA_EXCEL', 'Product', 'bulk', null, { count: importedCount });
           onRefreshAll();
-          notify(`อัปโหลดเสร็จสมบูรณ์! นำเข้าสินค้าแถวใหม่ ${importedCount} รายการเข้าสู่ตู้อัตโนมัติและคลังสต๊อกสำเร็จค่ะ 🚀`);
+          notify(`อัปโหลดเสร็จสมบูรณ์! นำเข้าสินค้าแถวใหม่ ${importedCount} รายการเข้าสู่ตู้อัตโนมัติและคลังสต๊อกสำเร็จค่ะ 🚀${skippedNote}`);
         } else {
-          notify('ไม่พบข้อมูลแถวสินค้าที่หัวคอลัมน์ตรงตามเงื่อนไข ลองดาวน์โหลดไฟล์ตัวอย่างด้านบนมาคีย์ใหม่นะคะ');
+          notify(`ไม่มีสินค้าใหม่ให้นำเข้า (หัวคอลัมน์ต้องตรงกับไฟล์ตัวอย่างด้านบน)${skippedNote}`);
         }
       } catch (err: any) {
         notify('เกิดข้อผิดพลาดขณะแกะไฟล์สเปรดชีต Excel: ' + err.message);
@@ -1254,7 +1294,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // Later, not at once: some browsers cancel a download whose URL is
+    // revoked right after the click.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 
   const monthData = async (kind: string): Promise<{ rows: api.ReportBookingRow[]; monthOrders: Order[] }> => {
@@ -1332,18 +1374,28 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
           )}
           <input value={adminIdentity} onChange={e => setAdminIdentity(e.target.value)} placeholder="เบอร์โทร หรือ อีเมลผู้จัดการ" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
           <input type="password" value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="รหัสผ่าน" className="w-full border border-slate-300 rounded-lg px-3 py-2" required />
-          <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
+          <button type="submit" disabled={busy} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg py-2">เข้าสู่ระบบ</button>
           <DemoLogins accounts={DEMO_ADMINS} onPick={adminLoginWith} />
         </form>
       </div>
     );
   }
 
+  // Computed once per render (the JSX reads it in a dozen places).
+  const dashStats = getDashboardStats();
+
   return (
     <div className="space-y-6">
-      
+      {/* A failed load leaves older data on screen - say so on every tab. */}
+      {api.USE_BACKEND && adminApiError && (
+        <p id="admin-load-error" role="alert" className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-4 py-2">
+          ⚠️ โหลดข้อมูลล่าสุดไม่สำเร็จ ข้อมูลที่เห็นอาจไม่เป็นปัจจุบัน: {adminApiError}{' '}
+          <button type="button" onClick={onRefreshAll} className="underline font-bold">ลองใหม่</button>
+        </p>
+      )}
+
       {/* Admin header layout with visual privilege banner */}
-      <div className="bg-slate-900 text-white p-5 rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-md border border-slate-850">
+      <div className="bg-slate-900 text-white p-5 rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-md border border-slate-800">
         <div>
           <h2 className="text-sm font-bold flex items-center gap-1.5 text-emerald-400">
             <Settings className="h-5 w-5 animate-spin-slow text-emerald-400" />
@@ -1453,27 +1505,27 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               <span className="text-[11px] font-bold text-slate-500 block uppercase tracking-wider">📊 สถิติแบบแยกรายวัน ณ วันที่ ({dashboardSelectedDate}):</span>
               
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-250 text-xs shadow-xs">
+                <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 text-xs shadow-xs">
                   <span className="text-emerald-800 block font-bold text-[10px]">รายได้ค่าคอร์ทวันนี้ (Booking Revenue)</span>
-                  <span className="text-2xl font-extrabold text-emerald-900 mt-1 block">{getDashboardStats().dailyBookingsRevenue} บาท</span>
-                  <p className="text-[9px] text-emerald-700 font-bold mt-1">จำนวนจองอนุมัติสำเร็จ: {getDashboardStats().dailyBookingsCount} รายการ</p>
+                  <span className="text-2xl font-extrabold text-emerald-900 mt-1 block">{formatBaht(dashStats.dailyBookingsRevenue)} บาท</span>
+                  <p className="text-[9px] text-emerald-700 font-bold mt-1">จำนวนจองอนุมัติสำเร็จ: {dashStats.dailyBookingsCount} รายการ</p>
                 </div>
 
-                <div className="bg-amber-50 p-4 rounded-xl border border-amber-250 text-xs shadow-xs">
+                <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-xs shadow-xs">
                   <span className="text-amber-800 block font-bold text-[10px]">รายรับสินค้า/เช่าแร็กวันนี้ (Today F&B)</span>
-                  <span className="text-2xl font-extrabold text-amber-900 mt-1 block">{getDashboardStats().dailyOrderRevenue} บาท</span>
+                  <span className="text-2xl font-extrabold text-amber-900 mt-1 block">{formatBaht(dashStats.dailyOrderRevenue)} บาท</span>
                   <p className="text-[9px] text-amber-700 mt-1">จากระบบ Walkin และ POS เคาเตอร์</p>
                 </div>
 
-                <div className="bg-sky-50 p-4 rounded-xl border border-sky-250 text-xs shadow-xs">
+                <div className="bg-sky-50 p-4 rounded-xl border border-sky-200 text-xs shadow-xs">
                   <span className="text-sky-800 block font-bold text-[10px]">รายรับรวมสุทธิของวันนี้</span>
-                  <span className="text-2xl font-extrabold text-sky-950 mt-1 block">{getDashboardStats().dailyTotalRevenue} บาท</span>
+                  <span className="text-2xl font-extrabold text-sky-950 mt-1 block">{formatBaht(dashStats.dailyTotalRevenue)} บาท</span>
                   <p className="text-[9px] text-sky-700 mt-1">สรุปรวมลิ้นชักการรับเงินสองทางวันนี้</p>
                 </div>
 
-                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-250 text-xs shadow-xs">
+                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-200 text-xs shadow-xs">
                   <span className="text-indigo-800 block font-bold text-[10px]">อัตราเข้าใช้สนามประจำวัน (Occupancy)</span>
-                  <span className="text-2xl font-extrabold text-indigo-950 mt-1 block">{getDashboardStats().occupancyRate}%</span>
+                  <span className="text-2xl font-extrabold text-indigo-950 mt-1 block">{dashStats.occupancyRate}%</span>
                   <p className="text-[9px] text-indigo-700 mt-1">ชั่วโมงสนามที่ขายได้ จาก {physicalCourtCount()} สนาม × {api.USE_BACKEND ? dash?.hoursPerDay ?? hoursPerDay() : hoursPerDay()} ชั่วโมง</p>
                 </div>
               </div>
@@ -1484,26 +1536,26 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               <span className="text-[11px] font-bold text-slate-500 block uppercase tracking-wider">🌎 สรุปยอดสะสมและประวัติทางบัญชีภาพรวมทั้งหมด:</span>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-205 text-xs">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
                   <span className="text-slate-400 block font-bold text-[10px]">รายรับรวมประเวศทุกก๊วน (All-Time Revenue)</span>
-                  <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{getDashboardStats().allTimeRevenue} บาท</span>
+                  <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{formatBaht(dashStats.allTimeRevenue)} บาท</span>
                   <div className="flex gap-2 text-[9px] text-slate-500 mt-1.5 font-mono">
-                    <span>จากคอร์ท: {getDashboardStats().bookingSales}</span>
+                    <span>จากคอร์ท: {formatBaht(dashStats.bookingSales)}</span>
                     <span>|</span>
-                    <span>ตู้ POS: {getDashboardStats().fbSales}</span>
+                    <span>ตู้ POS: {formatBaht(dashStats.fbSales)}</span>
                   </div>
-                  <p className="text-[9px] text-slate-500 mt-1">รอชำระ (ยังไม่นับ): {formatBaht(getDashboardStats().pendingRevenue)} · คืนเงินแล้ว: {formatBaht(getDashboardStats().refunds)} บาท</p>
+                  <p className="text-[9px] text-slate-500 mt-1">รอชำระ (ยังไม่นับ): {formatBaht(dashStats.pendingRevenue)} · คืนเงินแล้ว: {formatBaht(dashStats.refunds)} บาท</p>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-205 text-xs">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
                   <span className="text-slate-400 block font-bold text-[10px]">จำนวนสมาชิกจองในก๊วนคัพ (Registered Accounts)</span>
-                  <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{getDashboardStats().customerCount} บัญชี</span>
+                  <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{dashStats.customerCount} บัญชี</span>
                   <p className="text-[9px] text-slate-500 mt-1.5">ลูกค้าระดับ MOU องค์กร / สโมสร และนักซ้อมอิสระ</p>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-205 text-xs">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
                   <span className="text-slate-400 block font-bold text-[10px]">รวมมูลค่าเคาน์เตอร์สะสม (Total POS Products)</span>
-                  <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{getDashboardStats().fbSales} บาท</span>
+                  <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{formatBaht(dashStats.fbSales)} บาท</span>
                   <p className="text-[9px] text-slate-500 mt-1.5">เครื่องดื่ม น้ำเกลือแร่ สนับเข่า ดรายไอซ์ และเช่าแร็กเก็ต</p>
                 </div>
               </div>
@@ -1552,7 +1604,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         paddingAngle={5}
                         dataKey="value"
                       >
-                        {getPieChartData().map((entry, index) => (
+                        {getPieChartData().map((_, index) => (
                           <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                         ))}
                       </Pie>
@@ -1562,7 +1614,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   {/* Total indicator overlay */}
                   <div className="absolute text-center">
                     <p className="text-[9px] text-slate-400 uppercase font-bold tracking-tight">รวม</p>
-                    <p className="font-extrabold text-slate-800 text-sm">{getDashboardStats().fbSales} บ.</p>
+                    <p className="font-extrabold text-slate-800 text-sm">{formatBaht(dashStats.fbSales)} บ.</p>
                   </div>
                 </div>
 
@@ -1574,7 +1626,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: PIE_COLORS[index] }} />
                         {entry.name}
                       </span>
-                      <span className="font-bold text-slate-800 font-mono">{entry.value} บาท</span>
+                      <span className="font-bold text-slate-800 font-mono">{formatBaht(entry.value)} บาท</span>
                     </div>
                   ))}
                 </div>
@@ -1644,7 +1696,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     <tr className="bg-slate-100 text-[10px] uppercase font-black text-slate-500 border-b border-slate-200">
                       <th className="p-3 bg-slate-100 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-36">สนาม (Court Name)</th>
                       {openSlotHours().map((time) => (
-                        <th key={time} className="p-2 text-center text-[9px] min-w-[70px] border-l border-slate-205">
+                        <th key={time} className="p-2 text-center text-[9px] min-w-[70px] border-l border-slate-200">
                           {time} น.
                         </th>
                       ))}
@@ -1678,11 +1730,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                           });
 
                           // 2. Check for closure/maintenance
-                          const closureItem = daysOff.find(
-                            d => d.date === dashboardSelectedDate && 
-                                 (d.courtId === 'all' || d.courtId === court.id) &&
-                                 (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && targetH >= d.startHour && targetH < d.endHour))
-                          );
+                          const closureItem = findClosure(api.USE_BACKEND ? dashClosures : daysOff, dashboardSelectedDate, court.id, targetH);
 
                           // 3. Peak/Offpeak, read from the same PricingRule
                           // config the price itself uses.
@@ -1705,7 +1753,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                   {isPending ? '⏳ รอชำระ' : '✓ ชำระแล้ว'}
                                 </span>
                                 {/* Hover interactive tooltip */}
-                                <div className="absolute hidden group-hover:block bg-slate-900 text-slate-10 text-[9.5px] p-2.5 rounded-lg shadow-md z-30 w-44 left-1/2 -translate-x-1/2 -top-16 border border-slate-700 bg-[#0f172a] text-[#f8fafc] leading-tight text-left">
+                                <div className="absolute hidden group-hover:block bg-slate-900 text-slate-50 text-[9.5px] p-2.5 rounded-lg shadow-md z-30 w-44 left-1/2 -translate-x-1/2 -top-16 border border-slate-700 bg-[#0f172a] text-[#f8fafc] leading-tight text-left">
                                   <p className="font-bold text-emerald-400">🚨 รายละเอียดคอร์ทจอง</p>
                                   <p>ผู้จอง: <span className="font-extrabold">{matchedBooking.userName}</span></p>
                                   <p className="font-mono">เบอร์โทร: {matchedBooking.userPhone || 'ไม่ระบุ'}</p>
@@ -1735,7 +1783,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                 title="เฉพาะช่วงเวลาเพื่อสุขภาพ (Off-peak) เท่านั้น"
                               >
                                 <span className="block text-[8px] font-semibold text-slate-500 leading-none">🚫 ปิดช่วง Peak</span>
-                                <span className="text-[7px] text-slate-450 block scale-[0.95]">ครึ่งสนาม</span>
+                                <span className="text-[7px] text-slate-400 block scale-[0.95]">ครึ่งสนาม</span>
                               </td>
                             );
                           } else {
@@ -1762,7 +1810,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
               </div>
 
               {/* Informative advice for active managers */}
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-[10px] text-slate-500 bg-slate-55 p-3 rounded-xl border border-slate-200 gap-2 font-mono">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-[10px] text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200 gap-2 font-mono">
                 <span className="font-semibold text-emerald-800 flex items-center gap-1">
                   💡 คำแนะนำผู้บริหาร: แถบสีเขียวคือยอดชำระแล้วเรียบร้อย แถบสีเหลืองคือสัญญารอโอนเงินผ่านระบบ และสล็อตว่างสามารถจัดสรรขายหน้างานตั๋ว Walk-in ได้ทันที
                 </span>
@@ -1785,7 +1833,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 <input type="number" min={1} max={365} value={maxAdvanceDays} onChange={e => setMaxAdvanceDays(Number(e.target.value))}
                   className="w-20 border border-slate-300 rounded px-2 py-1" />
                 <span className="text-slate-600">วัน (พนักงานจองที่เคาน์เตอร์ได้ไม่จำกัด)</span>
-                <button type="button" onClick={handleSaveMaxAdvanceDays} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
+                <button type="button" disabled={busy} onClick={guarded(handleSaveMaxAdvanceDays)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
               </div>
               <div id="opening-hours-setting" className="mt-2 flex flex-wrap items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
                 <span className="text-slate-600">เวลาเปิดให้จอง</span>
@@ -1796,7 +1844,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 <select value={closeHourSetting} onChange={e => setCloseHourSetting(Number(e.target.value))} className="border border-slate-300 rounded px-2 py-1">
                   {Array.from({ length: 24 }, (_, i) => i + 1).map(h => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
                 </select>
-                <button type="button" onClick={handleSaveOpeningHours} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
+                <button type="button" disabled={busy} onClick={guarded(handleSaveOpeningHours)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
                 <span className="text-[10px] text-slate-500 w-full">ในช่วงนี้ ชั่วโมงที่มีกฎราคาเท่านั้นที่จองได้ (เช่น ไม่มีเรท 06:00 = กีฬานั้นยังไม่เปิด 06:00)</span>
               </div>
               <p className="text-xs text-slate-500">คุณสามารถกำหนดค่า ราคาปกติ, ราคา Peak ยิ่งเร่งด่วนตามเงื่อนไขช่วงชั่วโมง, และชนิดวันธรรมดา/เสาร์อาทิตย์</p>
@@ -1811,7 +1859,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   {editingRuleId ? '🔧 แก้ไขสูตรกฎการตั้งราคา' : '➕ เพิ่มมิติสูตรกฎการตั้งราคา'}
                 </p>
 
-                <form onSubmit={handleSavePricingRule} className="space-y-4 text-xs">
+                <form onSubmit={e => { e.preventDefault(); void guarded(handleSavePricingRule)(e); }} className="space-y-4 text-xs">
                   <div>
                     <label className="block text-slate-700 font-semibold mb-1.5">1. ชนิดของกีฬาหน้าสนาม</label>
                     <select 
@@ -1901,7 +1949,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
 
                   <div className="flex gap-2">
                     <button
-                      type="submit"
+                      type="submit" disabled={busy}
                       className="flex-1 bg-emerald-700 hover:bg-emerald-600 font-bold py-2 rounded text-white text-xs transition"
                     >
                       {editingRuleId ? 'ปรับสูตรประเมิน' : 'สลักสิทธิ์กฎใหม่'}
@@ -1962,7 +2010,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             placeholder="ค้นหากีฬา..."
                             value={filterCourtType}
                             onChange={(e) => setFilterCourtType(e.target.value)}
-                            className="w-full bg-white border border-slate-250 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
+                            className="w-full bg-white border border-slate-200 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
                           />
                         </th>
                         <th className="p-2">
@@ -1971,14 +2019,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             placeholder="ค้นหาป้ายชื่อ..."
                             value={filterLabel}
                             onChange={(e) => setFilterLabel(e.target.value)}
-                            className="w-full bg-white border border-slate-250 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
+                            className="w-full bg-white border border-slate-200 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
                           />
                         </th>
                         <th className="p-2">
                           <select
                             value={filterDayType}
                             onChange={(e) => setFilterDayType(e.target.value)}
-                            className="w-full bg-white border border-slate-250 font-normal py-1 px-1.5 rounded text-[10px] text-slate-750"
+                            className="w-full bg-white border border-slate-200 font-normal py-1 px-1.5 rounded text-[10px] text-slate-700"
                           >
                             <option value="">ทั้งหมด</option>
                             <option value="WEEKDAY">วันธรรมดา</option>
@@ -1991,7 +2039,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             placeholder="PEAK / OFFPEAK..."
                             value={filterPriceType}
                             onChange={(e) => setFilterPriceType(e.target.value)}
-                            className="w-full bg-white border border-slate-250 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
+                            className="w-full bg-white border border-slate-200 font-normal py-1 px-2 rounded text-[10px] text-slate-700"
                           />
                         </th>
                         <th className="p-2"></th>
@@ -2027,12 +2075,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                 setRulePriceType(rule.priceType);
                                 setRuleLabel(rule.label);
                               }}
-                              className="text-sky-600 hover:text-sky-850 font-bold"
+                              className="text-sky-600 hover:text-sky-800 font-bold"
                             >
                               แก้ไข
                             </button>
                             <button
-                              onClick={() => handleDeletePricingRule(rule.id)}
+                              disabled={busy} onClick={guarded(() => handleDeletePricingRule(rule.id))}
                               className="text-rose-600 hover:text-rose-800 font-bold"
                             >
                               ลบ
@@ -2065,7 +2113,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
                   <span className="text-xs font-bold text-slate-800 block mb-4 text-emerald-950">🏟️ เพิ่มรายสนามกีฬาในระบบ</span>
                   
-                  <form onSubmit={handleCreateCourt} className="space-y-4 text-xs font-sans">
+                  <form onSubmit={e => { e.preventDefault(); void guarded(handleCreateCourt)(e); }} className="space-y-4 text-xs font-sans">
                     <div>
                       <label className="block text-slate-700 font-semibold mb-1.5 font-sans">ชื่อหรือเลขที่สนาม:</label>
                       <input 
@@ -2105,8 +2153,20 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                       </div>
                     </div>
 
+                    {newCourtAllowHalf && (
+                      <div>
+                        <label htmlFor="new-court-half-of" className="block text-slate-700 font-semibold mb-1.5">เป็นครึ่งหนึ่งของสนาม:</label>
+                        <select id="new-court-half-of" value={newCourtHalfOf} onChange={e => setNewCourtHalfOf(e.target.value)}
+                          className="w-full bg-white border border-slate-200 py-1.5 px-2 rounded-lg text-xs">
+                          <option value="">-- เลือกสนามเต็มสนาม --</option>
+                          {courts.filter(c => c.type === newCourtType && c.shareOfGroup >= 1).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <p className="text-[10px] text-slate-500 mt-1">จองครึ่งสนามแล้ว สนามเต็มจะจองช่วงนั้นไม่ได้ (และกลับกัน)</p>
+                      </div>
+                    )}
+
                     <button 
-                      type="submit" 
+                      type="submit" disabled={busy} 
                       className="w-full bg-slate-900 hover:bg-slate-800 py-2.5 rounded text-white font-bold transition text-xs shadow-sm font-sans"
                     >
                       เพิ่มสนาม
@@ -2122,7 +2182,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     <p className="text-[10px] text-slate-500 leading-normal">บล็อกช่วงวันไม่ให้ทำรายการจองล่วงหน้าเพื่อปิดบำรุงรักษาคอมเพล็กซ์</p>
                   </div>
 
-                  <form onSubmit={handleSaveDayOff} className="space-y-3 font-sans">
+                  <form onSubmit={e => { e.preventDefault(); void guarded(handleSaveDayOff)(e); }} className="space-y-3 font-sans">
                     <div>
                       <label className="block text-slate-700 font-semibold mb-1">เลือกวันที่ปิดระงับบริการ:</label>
                       <input 
@@ -2214,8 +2274,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     </div>
 
                     <button 
-                      type="submit" 
-                      className="w-full bg-rose-700 hover:bg-rose-850 py-2.5 rounded text-white font-bold transition text-xs shadow-sm font-sans"
+                      type="submit" disabled={busy} 
+                      className="w-full bg-rose-700 hover:bg-rose-800 py-2.5 rounded text-white font-bold transition text-xs shadow-sm font-sans"
                     >
                       บันทึกวันปิดบริการ
                     </button>
@@ -2261,13 +2321,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             <td className="px-4 py-3 text-center">
                               <button
                                 type="button"
-                                disabled={!canManageCourts}
+                                disabled={!canManageCourts || busy}
                                 title={canManageCourts ? 'กดเพื่อเปิด/ปิดรับจอง' : 'เฉพาะ Admin (ปิดชั่วคราวใช้ "วันปิดบริการ")'}
-                                onClick={() => handleToggleCourtActive(court.id)}
+                                onClick={guarded(() => handleToggleCourtActive(court.id))}
                                 className={`px-2.5 py-1 rounded-full text-[10px] font-black transition ${
                                   court.isActive 
                                     ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200' 
-                                    : 'bg-rose-100 text-rose-800 hover:bg-rose-250'
+                                    : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
                                 }`}
                               >
                                 {court.isActive ? '● กำลังเปิด' : '○ ปิดระงับบริการ'}
@@ -2309,7 +2369,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                               <td className="px-4 py-3 text-center">
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteDayOff(day.id)}
+                                  disabled={busy} onClick={guarded(() => handleDeleteDayOff(day.id))}
                                   className="text-emerald-700 hover:text-emerald-950 font-bold text-[10.5px] hover:underline"
                                 >
                                   🔓 เปิดให้บริการหน้าร้านปกติ
@@ -2352,7 +2412,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
                   <span className="text-xs font-bold text-slate-800 block mb-4 text-sky-900">🥤 เพิ่มรายการสินค้าในตู้ POS</span>
                   
-                  <form onSubmit={handleCreateProduct} className="space-y-4 text-xs">
+                  <form onSubmit={e => { e.preventDefault(); void guarded(handleCreateProduct)(e); }} className="space-y-4 text-xs">
                     <div>
                       <label className="block text-slate-700 font-semibold mb-1.5">ชื่อผลิตภัณฑ์:</label>
                       <input 
@@ -2409,7 +2469,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     )}
 
                     <button 
-                      type="submit" 
+                      type="submit" disabled={busy} 
                       className="w-full bg-slate-900 hover:bg-slate-800 py-2 rounded text-white font-bold transition"
                     >
                       แอดนำเข้าแคตตาล็อกสินค้า
@@ -2453,7 +2513,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {products.map((p) => (
-                    <div key={p.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between text-xs hover:border-slate-350 transition">
+                    <div key={p.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between text-xs hover:border-slate-300 transition">
                       <div>
                         <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${p.isRental ? 'bg-[#93c5fd] text-sky-950' : 'bg-amber-100 text-amber-800'}`}>
                           {p.isRental ? 'ปล่อยเช่าเก็บคืน' : 'กระปุกแบ่งขายขาด'}
@@ -2482,13 +2542,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         
                         <div className="flex gap-1">
                           <button 
-                            onClick={() => handleUpdateStockValue(p.id, -5)} 
-                            className="bg-slate-205 h-6 w-9 rounded bg-slate-205 border border-slate-300 hover:bg-slate-200 text-[10px] font-bold text-slate-800 text-center"
+                            disabled={busy} onClick={guarded(() => handleUpdateStockValue(p.id, -5))} 
+                            className="bg-slate-200 h-6 w-9 rounded bg-slate-200 border border-slate-300 hover:bg-slate-200 text-[10px] font-bold text-slate-800 text-center"
                           >
                             -5
                           </button>
                           <button 
-                            onClick={() => handleUpdateStockValue(p.id, 10)} 
+                            disabled={busy} onClick={guarded(() => handleUpdateStockValue(p.id, 10))} 
                             className="h-6 w-9 rounded bg-[#dcfce7] border border-emerald-300 hover:bg-emerald-100 text-[10px] font-bold text-emerald-800 text-center"
                           >
                             +10
@@ -2527,11 +2587,11 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     การแต่งตั้งพนักงาน เปลี่ยนบทบาท และระงับบัญชี ทำได้เฉพาะผู้ดูแลระบบ (Admin) ส่วนระดับสมาชิก (ส่วนลด) และแต้มสะสมแก้ไขได้ในตารางด้านขวา
                   </p>
                 ) : (
-                <form onSubmit={handlePromoteUser} className="space-y-4 text-xs">
+                <form onSubmit={e => { e.preventDefault(); void guarded(handlePromoteUser)(e); }} className="space-y-4 text-xs">
                   <div>
                     <label className="block text-slate-700 font-bold mb-1.5">ค้นหาเลือกจากผู้เล่นที่ลงไว้ในก๊วน:</label>
                     {users.filter(u => u.role === UserRole.CUSTOMER).length === 0 ? (
-                      <div className="p-3 bg-slate-150 rounded-lg text-[10.5px] font-sans text-slate-600 border border-slate-200">
+                      <div className="p-3 bg-slate-100 rounded-lg text-[10.5px] font-sans text-slate-600 border border-slate-200">
                         ⚠️ ขณะนี้ไม่มีลูกค้าที่เป็นบทบาท CUSTOMER ว่างเลย กรุณาลงทะเบียนที่หน้าสมัครแท็บลูกค้าก่อนค่ะ เพื่อนำมาเลื่อนระดับงาน
                       </div>
                     ) : (
@@ -2539,7 +2599,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                         required
                         value={userIdToPromote}
                         onChange={(e) => setUserIdToPromote(e.target.value)}
-                        className="w-full bg-white border border-slate-205 py-2 px-3 rounded-lg text-slate-800 font-medium"
+                        className="w-full bg-white border border-slate-200 py-2 px-3 rounded-lg text-slate-800 font-medium"
                       >
                         <option value="">-- กรุณาเลือกบัญชีผู้ใช้จริง --</option>
                         {users.filter(u => u.role === UserRole.CUSTOMER).map(u => (
@@ -2556,7 +2616,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                     <select 
                       value={newUserRole}
                       onChange={(e) => setNewUserRole(e.target.value as UserRole)}
-                      className="w-full bg-white border border-slate-205 py-2 px-3 rounded-lg text-slate-800"
+                      className="w-full bg-white border border-slate-200 py-2 px-3 rounded-lg text-slate-800"
                     >
                       <option value={UserRole.STAFF}>Staff (พนักงานหน้าเคาน์เตอร์ POS)</option>
                       <option value={UserRole.MANAGER}>Manager (ผู้บริหารจัดการอาคาร)</option>
@@ -2567,7 +2627,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   <button 
                     type="submit" 
                     disabled={!userIdToPromote}
-                    className="w-full bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-350 py-2.5 rounded-lg text-white font-bold transition shadow-sm"
+                    className="w-full bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-300 py-2.5 rounded-lg text-white font-bold transition shadow-sm"
                   >
                     🚀 ยืนยันสลับระดับแต่งตั้งพนักงาน
                   </button>
@@ -2608,13 +2668,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 mb-1">สิทธิ์ระดับสมาชิก (MemberType):</label>
                     <select
-                      value={userRoleFilter === 'MEMBER_FILTER' ? 'all' : ''} 
-                      onChange={(e) => {
-                        // Let's support simple membership filter trigger or reset!
-                      }}
+                      value={userTierFilter}
+                      onChange={(e) => setUserTierFilter(e.target.value)}
                       className="w-full bg-white border border-slate-200 rounded-lg py-1.5 px-2 text-xs text-slate-800"
                     >
-                      <option value="">แสดงทั้งหมดที่มีสิทธ์</option>
+                      <option value="">ทุกระดับ</option>
+                      {Object.values(MemberType).map(t => <option key={t} value={t}>{memberTierLabel(t)}</option>)}
                     </select>
                   </div>
                 </div>
@@ -2639,7 +2698,9 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             (item.email || '').toLowerCase().includes(userSearchQuery.toLowerCase());
                           
                           const matchesRole = !userRoleFilter || item.role === userRoleFilter;
-                          return matchesSearch && matchesRole;
+                          // Tiers apply to customers; an account with none is NORMAL.
+                          const matchesTier = !userTierFilter || (item.role === UserRole.CUSTOMER && (item.memberType ?? MemberType.NORMAL) === userTierFilter);
+                          return matchesSearch && matchesRole && matchesTier;
                         })
                         .map((item) => (
                           <tr key={item.id} className="hover:bg-slate-50/50 transition duration-150">
@@ -2656,7 +2717,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                 value={userPendingChanges[item.id]?.memberType ?? item.memberType ?? MemberType.NORMAL}
                                 onChange={(e) => handleStageUserMemberType(item.id, e.target.value as MemberType)}
                                 className={`border rounded py-1 px-1.5 text-[11px] font-medium text-slate-800 focus:outline-none focus:border-emerald-600 transition duration-150 ${
-                                  userPendingChanges[item.id]?.memberType !== undefined && userPendingChanges[item.id]?.memberType !== item.memberType
+                                  userPendingChanges[item.id]?.memberType !== undefined && userPendingChanges[item.id]?.memberType !== (item.memberType ?? MemberType.NORMAL)
                                     ? 'bg-amber-50 border-amber-300 font-bold text-amber-900 ring-2 ring-amber-100'
                                     : 'bg-slate-50 border-slate-200'
                                 }`}
@@ -2665,7 +2726,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                   <option key={t} value={t}>{memberTierLabel(t)}</option>
                                 ))}
                               </select>
-                              {userPendingChanges[item.id]?.memberType !== undefined && userPendingChanges[item.id]?.memberType !== item.memberType && (
+                              {userPendingChanges[item.id]?.memberType !== undefined && userPendingChanges[item.id]?.memberType !== (item.memberType ?? MemberType.NORMAL) && (
                                 <span className="block text-[8px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
                               )}
                             </td>
@@ -2680,7 +2741,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                 className={`border rounded py-1 px-1.5 text-[11px] font-mono font-bold transition duration-150 ${
                                   userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role
                                     ? 'bg-amber-50 border-amber-300 text-amber-900 ring-2 ring-amber-100'
-                                    : 'bg-slate-50 border-slate-200 text-slate-850'
+                                    : 'bg-slate-50 border-slate-200 text-slate-800'
                                 }`}
                               >
                                 <option value={UserRole.CUSTOMER}>CUSTOMER</option>
@@ -2698,7 +2759,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                {item.role === UserRole.CUSTOMER ? (
                                  <div className="flex items-center justify-center gap-1.5 min-w-[110px]">
                                    <button 
-                                     onClick={() => handleAdjustPoints(item.id, -1)}
+                                     disabled={busy} onClick={guarded(() => handleAdjustPoints(item.id, -1))}
                                      className="h-5 w-6 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded font-black text-xs flex items-center justify-center active:scale-90"
                                      title="ลด 1 คะแนน"
                                    >
@@ -2706,7 +2767,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                    </button>
                                    <span className="min-w-[40px] font-black text-amber-700">🏆 {item.points || 0}</span>
                                    <button 
-                                     onClick={() => handleAdjustPoints(item.id, 1)}
+                                     disabled={busy} onClick={guarded(() => handleAdjustPoints(item.id, 1))}
                                      className="h-5 w-6 bg-[#fef3c7] hover:bg-amber-200 text-amber-800 rounded font-black text-xs flex items-center justify-center active:scale-90"
                                      title="เพิ่ม 1 คะแนน"
                                    >
@@ -2722,11 +2783,12 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             <td className="p-3 flex flex-col items-center justify-center gap-1.5 min-w-[120px]">
                               {userPendingChanges[item.id] && (
                                 userPendingChanges[item.id].role !== item.role || 
-                                userPendingChanges[item.id].memberType !== item.memberType
+                                // an account with no tier is NORMAL - not a change
+                                userPendingChanges[item.id].memberType !== (item.memberType ?? MemberType.NORMAL)
                               ) ? (
                                 <div className="flex flex-col gap-1 w-full p-1 bg-amber-50/50 rounded border border-amber-200 shadow-xs">
                                   <button
-                                    onClick={() => handleSaveUserPermissions(item.id)}
+                                    disabled={busy} onClick={guarded(() => handleSaveUserPermissions(item.id))}
                                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-1 px-2 rounded text-[9px] shadow-sm transition duration-150 flex items-center justify-center gap-1 active:scale-95"
                                   >
                                     💾 เซฟบันทึกสิทธิ์
@@ -2743,7 +2805,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                 // account's bookings and points history.
                                 canManageAccounts && item.id !== adminUser?.id ? (
                                   <button
-                                    onClick={() => handleToggleUserActive(item.id, item.isActive)}
+                                    disabled={busy} onClick={guarded(() => handleToggleUserActive(item.id, item.isActive))}
                                     className={`px-2.5 py-1 text-[9px] rounded-lg font-bold shadow-xs transition ${
                                       item.isActive ? 'bg-emerald-100 text-emerald-800 hover:bg-amber-100 hover:text-amber-800' : 'bg-rose-100 text-rose-800 hover:bg-slate-200'
                                     }`}
@@ -2756,7 +2818,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                               ) : (
                                 <div className="flex items-center gap-1">
                                   <button
-                                    onClick={() => handleToggleUserActive(item.id, item.isActive)}
+                                    disabled={busy} onClick={guarded(() => handleToggleUserActive(item.id, item.isActive))}
                                     className={`px-2.5 py-1 text-[9px] rounded-lg font-bold shadow-xs transition ${
                                       item.isActive ? 'bg-emerald-100 text-emerald-800 hover:bg-amber-100 hover:text-amber-800' : 'bg-rose-100 text-rose-800 hover:bg-slate-200'
                                     }`}
@@ -2767,7 +2829,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                   {/* With the backend accounts are suspended, never deleted
                                       (their bookings and payments must stay on record). */}
                                   {!api.USE_BACKEND && <button
-                                    onClick={() => handleDeleteUserByAdmin(item.id, item.name)}
+                                    disabled={busy} onClick={guarded(() => handleDeleteUserByAdmin(item.id, item.name))}
                                     className="bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 font-bold p-1 rounded transition text-[10px]"
                                     title="ลบข้อมูลถาวร"
                                   >
@@ -3002,7 +3064,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             </span>
                           </div>
                           
-                          <div className="text-[11px] font-sans text-slate-350">
+                          <div className="text-[11px] font-sans text-slate-300">
                             👤 ผู้ทำรายการ: <span className="bg-slate-800 px-2 py-0.5 rounded text-white font-mono font-bold">{log.userName}</span>
                           </div>
                         </div>
@@ -3020,13 +3082,13 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
                               🔍 ตรวจทุจริตเปลี่ยนค่าที่แสตมป์ (Property Changes):
                             </span>
-                            <div className="divide-y divide-slate-850">
+                            <div className="divide-y divide-slate-800">
                               {changedProperties.map(key => {
                                 const beforeVal = (log.before as any)?.[key];
                                 const afterVal = (log.after as any)?.[key];
                                 return (
                                   <div key={key} className="py-1 flex flex-col md:flex-row md:items-center justify-between gap-1 text-slate-300">
-                                    <span className="font-extrabold text-slate-450 text-[11px] bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">{key}</span>
+                                    <span className="font-extrabold text-slate-400 text-[11px] bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">{key}</span>
                                     <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
                                       <span className="line-through text-rose-400 bg-rose-950/40 px-1.5 py-0.5 rounded font-mono">
                                         {beforeVal === null || beforeVal === undefined ? 'ว่าง' : JSON.stringify(beforeVal)}
@@ -3049,14 +3111,14 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             <summary className="text-[9px] text-slate-500 hover:text-slate-400 cursor-pointer select-none font-bold uppercase tracking-wider flex items-center gap-1 focus:outline-none">
                               <span>📁 คลิกเพื่อดูฐานข้อมูลดิบ (Toggle Raw Snapshot Metadata)</span>
                             </summary>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 bg-slate-950 p-2.5 rounded border border-slate-855 text-[9px] group-open:animate-fadeIn">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 bg-slate-950 p-2.5 rounded border border-slate-900 text-[9px] group-open:animate-fadeIn">
                               <div>
                                 <p className="text-slate-500 font-extrabold mb-1">📋 SNAPSHOT [ก่อนหน้า] (BEFORE):</p>
-                                <pre className="text-rose-450 bg-rose-950/10 p-1.5 rounded border border-rose-950/30 max-h-32 overflow-y-auto pr-1">{JSON.stringify(log.before || {}, null, 1)}</pre>
+                                <pre className="text-rose-400 bg-rose-950/10 p-1.5 rounded border border-rose-950/30 max-h-32 overflow-y-auto pr-1">{JSON.stringify(log.before || {}, null, 1)}</pre>
                               </div>
                               <div>
                                 <p className="text-slate-500 font-extrabold mb-1">📋 SNAPSHOT [ล่าสุด] (AFTER):</p>
-                                <pre className="text-emerald-450 bg-emerald-950/10 p-1.5 rounded border border-emerald-950/30 max-h-32 overflow-y-auto pr-1">{JSON.stringify(log.after || {}, null, 1)}</pre>
+                                <pre className="text-emerald-400 bg-emerald-950/10 p-1.5 rounded border border-emerald-950/30 max-h-32 overflow-y-auto pr-1">{JSON.stringify(log.after || {}, null, 1)}</pre>
                               </div>
                             </div>
                           </details>
@@ -3087,7 +3149,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
             </div>
 
             <div className="bg-slate-50 rounded-2xl border border-slate-200/60 p-4 space-y-4">
-              <h4 className="text-xs font-black text-slate-650 flex items-center gap-2 uppercase tracking-wider">
+              <h4 className="text-xs font-black text-slate-600 flex items-center gap-2 uppercase tracking-wider">
                 💡 คำแนะนำสิทธิ์การลดราคานักกีฬา:
               </h4>
               <ul className="list-disc list-inside text-[11px] text-slate-600 space-y-1.5 pl-1 leading-relaxed">
@@ -3209,8 +3271,8 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                                   : 'bg-rose-50 border-rose-300 text-rose-800'
                               } ${isStaged ? 'ring-2 ring-amber-100' : ''}`}
                             >
-                              <option value="ACTIVE font-bold">🟢 เปิดใช้งาน</option>
-                              <option value="INACTIVE font-bold">🔴 ปิดระงับสิทธิ์</option>
+                              <option value="ACTIVE">🟢 เปิดใช้งาน</option>
+                              <option value="INACTIVE">🔴 ปิดระงับสิทธิ์</option>
                             </select>
                           </td>
 
@@ -3229,7 +3291,7 @@ export default function AdminPanel({ currentUserRole, onAddAuditLog, triggerRefr
                             {isStaged ? (
                               <div className="flex flex-col gap-1 items-center">
                                 <button
-                                  onClick={() => handleSaveDiscountTier(tier.id)}
+                                  disabled={busy} onClick={guarded(() => handleSaveDiscountTier(tier.id))}
                                   className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-1 px-2.5 rounded-lg text-[9px] shadow-sm transition flex items-center justify-center gap-1"
                                 >
                                   💾 เซฟส่วนลดใหม่

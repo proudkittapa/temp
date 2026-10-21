@@ -13,10 +13,7 @@ export enum DayType {
 export enum PriceType {
   NORMAL = 'NORMAL',
   PEAK = 'PEAK',
-  OFFPEAK = 'OFFPEAK',
-  STUDENT = 'STUDENT',
-  MEMBER = 'MEMBER',
-  CORPORATE = 'CORPORATE'
+  OFFPEAK = 'OFFPEAK'
 }
 
 export enum UserRole {
@@ -66,9 +63,7 @@ export enum OrderType {
 }
 
 export enum OrderStatus {
-  PENDING = 'PENDING',
-  PREPARING = 'PREPARING',
-  READY = 'READY',
+  PREPARING = 'PREPARING', // a rental that is still out
   DELIVERED = 'DELIVERED',
   CANCELLED = 'CANCELLED'
 }
@@ -131,20 +126,11 @@ export interface PricingConfig {
   closeHour?: number;
 }
 
-export interface OperatingHours {
-  id: string;
-  dayOfWeek: number; // 0-6 (Sun-Sat), 7 for all days override
-  openTime: string; // "07:00"
-  closeTime: string; // "23:00"
-  isClosed: boolean;
-}
-
 export interface User {
   id: string;
   name: string;
   email?: string;
   phone?: string;
-  lineUserId?: string;
   role: UserRole;
   memberType?: MemberType;
   orgName?: string;
@@ -197,6 +183,9 @@ export interface Payment {
   verifiedAt?: string;
   verifiedBy?: string; // name or userId
   refundedAt?: string;
+  // Browser-only mode: each refund (refundAmount is their running total),
+  // so a day's refunds can be counted on the day each was made.
+  refunds?: { amount: number; at: string }[];
   refundedBy?: string;
   refundReason?: string;
   // Money returned so far; REFUNDED once it covers `amount`.
@@ -331,36 +320,6 @@ export interface PointsLedgerEntry {
   note?: string;
   createdAt: string;
   createdBy: string; // userId of actor ('system' for automatic accrual)
-}
-
-// Rewards catalog (FR-4.2) - kept separate from Voucher so the catalog can be
-// edited without touching redemption history.
-export interface RewardCatalogItem {
-  id: string;
-  name: string;
-  emoji: string;
-  pointsCost: number;
-  isActive: boolean;
-}
-
-export enum VoucherStatus {
-  ACTIVE = 'ACTIVE',
-  REDEEMED = 'REDEEMED',
-  EXPIRED = 'EXPIRED'
-}
-
-// A claimed reward (FR-4.3): created when a customer redeems points, then
-// looked up by `code` at the counter and marked REDEEMED on dispense.
-export interface Voucher {
-  id: string;
-  code: string; // "RW-XXXXXX"
-  userId: string;
-  rewardId: string;
-  pointsSpent: number;
-  status: VoucherStatus;
-  createdAt: string;
-  dispensedAt?: string;
-  dispensedBy?: string; // staff userId
 }
 
 // Front-desk cash drawer session (FR-6). Cash totals are computed from

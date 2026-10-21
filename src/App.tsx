@@ -5,7 +5,7 @@ import CustomerPanel from './components/CustomerPanel';
 import StaffPOS from './components/StaffPOS';
 import AdminPanel from './components/AdminPanel';
 import { DialogHost } from './components/Dialog';
-import { Shield, Sparkles, User, Users, Briefcase, Star, Clock } from 'lucide-react';
+import { Shield, Sparkles, User, Users, Briefcase, Clock } from 'lucide-react';
 import * as api from './api';
 
 // Each panel has its own address: the customer site is "/", the counter
@@ -19,26 +19,35 @@ const hashForRole = (role: UserRole) => Object.keys(ROUTES).find(h => ROUTES[h] 
 // dev, never to customers of a real (backend) deployment.
 const SHOW_ROLE_SWITCHER = !(import.meta.env.PROD && api.USE_BACKEND);
 
+// The header clock ticks on its own, so the panels below don't re-render
+// (and re-price every grid cell) every second.
+function LiveClock() {
+  const [now, setNow] = useState<string>(() => formatDateTime(Date.now(), true));
+  useEffect(() => {
+    const t = setInterval(() => setNow(formatDateTime(Date.now(), true)), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <>{now}</>;
+}
+
+// Browser-only mode keeps the audit log in localStorage; cap it so a long
+// demo can't fill the storage quota (which would silently drop new data).
+const MAX_LOCAL_AUDIT_LOGS = 2000;
+
 export default function App() {
   const [currentRole, setCurrentRole] = useState<UserRole>(roleFromHash);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
-  const [currentUtcTime, setCurrentUtcTime] = useState<string>('');
 
   // Auto-initialize standard seed databases to localStorage on startup
   useEffect(() => {
     initializeState();
     triggerCompleteRefresh();
-    
-    // Aesthetic live clock showing current UTC time
-    const updateTime = () => {
-      const now = new Date();
-      setCurrentUtcTime(formatDateTime(now, true));
-    };
-    updateTime();
-    const interval = setInterval(updateTime, 1000);
     const onHash = () => { setCurrentRole(roleFromHash()); triggerCompleteRefresh(); };
     window.addEventListener('hashchange', onHash);
-    return () => { clearInterval(interval); window.removeEventListener('hashchange', onHash); };
+    // Signed in or out in another tab: reload this tab's data under the
+    // session that is now stored, instead of showing the old person.
+    const offSession = api.onSessionChangedElsewhere(() => triggerCompleteRefresh());
+    return () => { window.removeEventListener('hashchange', onHash); offSession(); };
   }, []);
 
   const triggerCompleteRefresh = () => {
@@ -69,7 +78,8 @@ export default function App() {
       createdAt: new Date().toISOString()
     };
 
-    StorageService.set('audit_logs', [newLog, ...currentLogs]);
+    // With the backend the server writes the audit log itself.
+    if (!api.USE_BACKEND) StorageService.set('audit_logs', [newLog, ...currentLogs].slice(0, MAX_LOCAL_AUDIT_LOGS));
     triggerCompleteRefresh();
   };
 
@@ -105,7 +115,7 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-2.5 text-xs font-semibold text-slate-600 select-none">
             <span className="flex items-center gap-1 font-mono text-slate-500 text-[11px] bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
               <Clock className="h-3.5 w-3.5 text-emerald-800" />
-              เวลาเซิร์ฟเวอร์ประเทศไทย: {currentUtcTime || 'กำลังดึงเวลา...'}
+              เวลาประเทศไทย: <LiveClock />
             </span>
           </div>
         </div>
@@ -113,7 +123,7 @@ export default function App() {
 
       {/* Role switcher (demo / dev only - see SHOW_ROLE_SWITCHER) */}
       {SHOW_ROLE_SWITCHER && (
-      <div className="bg-slate-900 text-white py-3 sm:py-6 border-b border-slate-850">
+      <div className="bg-slate-900 text-white py-3 sm:py-6 border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-800 pb-2.5">
             <span className="bg-emerald-600 text-[9px] font-black tracking-widest px-2.5 py-1 rounded-md uppercase">Simulator Controls</span>
@@ -141,7 +151,7 @@ export default function App() {
                 >
                   <div className="flex items-center gap-2 mb-1.5">
                     <IconComp className={`h-4.5 w-4.5 shrink-0 ${isSelected ? 'text-emerald-400' : 'text-slate-500'}`} />
-                    <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-350'}`}>{roleObj.label}</span>
+                    <span className={`text-xs font-bold ${isSelected ? 'text-white' : 'text-slate-300'}`}>{roleObj.label}</span>
                   </div>
                   <p className="hidden sm:block text-[10px] text-slate-500 mt-0.5 leading-snug">{roleObj.desc}</p>
                 </div>
@@ -177,7 +187,6 @@ export default function App() {
         {/* Render Admin Panel settings */}
         {currentRole === UserRole.ADMIN && (
           <AdminPanel
-            currentUserRole={currentRole}
             onAddAuditLog={handleAddNewAuditLog}
             triggerRefresh={refreshTrigger}
             onRefreshAll={triggerCompleteRefresh}
@@ -189,7 +198,7 @@ export default function App() {
       <DialogHost />
 
       {/* Footer Branding */}
-      <footer className="bg-white border-t border-slate-100 py-6 text-center text-xs text-slate-405 text-slate-500">
+      <footer className="bg-white border-t border-slate-100 py-6 text-center text-xs text-slate-400 text-slate-500">
         <p className="font-semibold text-slate-800">Sports Complex Management Thailand</p>
         <p className="text-[10px] mt-1 text-slate-400">{api.USE_BACKEND ? 'เชื่อมต่อเซิร์ฟเวอร์' : 'โหมดสาธิต: ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น'}</p>
       </footer>

@@ -39,16 +39,18 @@ func (s *BookingService) confirmGroup(ctx context.Context, tx *gorm.DB, p *model
 		if err := s.reReserve(tx, group, now); err != nil {
 			return 0, 0, err
 		}
-		for _, b := range group {
-			if b.Status == model.BookingCancelled {
-				targets[b.ID] = true
-			}
+		for _, b := range expiredRows(group) {
+			targets[b.ID] = true
 		}
 	}
 	for id := range targets {
-		if err := tx.Model(&model.Booking{}).Where("id = ?", id).
-			Updates(map[string]interface{}{"status": model.BookingConfirmed, "cancellation_reason": nil, "updated_at": now}).Error; err != nil {
-			return 0, 0, err
+		upd := tx.Model(&model.Booking{}).Where("id = ? AND status IN ?", id, []model.BookingStatus{model.BookingPendingPayment, model.BookingCancelled}).
+			Updates(map[string]interface{}{"status": model.BookingConfirmed, "cancellation_reason": nil, "cancel_kind": nil, "updated_at": now})
+		if upd.Error != nil {
+			return 0, 0, upd.Error
+		}
+		if upd.RowsAffected == 0 {
+			return 0, 0, fmt.Errorf("%w: the booking changed meanwhile - reload and try again", ErrInvalidState)
 		}
 		confirmed++
 	}
@@ -66,16 +68,49 @@ func (s *BookingService) confirmGroup(ctx context.Context, tx *gorm.DB, p *model
 // its slots is no longer available - a manager should refund it.
 var ErrLatePaymentSlotGone = errors.New("late payment: the booked slot is no longer available - refund the customer instead")
 
-// reReserve checks that every cancelled row of an expired group can be
-// booked again (same checks as CreateBookings, under the same locks).
-func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.Time) error {
-	var rows []model.Booking
-	courtIDs := []string{}
+// expiredRows are the group's rows cancelled because the payment hold ran
+// out - the only ones a late payment may bring back (hours a manager
+// cancelled, or a rejected slip's, stay cancelled).
+func expiredRows(group []model.Booking) []model.Booking {
+	var out []model.Booking
 	for _, b := range group {
-		if b.Status == model.BookingCancelled {
-			rows = append(rows, b)
-			courtIDs = append(courtIDs, b.CourtID)
+		if b.Status == model.BookingCancelled && b.CancelKind != nil && *b.CancelKind == model.CancelKindExpired {
+			out = append(out, b)
 		}
+	}
+	return out
+}
+
+// isWalkIn: booked by staff at the counter rather than by the customer.
+func isWalkIn(root *model.Booking) bool { return root.CreatedBy != root.UserID }
+
+// coversStandingHours: confirming a payment books its group's hours, so
+// the money not refunded must still cover every hour that would stand -
+// the booked/played ones plus, for a late payment, the expired hours it
+// brings back. Only matters once part of the payment was refunded.
+func coversStandingHours(p *model.Payment, group []model.Booking) error {
+	if p.RefundAmount <= 0 {
+		return nil
+	}
+	cost := keptAmount(group)
+	if p.ExpiredAt != nil {
+		for _, b := range expiredRows(group) {
+			cost = RoundBaht(cost + b.TotalAmount)
+		}
+	}
+	if RoundBaht(p.Amount-p.RefundAmount) < cost {
+		return fmt.Errorf("%w: %.2f THB of this payment was refunded - cancel or refund the rest instead of approving", ErrInvalidState, p.RefundAmount)
+	}
+	return nil
+}
+
+// reReserve checks that every expiry-cancelled row of an expired group can
+// be booked again (same checks as CreateBookings, under the same locks).
+func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.Time) error {
+	rows := expiredRows(group)
+	courtIDs := []string{}
+	for _, b := range rows {
+		courtIDs = append(courtIDs, b.CourtID)
 	}
 	if len(rows) == 0 {
 		return fmt.Errorf("%w: nothing to confirm", ErrInvalidState)
@@ -113,9 +148,11 @@ func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.
 		}
 		key := repository.LockKey(court)
 		if _, ok := locked[key]; !ok {
+			// A lock error (deadlock, timeout) is returned as it is: it is
+			// retryable, not a reason to refund.
 			g, err := s.bkRepo.LockCourtGroupTx(tx, court)
 			if err != nil {
-				return fmt.Errorf("%w (%v)", ErrLatePaymentSlotGone, err)
+				return err
 			}
 			locked[key] = g
 		}
@@ -130,7 +167,10 @@ func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.
 			return fmt.Errorf("%w (%s is closed at %s)", ErrLatePaymentSlotGone, court.Name, b.StartTime)
 		}
 		if err := s.bkRepo.CheckOverlapTx(tx, court, locked[key], date, b.StartTime, b.EndTime); err != nil {
-			return fmt.Errorf("%w (%v)", ErrLatePaymentSlotGone, err)
+			if errors.Is(err, repository.ErrSlotTaken) {
+				return fmt.Errorf("%w (%v)", ErrLatePaymentSlotGone, err)
+			}
+			return err
 		}
 	}
 	return nil
@@ -282,7 +322,8 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 			// point taken back twice).
 			upd := tx.Model(&model.Booking{}).Where("id = ? AND status IN ?", b.ID,
 				[]model.BookingStatus{model.BookingPendingPayment, model.BookingConfirmed}).Updates(map[string]interface{}{
-				"status": model.BookingCancelled, "cancellation_reason": "Cancelled by " + actorName + ": " + reason, "updated_at": now,
+				"status": model.BookingCancelled, "cancellation_reason": "Cancelled by " + actorName + ": " + reason,
+				"cancel_kind": model.CancelKindStaff, "updated_at": now,
 			})
 			if upd.Error != nil {
 				return upd.Error
@@ -400,7 +441,8 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 		for i, b := range group {
 			if b.Status == model.BookingPendingPayment {
 				if err := tx.Model(&model.Booking{}).Where("id = ? AND status = ?", b.ID, model.BookingPendingPayment).Updates(map[string]interface{}{
-					"status": model.BookingCancelled, "cancellation_reason": "Refunded: " + reason, "updated_at": now,
+					"status": model.BookingCancelled, "cancellation_reason": "Refunded: " + reason,
+					"cancel_kind": model.CancelKindRefunded, "updated_at": now,
 				}).Error; err != nil {
 					return err
 				}
@@ -461,8 +503,18 @@ func (s *BookingService) MarkPaidInCash(ctx context.Context, paymentID, actorID,
 		if err != nil {
 			return err
 		}
-		if p.Status != model.PaymentPending && p.Status != model.PaymentSlipUploaded && p.Status != model.PaymentExpired {
+		// A transfer slip waiting for review is decided by approving or
+		// rejecting it - recording cash on top would count money twice.
+		if p.Status == model.PaymentSlipUploaded {
+			return fmt.Errorf("%w: a transfer slip is waiting for review - approve or reject the slip instead of recording cash", ErrInvalidState)
+		}
+		if p.Status != model.PaymentPending && p.Status != model.PaymentExpired {
 			return fmt.Errorf("%w: payment is %s", ErrInvalidState, p.Status)
+		}
+		// The whole amount is recorded as cash received, so a payment part
+		// of which was refunded can't be settled this way.
+		if p.RefundAmount > 0 {
+			return fmt.Errorf("%w: part of this payment was refunded - it can't be recorded as paid in cash", ErrInvalidState)
 		}
 		group, root, err := s.bookingGroup(tx, p.BookingID)
 		if err != nil {
@@ -595,11 +647,10 @@ type DaySummary struct {
 // Summary totals payments approved on date by method (cash goes in the
 // drawer) and refunds recorded that day.
 func (s *BookingService) Summary(ctx context.Context, date string) (*DaySummary, error) {
-	day, err := time.ParseInLocation("2006-01-02", date, Bangkok)
+	from, to, err := BangkokDay(date)
 	if err != nil {
-		return nil, fmt.Errorf("%w: date must be YYYY-MM-DD", ErrInvalidBooking)
+		return nil, err
 	}
-	from, to := day, day.AddDate(0, 0, 1)
 	out := &DaySummary{Date: date}
 	db := s.db.WithContext(ctx)
 	sum := func(method model.PaymentMethod) (float64, error) {

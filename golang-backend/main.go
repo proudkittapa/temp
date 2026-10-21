@@ -130,7 +130,8 @@ func main() {
 	}
 	log.Println("Database schemas verified and migrated successfully!")
 	ensureUserUniqueIndexes(db)
-	ensurePaymentSlipIndex(db)
+	runDataMigrations(db) // before ensureIndexes: the slip index needs slip_released filled in
+	ensureIndexes(db)
 	warnDuplicatePhones(db)
 
 	// 1c. Seed the config rows the pricing engine needs to not error on a
@@ -145,10 +146,13 @@ func main() {
 	auditRepo := repository.NewAuditRepository(db)
 
 	serverSecret := resolveJWTSecret()
+	if gin.Mode() == gin.ReleaseMode && len(trustedProxies()) == 0 {
+		log.Println("WARNING: TRUSTED_PROXIES is not set. Behind a reverse proxy every client then has the proxy's IP, " +
+			"so the per-IP login and sign-up limits lock out everyone at once. Set it to the proxy's address.")
+	}
 	authService := service.NewAuthService(usrRepo, auditRepo, serverSecret, service.NewLoginThrottle(db))
 	slipSigner := handler.NewSlipSigner(serverSecret)
 	userService := service.NewUserService(db, usrRepo)
-	auditLogService := service.NewAuditLogService(auditRepo)
 	membershipService := service.NewMembershipService(db, usrRepo)
 	priceEngineService := service.NewPriceEngineService(courtRepo, membershipService)
 	paymentService, err := service.NewPaymentService(os.Getenv("PROMPTPAY_ID"))
@@ -164,17 +168,7 @@ func main() {
 	courtHandler := handler.NewCourtHandler(service.NewCourtAdminService(db))
 	shopHandler := handler.NewShopHandler(posService, service.NewReportService(db, posService), bookingService, service.NewShiftService(db))
 
-	arenaHandler := handler.NewArenaHandler(
-		authService,
-		userService,
-		membershipService,
-		priceEngineService,
-		paymentService,
-		bookingService,
-		auditLogService,
-		posService,
-		slipSigner,
-	)
+	arenaHandler := handler.NewArenaHandler(authService, userService, membershipService, bookingService, slipSigner)
 
 	// 3. Launch Gin Web Engine Router
 	router := gin.Default()
@@ -333,8 +327,18 @@ func main() {
 		port = "8080"
 	}
 
+	// Timeouts, so slow or stalled clients can't hold connections open
+	// (router.Run sets none). WriteTimeout leaves room for a 5 MB slip.
+	srv := &http.Server{
+		Addr:              fmt.Sprintf("0.0.0.0:%s", port),
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	log.Printf("Sports Arena Go Backend server launching on Port %s...\n", port)
-	if err := router.Run(fmt.Sprintf("0.0.0.0:%s", port)); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("Failed to bind listener: %v\n", err)
 	}
 }
@@ -525,35 +529,6 @@ func seedDefaults(db *gorm.DB) {
 	// rw-hour rows created before reward kinds existed default to ITEM.
 	check("reward kind rw-hour", db.Model(&model.RewardCatalogItem{}).Where("id = ?", "rw-hour").
 		Update("kind", model.RewardKindFreeOffPeakHour).Error)
-	// One-off data migrations, each run once (recorded in app_migrations):
-	// running them on every start could rewrite rows created since.
-	once := func(name string, run func() error) {
-		var n int64
-		db.Model(&model.AppMigration{}).Where("name = ?", name).Count(&n)
-		if n > 0 {
-			return
-		}
-		if err := run(); err != nil {
-			check("migration "+name, err)
-			return
-		}
-		check("migration "+name, db.Create(&model.AppMigration{Name: name, RanAt: time.Now()}).Error)
-	}
-	// Payments expired by an earlier version were stored as REJECTED with an
-	// "Expired: ..." reason; give them the EXPIRED status, so a late slip
-	// can still be accepted for them. (Once only: a manager's reason text
-	// could start with "Expired:" too.)
-	once("2026-10-expired-payment-status", func() error {
-		return db.Exec("UPDATE payments SET status = ?, expired_at = COALESCE(expired_at, updated_at) "+
-			"WHERE status = ? AND refund_reason LIKE 'Expired:%'", model.PaymentExpired, model.PaymentRejected).Error
-	})
-	// Refunds recorded before per-refund rows existed: one row each.
-	once("2026-10-refund-rows", func() error {
-		return db.Exec("INSERT INTO refunds (id, payment_id, amount, reason, refunded_by, refunded_at) " +
-			"SELECT 'rfd-' || id, id, refund_amount, COALESCE(refund_reason, ''), COALESCE(refunded_by, ''), COALESCE(refunded_at, updated_at) " +
-			"FROM payments p WHERE refund_amount > 0 AND NOT EXISTS (SELECT 1 FROM refunds r WHERE r.payment_id = p.id)").Error
-	})
-
 	// Without the pricing config no booking can be priced at all.
 	var cfgCount int64
 	if err := db.Model(&model.PricingConfig{}).Where("id = ?", "global").Count(&cfgCount).Error; err != nil || cfgCount == 0 {
@@ -587,6 +562,11 @@ func resolveJWTSecret() []byte {
 		}
 		return []byte(secret)
 	}
+	// In production a random per-process secret means logins and slip
+	// links break on every restart and differ between instances.
+	if gin.Mode() == gin.ReleaseMode {
+		log.Fatalln("JWT_SECRET must be set (and not the published example value) when GIN_MODE=release - e.g. `openssl rand -hex 32`.")
+	}
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		log.Fatalf("could not generate a JWT secret: %v", err)
@@ -600,24 +580,116 @@ func expireUnpaidBookingsLoop(bookings *service.BookingService, auth *service.Au
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for ; ; <-ticker.C {
-		n, err := bookings.ExpireUnpaidBookings(context.Background())
-		if err != nil {
-			log.Printf("Warning: expiring unpaid bookings failed: %v\n", err)
-		} else if n > 0 {
-			log.Printf("Expired %d unpaid booking group(s) past the %v payment hold.\n", n, service.PaymentHoldDuration)
-		}
-		if n, err := bookings.CompleteFinishedBookings(context.Background()); err != nil {
-			log.Printf("Warning: completing finished bookings failed: %v\n", err)
-		} else if n > 0 {
-			log.Printf("Marked %d finished booking hour(s) COMPLETED.\n", n)
-		}
-		if _, err := rewards.ExpireVouchers(context.Background()); err != nil {
-			log.Printf("Warning: expiring vouchers failed: %v\n", err)
-		}
-		if err := auth.PruneLoginFailures(context.Background()); err != nil {
-			log.Printf("Warning: pruning old failed logins failed: %v\n", err)
-		}
+		runJob("expiring unpaid bookings", func(ctx context.Context) error {
+			n, err := bookings.ExpireUnpaidBookings(ctx)
+			if n > 0 {
+				log.Printf("Expired %d unpaid booking group(s) past the %v payment hold.\n", n, service.PaymentHoldDuration)
+			}
+			return err
+		})
+		runJob("completing finished bookings", func(ctx context.Context) error {
+			n, err := bookings.CompleteFinishedBookings(ctx)
+			if n > 0 {
+				log.Printf("Marked %d finished booking hour(s) COMPLETED.\n", n)
+			}
+			return err
+		})
+		runJob("expiring vouchers", func(ctx context.Context) error {
+			_, err := rewards.ExpireVouchers(ctx)
+			return err
+		})
+		runJob("pruning old failed logins", auth.PruneLoginFailures)
 	}
+}
+
+// runJob runs one background job with a time limit (a lock wait stuck on a
+// hung request is cancelled instead of stopping every later run) and
+// recovers a panic, so one bad job can't take the server down.
+func runJob(name string, job func(ctx context.Context) error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ERROR: background job %q panicked: %v\n", name, r)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	if err := job(ctx); err != nil {
+		log.Printf("Warning: %s failed: %v\n", name, err)
+	}
+}
+
+// migrationLockKey serialises one-off migrations across instances that
+// start at the same time (pg_advisory_xact_lock key).
+const migrationLockKey = 4203
+
+// runOnce runs a one-off data migration and records it in app_migrations,
+// in one transaction under an advisory lock: it runs exactly once even if
+// several instances start together, and a failure leaves no record (so it
+// is retried on the next start) and no half-applied change. Any error is
+// fatal - starting on a half-migrated database is worse than not starting.
+func runOnce(db *gorm.DB, name string, run func(tx *gorm.DB) error) {
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", migrationLockKey).Error; err != nil {
+			return err
+		}
+		var n int64
+		if err := tx.Model(&model.AppMigration{}).Where("name = ?", name).Count(&n).Error; err != nil {
+			return err
+		}
+		if n > 0 {
+			return nil
+		}
+		if err := run(tx); err != nil {
+			return err
+		}
+		log.Printf("Data migration %s applied.\n", name)
+		return tx.Create(&model.AppMigration{Name: name, RanAt: time.Now()}).Error
+	})
+	if err != nil {
+		log.Fatalf("Data migration %s failed: %v\n", name, err)
+	}
+}
+
+// runDataMigrations: one-off data changes, each run once (recorded in
+// app_migrations) - running them on every start could rewrite rows
+// created since.
+func runDataMigrations(db *gorm.DB) {
+	// Payments expired by an earlier version were stored as REJECTED with an
+	// "Expired: ..." reason; give them the EXPIRED status, so a late slip
+	// can still be accepted for them. (Once only: a manager's reason text
+	// could start with "Expired:" too.)
+	runOnce(db, "2026-10-expired-payment-status", func(tx *gorm.DB) error {
+		return tx.Exec("UPDATE payments SET status = ?, expired_at = COALESCE(expired_at, updated_at) "+
+			"WHERE status = ? AND refund_reason LIKE 'Expired:%'", model.PaymentExpired, model.PaymentRejected).Error
+	})
+	// Refunds recorded before per-refund rows existed: one row each.
+	runOnce(db, "2026-10-refund-rows", func(tx *gorm.DB) error {
+		return tx.Exec("INSERT INTO refunds (id, payment_id, amount, reason, refunded_by, refunded_at) " +
+			"SELECT 'rfd-' || id, id, refund_amount, COALESCE(refund_reason, ''), COALESCE(refunded_by, ''), COALESCE(refunded_at, updated_at) " +
+			"FROM payments p WHERE refund_amount > 0 AND NOT EXISTS (SELECT 1 FROM refunds r WHERE r.payment_id = p.id)").Error
+	})
+	// Why each cancelled row was cancelled, from the reason text the code
+	// wrote before cancel_kind existed. Late payments only bring back
+	// EXPIRED rows.
+	runOnce(db, "2026-10-booking-cancel-kind", func(tx *gorm.DB) error {
+		return tx.Exec("UPDATE bookings SET cancel_kind = CASE "+
+			"WHEN cancellation_reason LIKE 'Expired%' THEN ? "+
+			"WHEN cancellation_reason LIKE 'Slip rejected:%' THEN ? "+
+			"WHEN cancellation_reason LIKE 'Refunded:%' THEN ? ELSE ? END "+
+			"WHERE status = ? AND cancel_kind IS NULL",
+			model.CancelKindExpired, model.CancelKindSlipRejected, model.CancelKindRefunded, model.CancelKindStaff, model.BookingCancelled).Error
+	})
+	// Slips staff rejected may be used again; a slip whose booking was
+	// cancelled some other way stays used (see Payment.SlipReleased).
+	runOnce(db, "2026-10-slip-released", func(tx *gorm.DB) error {
+		return tx.Exec("UPDATE payments p SET slip_released = true WHERE p.status = ? AND EXISTS "+
+			"(SELECT 1 FROM audit_logs a WHERE a.target_id = p.id AND a.action = 'SLIP_REJECTED_BY_STAFF')", model.PaymentRejected).Error
+	})
+	// What each sold product was, for sales made before order_items kept it.
+	runOnce(db, "2026-10-order-item-snapshot", func(tx *gorm.DB) error {
+		return tx.Exec("UPDATE order_items i SET category = p.category, is_rental = p.is_rental " +
+			"FROM products p WHERE p.id = i.product_id AND i.category IS NULL").Error
+	})
 }
 
 // ensureUserUniqueIndexes makes phone and email unique, so Register can't
@@ -683,16 +755,37 @@ func trustedProxies() []string {
 	return out
 }
 
-// ensurePaymentSlipIndex stops one slip file (by SHA-256) being attached to
-// two live payments; a REJECTED payment's slip may be reused, e.g. for a new
-// booking after the first expired while the transfer was on its way.
-// BookingService.SaveSlip checks this too and gives a clear error; the
-// index catches two uploads racing past that check.
-func ensurePaymentSlipIndex(db *gorm.DB) {
-	stmt := "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_slip_hash_live ON payments (slip_hash) " +
-		"WHERE slip_hash IS NOT NULL AND status <> 'REJECTED'"
-	if err := db.Exec(stmt).Error; err != nil {
-		log.Printf("WARNING: could not create the payments.slip_hash index (%v); duplicate slips are still refused by the upload check.\n", err)
+// ensureIndexes creates the indexes GORM tags can't express (partial and
+// expression indexes) plus the ones reports and lookups filter on. Like
+// ensureUserUniqueIndexes it only warns if one can't be built (e.g. old
+// duplicate data), so startup never fails on it.
+func ensureIndexes(db *gorm.DB) {
+	stmts := []struct{ what, sql string }{
+		// One slip file (by SHA-256) can't be attached to two payments
+		// unless staff rejected it (slip_released). Replaces the earlier
+		// index, which freed a slip whenever its payment became REJECTED -
+		// also by a cancellation, when the money may still be refunded.
+		{"old slip index", "DROP INDEX IF EXISTS idx_payments_slip_hash_live"},
+		{"payments.slip_hash", "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_slip_hash_used ON payments (slip_hash) " +
+			"WHERE slip_hash IS NOT NULL AND NOT slip_released"},
+		// Codes staff look up and print; the generators retry on a clash.
+		{"orders.order_code", "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_order_code ON orders (order_code)"},
+		{"vouchers.code", "CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_code ON vouchers (code)"},
+		// A checkout key is used once (see POSService.ProcessCheckout).
+		{"orders.idempotency_key", "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders (idempotency_key) " +
+			"WHERE idempotency_key IS NOT NULL"},
+		// What shifts, reports, the drawer summary and voids filter on.
+		{"orders.created_at", "CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at)"},
+		{"payments.verified_at", "CREATE INDEX IF NOT EXISTS idx_payments_verified_at ON payments (verified_at)"},
+		{"payments.booking_id", "CREATE INDEX IF NOT EXISTS idx_payments_booking_id ON payments (booking_id)"},
+		{"bookings.date,status", "CREATE INDEX IF NOT EXISTS idx_bookings_date_status ON bookings (date, status)"},
+		{"audit_logs.created_at", "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at)"},
+		{"points ledger ref", "CREATE INDEX IF NOT EXISTS idx_points_ledger_ref ON points_ledger_entries (ref_type, ref_id)"},
+	}
+	for _, st := range stmts {
+		if err := db.Exec(st.sql).Error; err != nil {
+			log.Printf("WARNING: could not create index on %s (%v).\n", st.what, err)
+		}
 	}
 }
 

@@ -18,10 +18,112 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Full code review: races, money rules, dead code
+
+- **Who:** Claude Code (Opus 5.5) with review/fix subagents, session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `c3109fb`)
+- **Background:** Owner asked for a review of frontend and backend for bugs,
+  race conditions, improvements and redundant code, and to fix them. Five
+  read-only reviews (backend money paths, backend shop/auth/admin, customer
+  UI, staff/admin UI, dead code); every finding was checked before fixing.
+
+### Backend (`golang-backend/`)
+- **Money rules:** approving a partly refunded payment is allowed when the
+  money left covers the hours that stand (was always refused - a closure
+  that refunded one hour of a waiting slip left the other hour stuck);
+  mark-cash refused while a slip waits or after a refund (it counted
+  transfer money as drawer cash); a late payment re-confirms only hours
+  cancelled by expiry, never hours a manager cancelled (new
+  `bookings.cancel_kind`: EXPIRED / SLIP_REJECTED / STAFF / REFUNDED); a
+  slip is reusable only after staff rejected it (new
+  `payments.slip_released`, new partial unique index); staff can approve a
+  PENDING payment without a slip only for walk-ins; lock/DB errors during a
+  late payment no longer turn into "slot gone, refund instead"; replaced
+  slip files are kept as evidence.
+- **Races:** void takes the drawer lock (void vs shift close); POS locks
+  customer -> drawer -> stock rows sorted by id (no cashier deadlocks);
+  checkout `idempotency_key` (repeat returns the first sale, `replayed:true`);
+  unique indexes on order and voucher codes with retry; `UpdateConfig` locks
+  its row.
+- **Other:** month export has no row limit; sale category/rental flag
+  snapshotted on `order_items` (editing a product no longer rewrites past
+  reports); 500s return a generic message (details logged); sign-up limit
+  10/IP/hour; manual points change capped at ±10,000; a new half court must
+  name its full court (`half_of`); `JWT_SECRET` required and
+  `TRUSTED_PROXIES` warned in release mode; one-off migrations run in a
+  transaction under an advisory lock; background jobs recover from panics
+  and time out; `http.Server` timeouts; indexes on the report/shift filters.
+- **Removed:** `AuditLogService`, unused repository methods and handler
+  fields, `OrderPending/OrderReady`; merged duplicate Bangkok-day and
+  hour-range helpers.
+
+### Frontend (`src/`)
+- **Customer:** one action at a time for booking, slip upload, redeem,
+  sign-in/up (a double tap booked twice); redeem re-checks the balance
+  after the question; before booking/spending, a check that another tab
+  hasn't signed in as someone else; the grid waits for the chosen date
+  (it briefly showed the old date's bookings as free) and optional data
+  (rewards, vouchers) can no longer break it; browser-only booking
+  re-checks availability, start time and closures on fresh data; the file
+  picker resets; sign-out clears the previous person's screen; half-court
+  "discount" strike price fixed; labels linked to inputs, alerts announced,
+  16px inputs on phones, iPhone safe area.
+- **Shared:** `api.ts` drops a session on 401 only if it is still the
+  token that failed, handles non-JSON replies, plain Thai network message;
+  sign-in/out in another tab refreshes this tab (`onSessionChangedElsewhere`);
+  header clock is its own component (the page no longer re-renders every
+  second); dialogs trap focus, Escape works anywhere, focus returns, fresh
+  state per dialog; `errorText` no longer cuts court names containing
+  ": ", and translates session/permission/new money-rule messages;
+  `findClosure` / `findPricingRule` replace six copies of the closure check
+  and two of the rule lookup (an hour with no rule is no longer "off-peak").
+- **Staff:** cancel from the day report finds the whole group (it cancelled
+  everything without the refund option when the walk-in date wasn't
+  today); error banner on every tab; closing a shift re-reads the expected
+  cash; mark-cash hidden while a slip waits; browser-only mode: partial
+  cancel shrinks amount and QR, void refuses closed-shift cash sales,
+  refunds counted on the day each was made, refund capped like the server.
+- **Admin:** member-tier on/off dropdown fixed (any change switched the
+  tier off); every save is guarded against double clicks; error banner;
+  dashboard closures for past dates; role changes picked up without
+  re-login; Excel import resets, skips duplicates, validates like the
+  server; CSV download URL revoked later; dashboard money formatted and
+  computed once per render; half-court picker; working member-tier filter;
+  no-op point changes not audit-logged; phantom "save" button fixed.
+- **Removed:** unused imports/state/props, dead seed data and storage keys,
+  unused types/enum members and API wrappers, an old slot-toggle handler;
+  48 Tailwind classes that don't exist rounded to real shades.
+
+### Verified
+- `gofmt`, `go vet`, `go test ./...` (new tests: standing-hours rule,
+  expired-only re-reserve, walk-in check, lock order, sign-up limit,
+  respondError); `tsc`, `tsc --noUnusedLocals --noUnusedParameters` clean;
+  vitest 39/39; production build.
+- Backend live (fresh DB on :8081 by the fix agent, then main DB on :8080):
+  closure partial refund then verify keeps the paid hour; mark-cash refused
+  for waiting/refunded; late slip re-reserves only expired hours; cancelled
+  slip can't be reused; same idempotency key twice/3 parallel -> one order;
+  void vs closed shift refused; points cap; sign-up limit 11th -> 429;
+  migrations applied on a copy of the old DB and on the test DB; earlier
+  money scenarios (`e2e12.sh`) unchanged.
+- Browser (Playwright `s14.cjs`, `ui14/15.cjs`, `s12.cjs`), no page errors:
+  double-tap confirm -> 1 booking; grid shows loading then the date;
+  Escape closes a dialog with focus elsewhere; a second tab signing in as
+  another customer updates the first; tier off->on stays on; half court
+  without a full court is refused, picker lists the full court; staff
+  cancel from the day report offers the refund; phones 390px no sideways
+  scroll in both modes.
+
+### Not done / follow-ups
+- TODO.md item 0 (owner decisions, now incl. void after points spent, cash
+  refunds vs drawer, lockout policy) and new item 7 (smaller improvements).
+
+---
+
 ## 2026-10-21 — Thai errors everywhere, audit trail, login limit per account
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `ba0fa54`)
+- **Commit(s):** `c3109fb` (on `main`, parent `ba0fa54`)
 - **Background:** Owner picked items 6-8 of the open-problems list ("fix
   6-8, leave the rest, the rest note in the todo").
 

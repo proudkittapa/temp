@@ -8,6 +8,12 @@ type Rule = [RegExp, string | ((m: RegExpMatchArray) => string)];
 
 const baht = (s: string) => Number(s).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
+// Drops the sentinel in front of a detail ("slot already booked: <court>
+// ..."). Only known sentinels: court and product names may contain ": "
+// themselves (e.g. "สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)").
+const SENTINEL = /^(?:slot already booked|out of stock|invalid booking request|invalid state for this action|not found): /i;
+const detail = (s: string) => s.replace(SENTINEL, '');
+
 const RULES: Rule[] = [
   // A bulk import names the failing row; translate the rest after it.
   [/^row (\d+): (.*)$/i, m => `แถวที่ ${m[1]}: ${thaiErrorText(m[2])}`],
@@ -20,7 +26,13 @@ const RULES: Rule[] = [
   [/email address is not valid/i, 'อีเมลไม่ถูกต้อง (เว้นว่างได้ถ้าไม่มี)'],
   [/password must be at least 6/i, 'รหัสผ่านต้องมีอย่างน้อย 6 ตัว'],
   [/password must be at most 72/i, 'รหัสผ่านยาวเกินไป (ไม่เกิน 72 ตัว)'],
-  [/invalid or expired token/i, 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่'],
+  [/invalid or expired token|session expired/i, 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่'],
+  [/^login required/i, 'กรุณาเข้าสู่ระบบก่อน'],
+  [/your role is not allowed/i, 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้'],
+  [/could not check your session right now/i, 'ตรวจสอบการเข้าสู่ระบบไม่ได้ชั่วคราว กรุณาลองใหม่'],
+  [/internal server error/i, 'เซิร์ฟเวอร์ขัดข้อง กรุณาลองใหม่อีกครั้ง'],
+  [/too many sign-ups from this network/i, 'สมัครสมาชิกจากเครือข่ายนี้บ่อยเกินไป กรุณาลองใหม่ภายหลัง'],
+  [/points change must be between/i, 'ปรับแต้มได้ครั้งละไม่เกิน ±10,000 แต้ม'],
   [/you cannot change your own points/i, 'ปรับแต้มของตัวเองไม่ได้'],
   [/you cannot change your own role or status/i, 'เปลี่ยนสิทธิ์หรือระงับบัญชีของตัวเองไม่ได้'],
   [/membership tiers only apply to customers/i, 'ระดับสมาชิกใช้กับบัญชีลูกค้าเท่านั้น'],
@@ -29,7 +41,7 @@ const RULES: Rule[] = [
   // Booking
   [/you already have (\d+) bookings awaiting payment/i, m => `คุณมีการจองที่รอชำระ/รอตรวจสลิปอยู่ ${m[1]} รายการแล้ว กรุณารอให้ยืนยันก่อนจองเพิ่ม`],
   [/too many unpaid bookings/i, 'มีการจองที่รอชำระครบจำนวนแล้ว กรุณารอให้ยืนยันก่อนจองเพิ่ม'],
-  [/(.+?) (\d\d:\d\d)-(\d\d:\d\d) is already reserved/i, m => `${m[1].replace(/^.*: /, '')} ${m[2]}-${m[3]} ถูกจองไปแล้ว กรุณาเลือกเวลาอื่น`],
+  [/(.+?) (\d\d:\d\d)-(\d\d:\d\d) is already reserved/i, m => `${detail(m[1])} ${m[2]}-${m[3]} ถูกจองไปแล้ว กรุณาเลือกเวลาอื่น`],
   [/slot already booked/i, 'ช่วงเวลานี้เพิ่งถูกจองไป กรุณาเลือกเวลาอื่น'],
   [/has already started - book it at the counter/i, 'ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ (ติดต่อเคาน์เตอร์ได้)'],
   [/has already passed|is over\)/i, 'ช่วงเวลานี้ผ่านไปแล้ว'],
@@ -68,6 +80,10 @@ const RULES: Rule[] = [
   [/no money was received to refund/i, 'ยังไม่ได้รับเงินสำหรับรายการนี้ จึงไม่มีอะไรให้คืน'],
   [/some booking ids are not part of this booking/i, 'บางชั่วโมงที่เลือกไม่ได้อยู่ในการจองนี้'],
   [/this booking was paid at the counter/i, 'การจองนี้ชำระที่เคาน์เตอร์แล้ว'],
+  [/a transfer slip is waiting for review/i, 'มีสลิปโอนรอตรวจอยู่ — อนุมัติหรือปฏิเสธสลิปแทนการบันทึกเงินสด'],
+  [/part of this payment was refunded - it can't be recorded as paid in cash/i, 'รายการนี้บันทึกคืนเงินไปแล้วบางส่วน บันทึกเป็นเงินสดไม่ได้'],
+  [/no slip has been uploaded for this booking yet/i, 'การจองนี้ยังไม่มีสลิป อนุมัติไม่ได้'],
+  [/idempotency_key must be/i, 'รหัสรายการไม่ถูกต้อง กรุณาลองใหม่'],
   [/the hour hasn't started yet/i, 'ชั่วโมงนี้ยังไม่เริ่ม บันทึกว่าไม่มาไม่ได้'],
   [/payment is already (\w+)/i, m => `รายการนี้ถูกดำเนินการไปแล้ว (${m[1]})`],
   [/(?:payment|booking) is (\w+)$/i, m => `รายการนี้อยู่ในสถานะ ${m[1]} ทำรายการนี้ไม่ได้`],
@@ -86,9 +102,9 @@ const RULES: Rule[] = [
   [/was paid in a shift that is already closed/i, 'บิลเงินสดนี้อยู่ในกะที่ปิดไปแล้ว ยกเลิกไม่ได้'],
   [/was voided - its items are already back in stock/i, 'บิลนี้ถูกยกเลิกแล้ว ของกลับเข้าสต๊อกแล้ว'],
   [/already returned on/i, 'รายการนี้คืนของแล้ว'],
-  [/(.+?) size (.+?): only (\d+) left/i, m => `${m[1].replace(/^.*: /, '')} เบอร์ ${m[2]}: เหลือ ${m[3]} คู่`],
+  [/(.+?) size (.+?): only (\d+) left/i, m => `${detail(m[1])} เบอร์ ${m[2]}: เหลือ ${m[3]} คู่`],
   [/only (\d+) left of (.+?) size (.+)/i, m => `${m[2]} เบอร์ ${m[3]}: เหลือ ${m[1]} คู่`],
-  [/(.+?): only (\d+) in stock/i, m => `${m[1].replace(/^.*: /, '')}: เหลือในคลัง ${m[2]} ชิ้น`],
+  [/(.+?): only (\d+) in stock/i, m => `${detail(m[1])}: เหลือในคลัง ${m[2]} ชิ้น`],
   [/only (\d+) of (.+?) in stock/i, m => `${m[2]}: เหลือในคลัง ${m[1]} ชิ้น`],
   [/out of stock/i, 'สินค้าหมด'],
   [/is a rental item - use the rental form/i, 'สินค้านี้เป็นของให้เช่า ใช้แท็บ "ยืม/เช่า"'],
@@ -118,6 +134,8 @@ const RULES: Rule[] = [
 
   // Courts, closures, pricing settings
   [/a court named "?(.+?)"? already exists/i, m => `มีสนามชื่อ ${m[1]} อยู่แล้ว`],
+  [/a half court must be part of a full court/i, 'ครึ่งสนามต้องเลือกว่าเป็นครึ่งของสนามใด'],
+  [/a half court must be part of a full (\w+) court/i, m => `ครึ่งสนามต้องเป็นครึ่งของสนามเต็มประเภท ${m[1]}`],
   [/court name is required/i, 'กรุณาใส่ชื่อสนาม (ไม่เกิน 100 ตัวอักษร)'],
   [/cannot close a date in the past/i, 'ปิดวันที่ผ่านมาแล้วไม่ได้'],
   [/partial closure needs start_hour < end_hour/i, 'ปิดบางช่วง: เวลาเริ่มต้องน้อยกว่าเวลาสิ้นสุด'],
@@ -132,7 +150,7 @@ const RULES: Rule[] = [
 
   // General
   [/(?:^|: )name is required/i, 'กรุณาใส่ชื่อ (ไม่เกิน 100 ตัวอักษร)'],
-  [/busy with the same booking/i, 'ระบบกำลังทำรายการเดียวกันอยู่ กรุณาลองใหม่อีกครั้ง'],
+  [/busy with the same booking|system was busy/i, 'ระบบกำลังทำรายการเดียวกันอยู่ กรุณาลองใหม่อีกครั้ง'],
   [/^not allowed/i, 'ไม่มีสิทธิ์ทำรายการนี้'],
   [/^(?:not found|user not found)/i, 'ไม่พบรายการนี้ (อาจถูกลบหรือเปลี่ยนไปแล้ว)'],
   [/login failed, please try again|registration failed, please try again|^Request failed \(5\d\d\)/i, 'เซิร์ฟเวอร์ขัดข้อง กรุณาลองใหม่อีกครั้ง'],

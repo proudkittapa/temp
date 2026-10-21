@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,14 +36,24 @@ type CheckoutInput struct {
 	Type          model.OrderType     `json:"type"`               // "FB", "EQUIPMENT_RENT", "EQUIPMENT_SALE"
 	PaymentMeth   model.PaymentMethod `json:"payment_method"`
 	Items         []POSOrderItemInput `json:"items"`
-	CreatedBy     string              `json:"-"` // the signed-in staff member
-	CreatedByName string              `json:"-"`
+	// IdempotencyKey identifies one checkout attempt (the client sends a
+	// fresh random id per submit): the same key again returns the order
+	// already made instead of selling a second time.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	CreatedBy      string `json:"-"` // the signed-in staff member
+	CreatedByName  string `json:"-"`
 }
 
 type CheckoutResult struct {
 	Order        OrderView `json:"order"`
 	PointsEarned int       `json:"points_earned"`
+	// Replayed: this key was seen before - the original order is returned
+	// and nothing was sold again.
+	Replayed bool `json:"replayed,omitempty"`
 }
+
+// MaxIdempotencyKeyLen bounds the client's checkout key.
+const MaxIdempotencyKeyLen = 64
 
 // OrderView is an order with its lines, each line carrying the product
 // name for receipts and lists.
@@ -80,7 +91,7 @@ func uniqueOrderCode(tx *gorm.DB, date string) (string, error) {
 			return code, nil
 		}
 	}
-	return "", errors.New("could not allocate a unique receipt code, please retry")
+	return "", ErrBusy
 }
 
 type POSService struct {
@@ -308,6 +319,8 @@ func (s *POSService) AdjustStock(ctx context.Context, productID string, variantI
 // catalog (never from the client), stock is locked and decremented in the
 // same transaction, a registered customer earns 1 point per 100 THB
 // (FR-4.1). A rental stays open (PREPARING) until every item is returned.
+// With an idempotency key, a repeat of the same checkout (double submit,
+// network retry) returns the first order instead of selling again.
 func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (*CheckoutResult, error) {
 	if len(input.Items) == 0 || len(input.Items) > 50 {
 		return nil, fmt.Errorf("%w: an order needs between 1 and 50 lines", ErrInvalidBooking)
@@ -331,6 +344,13 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 	if len(input.CustomerName) > 200 {
 		return nil, fmt.Errorf("%w: customer name is too long", ErrInvalidBooking)
 	}
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if len(input.IdempotencyKey) > MaxIdempotencyKeyLen {
+		return nil, fmt.Errorf("%w: idempotency_key must be at most %d characters", ErrInvalidBooking, MaxIdempotencyKeyLen)
+	}
+	if res, err := s.replayCheckout(ctx, input.IdempotencyKey); err != nil || res != nil {
+		return res, err
+	}
 
 	var customer *model.User
 	if strings.TrimSpace(input.CustomerPhone) != "" {
@@ -350,13 +370,88 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 		}
 	}
 
+	// A unique violation means either the same key raced in from another
+	// request (return that order) or a receipt-code collision (try again).
+	for attempt := 0; ; attempt++ {
+		result, err := s.checkoutTx(ctx, input, customer)
+		if err == nil || !repository.IsUniqueViolation(err) {
+			return result, err
+		}
+		if res, rerr := s.replayCheckout(ctx, input.IdempotencyKey); rerr != nil || res != nil {
+			return res, rerr
+		}
+		if attempt == 2 {
+			return nil, ErrBusy
+		}
+	}
+}
+
+// replayCheckout returns the order already made with this idempotency key,
+// or nil if there is none (or no key).
+func (s *POSService) replayCheckout(ctx context.Context, key string) (*CheckoutResult, error) {
+	if key == "" {
+		return nil, nil
+	}
+	db := s.db.WithContext(ctx)
+	var order model.Order
+	err := db.Where("idempotency_key = ?", key).Take(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var points int64
+	if err := db.Model(&model.PointsLedgerEntry{}).Select("COALESCE(SUM(points), 0)").
+		Where("ref_type = ? AND ref_id = ? AND type = ?", "Order", order.ID, model.LedgerEarnPurchase).Scan(&points).Error; err != nil {
+		return nil, err
+	}
+	views, err := s.views(db, []model.Order{order})
+	if err != nil {
+		return nil, err
+	}
+	return &CheckoutResult{Order: views[0], PointsEarned: int(points), Replayed: true}, nil
+}
+
+// lineLockKey orders product/variant row locks the same way in every
+// checkout, so two carts holding the same items in a different order can't
+// deadlock.
+func lineLockKey(in POSOrderItemInput) string {
+	if in.VariantID != nil {
+		return in.ProductID + "|" + *in.VariantID
+	}
+	return in.ProductID + "|"
+}
+
+func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, customer *model.User) (*CheckoutResult, error) {
 	var result *CheckoutResult
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock order everywhere: customer, then the cash drawer, then stock
+		// rows (bookings take the customer before the drawer too).
+		if customer != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&model.User{}, "id = ?", customer.ID).Error; err != nil {
+				return err
+			}
+		}
 		// Cash into the drawer: wait for a shift close in progress before
 		// taking the time, so the sale lands in exactly one shift.
 		if input.PaymentMeth == model.PaymentCash {
 			if err := lockDrawerShared(tx); err != nil {
 				return err
+			}
+		}
+		// Take every stock row lock up front, in a fixed order; the lines
+		// are then processed in the cart's order (re-locking is a no-op).
+		sorted := append([]POSOrderItemInput(nil), input.Items...)
+		sort.Slice(sorted, func(i, j int) bool { return lineLockKey(sorted[i]) < lineLockKey(sorted[j]) })
+		for _, in := range sorted {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", in.ProductID).Find(&[]model.Product{}).Error; err != nil {
+				return err
+			}
+			if in.VariantID != nil && *in.VariantID != "" {
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", *in.VariantID).Find(&[]model.ProductVariant{}).Error; err != nil {
+					return err
+				}
 			}
 		}
 		now := s.now()
@@ -386,7 +481,9 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 			if err := tx.Where("product_id = ?", p.ID).Find(&variants).Error; err != nil {
 				return err
 			}
-			line := model.OrderItem{ID: ids.New("itm"), OrderID: orderID, ProductID: p.ID, Qty: in.Qty, UnitPrice: p.Price, Notes: in.Notes}
+			category, isRental := p.Category, p.IsRental
+			line := model.OrderItem{ID: ids.New("itm"), OrderID: orderID, ProductID: p.ID, Qty: in.Qty, UnitPrice: p.Price, Notes: in.Notes,
+				Category: &category, IsRental: &isRental}
 			if len(variants) > 0 {
 				if in.VariantID == nil || *in.VariantID == "" {
 					return fmt.Errorf("%w: choose the size of %s", ErrInvalidBooking, p.Name)
@@ -434,6 +531,10 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 			Type: input.Type, Status: status, TotalAmount: total, PaidAmount: total,
 			PaymentMethod: input.PaymentMeth, CreatedBy: input.CreatedBy, CreatedAt: now,
 		}
+		if input.IdempotencyKey != "" {
+			key := input.IdempotencyKey
+			order.IdempotencyKey = &key
+		}
 		if customer != nil {
 			order.UserID = &customer.ID
 		}
@@ -477,13 +578,23 @@ func (s *POSService) views(db *gorm.DB, orders []model.Order) ([]OrderView, erro
 			return nil, err
 		}
 	}
+	// Names of just the products on these lines, not the whole catalog.
 	names := map[string]string{}
-	var products []model.Product
-	if err := db.Select("id, name").Find(&products).Error; err != nil {
-		return nil, err
+	productIDs := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if _, seen := names[l.ProductID]; !seen {
+			names[l.ProductID] = ""
+			productIDs = append(productIDs, l.ProductID)
+		}
 	}
-	for _, p := range products {
-		names[p.ID] = p.Name
+	if len(productIDs) > 0 {
+		var products []model.Product
+		if err := db.Select("id, name").Where("id IN ?", productIDs).Find(&products).Error; err != nil {
+			return nil, err
+		}
+		for _, p := range products {
+			names[p.ID] = p.Name
+		}
 	}
 	byOrder := map[string][]OrderItemView{}
 	for _, l := range lines {
@@ -499,8 +610,11 @@ func (s *POSService) views(db *gorm.DB, orders []model.Order) ([]OrderView, erro
 	return out, nil
 }
 
-// bangkokDay returns the [start, end) instants of a YYYY-MM-DD Bangkok day.
-func bangkokDay(date string) (time.Time, time.Time, error) {
+// BangkokToday is today's date at the complex (YYYY-MM-DD).
+func BangkokToday() string { return time.Now().In(Bangkok).Format("2006-01-02") }
+
+// BangkokDay returns the [start, end) instants of a YYYY-MM-DD Bangkok day.
+func BangkokDay(date string) (time.Time, time.Time, error) {
 	day, err := time.ParseInLocation("2006-01-02", date, Bangkok)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("%w: date must be YYYY-MM-DD", ErrInvalidBooking)
@@ -509,11 +623,15 @@ func bangkokDay(date string) (time.Time, time.Time, error) {
 }
 
 // ListOrders returns the orders made between from (inclusive) and to
-// (exclusive), newest first.
-func (s *POSService) ListOrders(ctx context.Context, from, to time.Time) ([]OrderView, error) {
+// (exclusive), newest first; at most limit of them (0 = all, for exports).
+func (s *POSService) ListOrders(ctx context.Context, from, to time.Time, limit int) ([]OrderView, error) {
 	db := s.db.WithContext(ctx)
+	q := db.Where("created_at >= ? AND created_at < ?", from, to).Order("created_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
 	var orders []model.Order
-	if err := db.Where("created_at >= ? AND created_at < ?", from, to).Order("created_at DESC").Limit(5000).Find(&orders).Error; err != nil {
+	if err := q.Find(&orders).Error; err != nil {
 		return nil, err
 	}
 	return s.views(db, orders)
@@ -521,11 +639,11 @@ func (s *POSService) ListOrders(ctx context.Context, from, to time.Time) ([]Orde
 
 // OrdersOnDate is ListOrders for one Bangkok day.
 func (s *POSService) OrdersOnDate(ctx context.Context, date string) ([]OrderView, error) {
-	from, to, err := bangkokDay(date)
+	from, to, err := BangkokDay(date)
 	if err != nil {
 		return nil, err
 	}
-	return s.ListOrders(ctx, from, to)
+	return s.ListOrders(ctx, from, to, 5000)
 }
 
 // ActiveRentals returns rental orders that still have items out, any day.
@@ -628,6 +746,19 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 		if order.Status == model.OrderCancelled {
 			return fmt.Errorf("%w: %s is already voided", ErrInvalidState, order.OrderCode)
 		}
+		// Same lock order as a sale: customer, then the drawer. The drawer
+		// lock (shared) makes a shift close wait for this void - or this
+		// void wait for the close, and then see the shift as closed below.
+		if order.UserID != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", *order.UserID).Find(&[]model.User{}).Error; err != nil {
+				return err
+			}
+		}
+		if order.PaymentMethod == model.PaymentCash {
+			if err := lockDrawerShared(tx); err != nil {
+				return err
+			}
+		}
 		now := s.now()
 		if order.CreatedAt.In(Bangkok).Format("2006-01-02") != now.In(Bangkok).Format("2006-01-02") {
 			return fmt.Errorf("%w: only today's sales can be voided", ErrInvalidState)
@@ -716,6 +847,13 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 	return view, err
 }
 
+// saleKindSQL classifies an order line (aliases i = order_items, o =
+// orders, p = products) as 'rental', 'equipment' or 'food' by what the
+// product was when sold - the line's snapshot, or the product for rows
+// from before snapshots. Takes two args: OrderEquipmentRent, ProductEquipment.
+const saleKindSQL = "CASE WHEN o.type = ? OR COALESCE(i.is_rental, p.is_rental) THEN 'rental' " +
+	"WHEN COALESCE(i.category, p.category) = ? THEN 'equipment' ELSE 'food' END"
+
 // OrderTotals is the counter-sales part of the day's drawer report.
 type OrderTotals struct {
 	Cash           float64 `json:"orders_cash"`
@@ -747,7 +885,9 @@ func (s *POSService) TotalsBetween(ctx context.Context, from, to time.Time) (*Or
 		Kind  string
 		Total float64
 	}
-	if err := db.Raw("SELECT CASE WHEN o.type = ? OR p.is_rental THEN 'rental' WHEN p.category = ? THEN 'equipment' ELSE 'food' END AS kind, "+
+	// Each line by what the product was when sold (snapshot on the line;
+	// rows from before the snapshot existed fall back to the product).
+	if err := db.Raw("SELECT "+saleKindSQL+" AS kind, "+
 		"COALESCE(SUM(i.qty * i.unit_price), 0) AS total FROM order_items i JOIN orders o ON o.id = i.order_id "+
 		"LEFT JOIN products p ON p.id = i.product_id WHERE o.created_at >= ? AND o.created_at < ? AND o.status <> ? GROUP BY 1",
 		model.OrderEquipmentRent, model.ProductEquipment, from, to, model.OrderCancelled).Scan(&byKind).Error; err != nil {

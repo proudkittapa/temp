@@ -40,7 +40,7 @@ func TestPct(t *testing.T) {
 }
 
 func TestBangkokDay(t *testing.T) {
-	from, to, err := bangkokDay("2026-10-20")
+	from, to, err := BangkokDay("2026-10-20")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestBangkokDay(t *testing.T) {
 	if to.Sub(from).Hours() != 24 {
 		t.Errorf("day is %v long", to.Sub(from))
 	}
-	if _, _, err := bangkokDay("20/10/2026"); !errors.Is(err, ErrInvalidBooking) {
+	if _, _, err := BangkokDay("20/10/2026"); !errors.Is(err, ErrInvalidBooking) {
 		t.Errorf("bad date accepted: %v", err)
 	}
 }

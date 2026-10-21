@@ -88,7 +88,7 @@ func pct(part, whole float64) float64 {
 }
 
 func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard, error) {
-	from, to, err := bangkokDay(date)
+	from, to, err := BangkokDay(date)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		Kind  string
 		Total float64
 	}
-	if err := db.Raw("SELECT CASE WHEN o.type = ? OR p.is_rental THEN 'rental' WHEN p.category = ? THEN 'equipment' ELSE 'food' END AS kind, "+
+	if err := db.Raw("SELECT "+saleKindSQL+" AS kind, "+
 		"COALESCE(SUM(i.qty * i.unit_price), 0) AS total FROM order_items i JOIN orders o ON o.id = i.order_id "+
 		"LEFT JOIN products p ON p.id = i.product_id WHERE o.status <> ? GROUP BY 1",
 		model.OrderEquipmentRent, model.ProductEquipment, model.OrderCancelled).Scan(&split).Error; err != nil {
@@ -249,41 +249,29 @@ func (s *ReportService) MonthReport(ctx context.Context, month string) (*MonthRe
 	}
 	me := ms.AddDate(0, 1, 0)
 	db := s.db.WithContext(ctx)
+	from, to := ms.Format("2006-01-02"), me.Format("2006-01-02")
+	// The whole month - an export must not silently drop rows.
 	var bookings []model.Booking
-	if err := db.Where("date >= ? AND date < ?", ms.Format("2006-01-02"), me.Format("2006-01-02")).
-		Order("date, start_time, court_id").Limit(20000).Find(&bookings).Error; err != nil {
+	if err := db.Where("date >= ? AND date < ?", from, to).
+		Order("date, start_time, court_id").Find(&bookings).Error; err != nil {
 		return nil, err
 	}
 	bookings = normalizeDates(bookings)
 
-	// A group's payment hangs off one of its rows: map every row of the
-	// month's groups to its booking code, then each code to its payment.
-	codes := map[string]bool{}
-	for _, b := range bookings {
-		codes[b.BookingCode] = true
+	// A group's payment hangs off one of its rows: fetch the payments of
+	// the month's groups with their booking code in one query (no
+	// thousands-long IN lists).
+	var payments []struct {
+		model.Payment
+		Code string
 	}
-	codeList := make([]string, 0, len(codes))
-	for c := range codes {
-		codeList = append(codeList, c)
+	if err := db.Raw("SELECT p.*, b.booking_code AS code FROM payments p JOIN bookings b ON b.id = p.booking_id "+
+		"WHERE b.date >= ? AND b.date < ? ORDER BY p.created_at", from, to).Scan(&payments).Error; err != nil {
+		return nil, err
 	}
 	payByCode := map[string]model.Payment{}
-	if len(codeList) > 0 {
-		var groupRows []model.Booking
-		if err := db.Select("id, booking_code").Where("booking_code IN ?", codeList).Find(&groupRows).Error; err != nil {
-			return nil, err
-		}
-		codeOf := map[string]string{}
-		rowIDs := make([]string, len(groupRows))
-		for i, r := range groupRows {
-			codeOf[r.ID], rowIDs[i] = r.BookingCode, r.ID
-		}
-		var payments []model.Payment
-		if err := db.Where("booking_id IN ?", rowIDs).Order("created_at").Find(&payments).Error; err != nil {
-			return nil, err
-		}
-		for _, p := range payments {
-			payByCode[codeOf[p.BookingID]] = p // latest wins
-		}
+	for _, p := range payments {
+		payByCode[p.Code] = p.Payment // latest wins
 	}
 	var courts []model.Court
 	if err := db.Find(&courts).Error; err != nil {
@@ -304,7 +292,7 @@ func (s *ReportService) MonthReport(ctx context.Context, month string) (*MonthRe
 			out.Bookings[i].RefundAmount = p.RefundAmount
 		}
 	}
-	if out.Orders, err = s.pos.ListOrders(ctx, ms, me); err != nil {
+	if out.Orders, err = s.pos.ListOrders(ctx, ms, me, 0); err != nil {
 		return nil, err
 	}
 	return out, nil

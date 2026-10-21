@@ -183,9 +183,41 @@ func (t *LoginThrottle) Succeeded(ctx context.Context, identity, ip string) erro
 	return t.store.clear(ctx, []string{pair, acct})
 }
 
-// Prune forgets failures older than the window; main calls it every minute.
+// Sign-ups per IP: each account may hold unpaid bookings, so mass sign-ups
+// from one source could block courts.
+const (
+	signupWindow    = time.Hour
+	maxSignupsPerIP = 10
+)
+
+// BeginSignup counts a sign-up attempt from ip (successful or not, so it
+// also slows down probing which phones are registered) and reports how long
+// to wait when the limit is reached; a refused attempt isn't counted.
+func (t *LoginThrottle) BeginSignup(ctx context.Context, ip string) (time.Duration, error) {
+	now := t.now().Truncate(time.Microsecond) // see BeginAccount
+	key := hashKey("signup", ip)
+	if err := t.store.record(ctx, []string{key}, now); err != nil {
+		return 0, err
+	}
+	times, err := t.store.since(ctx, key, now.Add(-signupWindow))
+	if err != nil {
+		return 0, err
+	}
+	if len(times) <= maxSignupsPerIP {
+		return 0, nil
+	}
+	wait := times[len(times)-1-maxSignupsPerIP].Add(signupWindow).Sub(now)
+	return wait, t.store.remove(ctx, []string{key}, now)
+}
+
+// Prune forgets attempts older than the longest window (the sign-up
+// hour; login limits only look back t.window); main calls it every minute.
 func (t *LoginThrottle) Prune(ctx context.Context) error {
-	return t.store.prune(ctx, t.now().Add(-t.window))
+	keep := t.window
+	if signupWindow > keep {
+		keep = signupWindow
+	}
+	return t.store.prune(ctx, t.now().Add(-keep))
 }
 
 // ---- database store ----

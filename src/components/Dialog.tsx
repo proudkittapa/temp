@@ -18,14 +18,15 @@ export interface DialogOptions {
 
 export interface DialogResult { text: string; choice?: string; checked: boolean }
 
-interface Pending { opts: DialogOptions; resolve: (r: DialogResult | null) => void }
+interface Pending { id: number; opts: DialogOptions; resolve: (r: DialogResult | null) => void }
 
 const queue: Pending[] = [];
+let nextId = 1;
 let wake: (() => void) | null = null;
 
 export function dialog(opts: DialogOptions): Promise<DialogResult | null> {
   return new Promise(resolve => {
-    queue.push({ opts, resolve });
+    queue.push({ id: nextId++, opts, resolve });
     wake?.();
   });
 }
@@ -51,12 +52,6 @@ export async function askText(message: string, opts: { title?: string; defaultVa
 
 export function DialogHost() {
   const [current, setCurrent] = useState<Pending | null>(null);
-  const [text, setText] = useState('');
-  const [choice, setChoice] = useState<string | undefined>();
-  const [checked, setChecked] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const okRef = useRef<HTMLButtonElement>(null);
-
   const [tick, setTick] = useState(0);
   useEffect(() => {
     wake = () => setTick(t => t + 1);
@@ -68,28 +63,60 @@ export function DialogHost() {
     if (!current && queue.length) setCurrent(queue.shift()!);
   }, [tick, current]);
 
-  useEffect(() => {
-    if (!current) return;
-    setText(current.opts.input?.defaultValue ?? '');
-    setChoice(current.opts.choices?.[0]?.value);
-    setChecked(!!current.opts.checkbox?.defaultChecked);
-    setTimeout(() => (current.opts.input ? inputRef.current : okRef.current)?.focus(), 0);
-  }, [current]);
-
   if (!current) return null;
-  const { opts } = current;
+  // Keyed per dialog: each one starts with its own fresh answer state.
+  return <DialogBox key={current.id} pending={current} onDone={() => setCurrent(null)} />;
+}
+
+function DialogBox({ pending, onDone }: { pending: Pending; onDone: () => void; key?: number }) {
+  const { opts } = pending;
+  const [text, setText] = useState(opts.input?.defaultValue ?? '');
+  const [choice, setChoice] = useState<string | undefined>(opts.choices?.[0]?.value);
+  const [checked, setChecked] = useState(!!opts.checkbox?.defaultChecked);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const okRef = useRef<HTMLButtonElement>(null);
+
   const blocked = !!opts.input?.required && !text.trim();
   const close = (result: DialogResult | null) => {
-    current.resolve(result);
-    setCurrent(null); // the effect above shows the next one
+    pending.resolve(result);
+    onDone(); // the host shows the next one
   };
   const submit = () => { if (!blocked) close({ text, choice, checked }); };
   const cancel = () => close(opts.cancelLabel === null ? { text: '', checked: false } : null);
 
+  // Focus moves into the dialog and comes back to whatever opened it.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    (opts.input ? inputRef.current : okRef.current)?.focus();
+    return () => { opener?.focus?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Escape works wherever focus is, and Tab stays inside the dialog, so
+  // Enter can't press a button on the page behind it.
+  const cancelRef = useRef(cancel);
+  cancelRef.current = cancel;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); cancelRef.current(); return; }
+      if (e.key !== 'Tab' || !boxRef.current) return;
+      const items = Array.from(boxRef.current.querySelectorAll('input, button:not([disabled])')) as HTMLElement[];
+      if (!items.length) return;
+      const first = items[0], last = items[items.length - 1];
+      const inside = boxRef.current.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-900/50 flex items-center justify-center p-4" onKeyDown={e => { if (e.key === 'Escape') cancel(); }}>
-      <div id="app-dialog" role="dialog" aria-modal="true" className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4 text-sm text-slate-800">
-        {opts.title && <h3 className="font-bold text-base">{opts.title}</h3>}
+    <div className="fixed inset-0 z-[100] bg-slate-900/50 flex items-center justify-center p-4">
+      <div ref={boxRef} id="app-dialog" role="dialog" aria-modal="true" aria-labelledby={opts.title ? 'app-dialog-title' : undefined} aria-describedby="app-dialog-message"
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4 text-sm text-slate-800">
+        {opts.title && <h3 id="app-dialog-title" className="font-bold text-base">{opts.title}</h3>}
         <p id="app-dialog-message" className="whitespace-pre-line leading-relaxed max-h-[50vh] overflow-y-auto">{opts.message}</p>
         {opts.input && (
           <label className="block space-y-1">

@@ -20,7 +20,7 @@ func NewDayOffHandler(dayOffs *service.DayOffService) *DayOffHandler {
 // GET /api/v1/days-off?from=YYYY-MM-DD&to=YYYY-MM-DD - public, so booking
 // grids can show closed slots. from defaults to today; to is optional.
 func (h *DayOffHandler) List(c *gin.Context) {
-	from := c.DefaultQuery("from", time.Now().In(service.Bangkok).Format("2006-01-02"))
+	from := c.DefaultQuery("from", today())
 	to := c.Query("to")
 	for _, d := range []string{from, to} {
 		if d == "" {

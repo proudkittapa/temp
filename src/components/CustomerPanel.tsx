@@ -4,7 +4,7 @@ import {
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayOff,
   User, UserRole, LedgerEntryType
 } from '../types';
-import { StorageService, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openingHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime } from '../mockData';
+import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime } from '../mockData';
 import * as api from '../api';
 import { notify, ask } from './Dialog';
 import DemoLogins, { DEMO_CUSTOMERS } from './DemoLogins';
@@ -13,7 +13,7 @@ import { QRCodeSVG } from 'qrcode.react';
 // How long an online booking waits for its slip before the backend cancels
 // it (service.PaymentHoldDuration in the Go backend).
 const PAYMENT_HOLD_MINUTES = 30;
-import { Calendar, Clock, CreditCard, CheckCircle, AlertTriangle, MessageSquare, ToggleRight, Trash2, Shield, Phone, FileImage, Sparkles, UserCheck } from 'lucide-react';
+import { Calendar, CheckCircle, AlertTriangle, MessageSquare, ToggleRight, Shield, FileImage, Sparkles, UserCheck } from 'lucide-react';
 
 interface CustomerPanelProps {
   onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
@@ -79,7 +79,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   
   // Interaction Form state
   const [selectedType, setSelectedType] = useState<CourtType>(CourtType.BADMINTON);
-  const [selectedCourtId, setSelectedCourtId] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedSlots, setSelectedSlots] = useState<{ courtId: string; startTime: string }[]>([]);
 
@@ -109,9 +108,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const [openCourts, setOpenCourts] = useState<Record<string, boolean>>({});
   
   const [memberName, setMemberName] = useState<string>('');
-  const [memberPhone, setMemberPhone] = useState<string>('');
-  const [memberType, setMemberType] = useState<MemberType>(MemberType.NORMAL);
-  const [orgName, setOrgName] = useState<string>('');
 
   // Customer Authed account state
   const [loggedInUser, setLoggedInUser] = useState<User | null>(null);
@@ -120,13 +116,23 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   const [authPassword, setAuthPassword] = useState<string>('');
   const [authName, setAuthName] = useState<string>('');
   const [authPhone, setAuthPhone] = useState<string>('');
-  const [authMemberType, setAuthMemberType] = useState<MemberType>(MemberType.NORMAL);
-  const [authOrgName, setAuthOrgName] = useState<string>('');
   const [forgotResult, setForgotResult] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   // UI state
   const [activeStep, setActiveStep] = useState<number>(1); // 1: Select Slot, 2: Info & Checkout, 3: QR Payment & Upload Slip
+
+  // One action at a time (booking, slip upload, redeem): a double tap on a
+  // slow phone must not send it twice. Wraps the button handlers; `busy`
+  // greys the buttons.
+  const busyRef = React.useRef(false);
+  const [busy, setBusy] = useState(false);
+  const guarded = <A extends unknown[]>(fn: (...args: A) => unknown) => async (...args: A) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try { await fn(...args); } finally { busyRef.current = false; setBusy(false); }
+  };
 
   // Moving between steps scrolls the booking area into view - on a phone the
   // account box above it would otherwise hide the new step.
@@ -148,7 +154,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     return () => clearInterval(t);
   }, [activeStep]);
   const [qrCodePayload, setQrCodePayload] = useState<string>('');
-  const [slipFile, setSlipFile] = useState<string>(''); // simulation base64/url
   const [showLineSimulator, setShowLineSimulator] = useState<boolean>(false);
   const [bookingSuccessAlert, setBookingSuccessAlert] = useState<string | null>(null);
   const [daysOff, setDaysOff] = useState<DayOff[]>([]);
@@ -197,15 +202,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     if (currentCust) {
       setLoggedInUser(currentCust);
       setMemberName(currentCust.name);
-      setMemberPhone(currentCust.phone || '');
-      setMemberType(currentCust.memberType || MemberType.NORMAL);
-      setOrgName(currentCust.orgName || '');
     } else {
       setLoggedInUser(null);
       setMemberName('');
-      setMemberPhone('');
-      setMemberType(MemberType.NORMAL);
-      setOrgName('');
     }
 
     // In API mode courts/bookings/payments are fetched by the effect below.
@@ -225,7 +224,22 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   // API mode: load courts, the selected date's bookings (for availability)
   // and the customer's own bookings+payments (for history) from the backend.
   const [apiError, setApiError] = useState<string | null>(null);
+  // API mode: the date whose bookings are on screen. Until it matches the
+  // chosen date the grid would show the previous date's bookings as free
+  // hours, so it waits.
+  const [loadedDate, setLoadedDate] = useState<string>('');
+  const gridLoading = api.USE_BACKEND && loadedDate !== selectedDate;
   const loggedInUserId = loggedInUser?.id;
+  // API calls use the stored session; another tab may have signed in as
+  // someone else since this page loaded. Checked before booking or
+  // spending, so nothing is done for the wrong account.
+  const sessionStillMine = () => {
+    if (!api.USE_BACKEND || !loggedInUser) return true;
+    if (api.getSession('customer')?.user.id === loggedInUser.id) return true;
+    notify('บัญชีที่เข้าสู่ระบบเปลี่ยนไปแล้ว (อาจเข้าสู่ระบบจากแท็บอื่น) — กำลังโหลดข้อมูลใหม่ กรุณาลองอีกครั้ง');
+    onRefreshAll();
+    return false;
+  };
   // Only the signed-in customer's own messages (the store holds everyone's).
   const myLineMessages = loggedInUser
     ? lineMessages.filter(m => normalizePhone(m.recipientPhone) === normalizePhone(loggedInUser.phone || ''))
@@ -242,29 +256,40 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         if (cancelled) return;
         if (loggedInUserId && !me) {
           setLoggedInUser(null);
+          clearCustomerScreen();
           setAuthError('⏰ เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
           return; // loggedInUserId changes, so this effect re-runs logged out
         }
         if (me) setLoggedInUser(me);
 
+        // What the grid needs must all arrive; the extras (rewards, vouchers,
+        // the price preview's pricing cache) may fail on their own without
+        // leaving the grid on the previous date's bookings.
         // syncPricingCache refreshes the pricing the price preview reads, so
         // it shows what the server will actually charge.
-        const [apiCourts, dayBookings, mine, closures, , rewards, vouchers] = await Promise.all([
-          api.listCourts(),
-          api.listBookingsByDate(selectedDate),
-          me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
-          api.listDaysOff(selectedDate, selectedDate),
+        const extras = Promise.allSettled([
           api.syncPricingCache(),
           api.listRewards(),
           me ? api.myVouchers() : Promise.resolve([] as api.VoucherInfo[])
         ]);
+        const [apiCourts, dayBookings, mine, closures] = await Promise.all([
+          api.listCourts(),
+          api.listBookingsByDate(selectedDate),
+          me ? api.listMyBookings() : Promise.resolve({ bookings: [], payments: [] }),
+          api.listDaysOff(selectedDate, selectedDate)
+        ]);
+        const [, rewards, vouchers] = await extras;
         if (cancelled) return;
-        setApiRewards(rewards.map(r => ({ id: r.id, name: r.name, cost: r.pointsCost, description: '', emoji: r.emoji })));
-        setRedemptions(vouchers.map(v => ({
-          id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId,
-          rewardName: `${v.rewardEmoji} ${v.rewardName}`, pointsSpent: v.pointsSpent, claimCode: v.code,
-          redeemedAt: formatDate(v.createdAt)
-        })));
+        if (rewards.status === 'fulfilled') {
+          setApiRewards(rewards.value.map(r => ({ id: r.id, name: r.name, cost: r.pointsCost, description: '', emoji: r.emoji })));
+        }
+        if (vouchers.status === 'fulfilled') {
+          setRedemptions(vouchers.value.map(v => ({
+            id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId,
+            rewardName: `${v.rewardEmoji} ${v.rewardName}`, pointsSpent: v.pointsSpent, claimCode: v.code,
+            redeemedAt: formatDate(v.createdAt)
+          })));
+        }
         setDaysOff(closures);
         // The customer's own rows carry their details; prefer them over the
         // copies in the by-date list.
@@ -272,6 +297,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
         setCourts(apiCourts);
         setBookings([...dayBookings.filter(b => !mineById.has(b.id)), ...mine.bookings]);
         setPayments(mine.payments);
+        setLoadedDate(selectedDate);
         setApiError(null);
       } catch (err) {
         if (!cancelled) setApiError(err instanceof Error ? err.message : String(err));
@@ -283,7 +309,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   // Customer Auth Function Handlers
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    loginWith(authEmail, authPassword);
+    return loginWith(authEmail, authPassword);
   };
 
   // Shared by the login form and the dev-only demo account buttons.
@@ -292,7 +318,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setForgotResult(null);
 
     if (api.USE_BACKEND) {
-      api.login('customer', identity, password)
+      return api.login('customer', identity, password)
         .then(user => {
           if (user.role !== UserRole.CUSTOMER) {
             api.logout('customer');
@@ -306,7 +332,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           onRefreshAll();
         })
         .catch(err => setAuthError(`❌ ${err.message}`));
-      return;
     }
 
     const allUsers = StorageService.get<User[]>('users', []);
@@ -355,7 +380,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     }
 
     if (api.USE_BACKEND) {
-      api.register({ name: authName, email: authEmail, phone: authPhone, password: authPassword })
+      return api.register({ name: authName, email: authEmail.trim(), phone: authPhone, password: authPassword })
         .then(user => {
           setLoggedInUser(user);
           setAuthEmail('');
@@ -366,7 +391,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           notify('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
         })
         .catch(err => setAuthError(`❌ ${err.message}`));
-      return;
     }
 
     const allUsers = StorageService.get<User[]>('users', []);
@@ -407,8 +431,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setAuthPassword('');
     setAuthName('');
     setAuthPhone('');
-    setAuthMemberType(MemberType.NORMAL);
-    setAuthOrgName('');
     
     onRefreshAll();
     notify('🎉 สมัครสมาชิกก๊วนและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" (สามารถติดต่อเจ้าหน้าที่สตาฟ ณ ร้านเพื่อยืนยันหลักฐานรับสิทธิ์ส่วนลดพิเศษได้ภายหลังค่ะ) 🌟');
@@ -446,12 +468,26 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     onAddAuditLog('CUSTOMER_PASSWORD_RECOVERY_TRIGGERED', 'User', foundUser.id, null, null);
   };
 
+  // Nothing of this customer's session (picks, booking code, QR) is left on
+  // screen for the next person on a shared device.
+  const clearCustomerScreen = () => {
+    setActiveStep(1);
+    setSelectedSlots([]);
+    setCurrentBooking(null);
+    setCurrentPayment(null);
+    setQrCodePayload('');
+    setBookingSuccessAlert(null);
+    setBookings([]);
+    setPayments([]);
+    setRedemptions([]);
+  };
+
   const handleLogout = () => {
     onAddAuditLog('CUSTOMER_LOGOUT', 'User', loggedInUser?.id || '', null, null);
     localStorage.removeItem('sports_complex_current_logged_in_customer');
     api.logout('customer');
     setLoggedInUser(null);
-    setActiveStep(1);
+    clearCustomerScreen();
     onRefreshAll();
   };
 
@@ -479,19 +515,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     notify('🗑️ ดำเนินการลบบัญชีของคุณออกจากเซิร์ฟเวอร์เรียบร้อยแล้วค่ะ หวังว่าจะมีโอกาสได้กลับมาบริการท่านอีกครั้งนะคะ ขอบคุณค่ะ');
   };
 
-  // Set default court when court type changes
-  // Keyed on the court ids, not the array: every refresh re-fetches the
-  // courts, and that must not wipe the hours the customer has picked.
+  // Picked hours are dropped when the court list really changes (a court
+  // added or closed). Keyed on the ids, not the array: every refresh
+  // re-fetches the courts, and that must not wipe the customer's picks.
   const courtIdsKey = courts.map(c => c.id).join(',');
   useEffect(() => {
-    const matchedCourts = courts.filter(c => c.type === selectedType);
-    if (matchedCourts.length > 0) {
-      setSelectedCourtId(matchedCourts[0].id);
-    } else {
-      setSelectedCourtId('');
-    }
     setSelectedSlots([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedType, courtIdsKey]);
 
   const handleCourtTypeChange = (type: CourtType) => {
@@ -500,16 +529,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
   };
 
   // Slots within the opening hours (admin setting, default 07:00-23:00)
-  const getAvailableSlots = () => {
-    const hours = [];
-    const { open, close } = openingHours();
-    for (let h = open; h < close; h++) {
-      const start = h.toString().padStart(2, '0') + ':00';
-      const end = (h + 1).toString().padStart(2, '0') + ':00';
-      hours.push({ start, end, hourNum: h });
-    }
-    return hours;
-  };
+  const getAvailableSlots = () => openSlotHours().map(start => {
+    const hourNum = parseInt(start, 10);
+    return { start, end: `${String(hourNum + 1).padStart(2, '0')}:00`, hourNum };
+  });
 
 
   // Helper to get Price Information inside layout
@@ -519,72 +542,19 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     let original = 0;
     const currentEffectiveMemberType = loggedInUser ? (loggedInUser.memberType || MemberType.NORMAL) : MemberType.NORMAL;
     selectedSlots.forEach(s => {
-      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, courts.find(c => c.id === s.courtId));
+      const court = courts.find(c => c.id === s.courtId);
+      const detail = calculatePrice(selectedType, selectedDate, s.startTime, currentEffectiveMemberType, court);
       total = roundBaht(total + detail.total);
-      original = roundBaht(original + detail.original);
+      // "Before discount" = this court's own price for a normal customer
+      // (calculatePrice's `original` is the full-court rate, which made a
+      // half court look discounted).
+      original = roundBaht(original + calculatePrice(selectedType, selectedDate, s.startTime, MemberType.NORMAL, court).total);
     });
     return {
       total,
       original,
       priceType: PriceType.NORMAL
     };
-  };
-
-  const handleToggleSlot = (startTime: string) => {
-    if (!loggedInUser) {
-      notify('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ระบบ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน จึงจะสามารถเลือกสนามและช่วงเวลาสำหรับจองเล่นกีฬาได้ค่ะ 🌟');
-      const consoleElem = document.getElementById('customer-auth-console');
-      if (consoleElem) {
-        consoleElem.scrollIntoView({ behavior: 'smooth' });
-      }
-      return;
-    }
-    const existsIdx = selectedSlots.findIndex(s => s.courtId === selectedCourtId && s.startTime === startTime);
-    if (existsIdx > -1) {
-      setSelectedSlots(selectedSlots.filter((_, i) => i !== existsIdx));
-    } else {
-      // Constraint 1: max 3 hours total per booking
-      if (selectedSlots.length >= 3) {
-        notify('คุณสามารถจองได้สูงสุดไม่เกิน 3 ชั่วโมง (3 สล็อต) ต่อการจอง 1 ครั้งค่ะ');
-        return;
-      }
-      
-      // Constraint 2: max 3 unique courts per booking
-      const currentCourts = selectedSlots.map(s => s.courtId);
-      const uniqueCourts = new Set([...currentCourts, selectedCourtId]);
-      if (uniqueCourts.size > 3) {
-        notify('คุณสามารถเลือกสนามได้ไม่เกิน 3 สนาม ต่อการจอง 1 ครั้งค่ะ');
-        return;
-      }
-
-      // Check slot double booking
-      const isSlotOccupied = bookings.some(
-        b => b.courtId === selectedCourtId &&
-             b.date === selectedDate &&
-             b.startTime === startTime &&
-             b.status !== BookingStatus.CANCELLED
-      );
-
-      if (isSlotOccupied) {
-        notify('ขออภัยค่ะ! ช่วงเวลานี้ถูกผู้อื่นจองไปแล้ว กรุณาเลือกเวลาอื่น');
-        return;
-      }
-
-      // Check Special DayOff block
-      const hourNum = parseInt(startTime.split(':')[0], 10);
-      const blockedItem = daysOff.find(
-        d => d.date === selectedDate && 
-             (d.courtId === 'all' || d.courtId === selectedCourtId) &&
-             (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hourNum >= d.startHour && hourNum < d.endHour))
-      );
-
-      if (blockedItem) {
-        notify(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
-        return;
-      }
-
-      setSelectedSlots([...selectedSlots, { courtId: selectedCourtId, startTime }]);
-    }
   };
 
   const handleToggleSlotInGrid = (courtId: string, startTime: string) => {
@@ -650,11 +620,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
       // Check Special DayOff block
       const hourNum = parseInt(startTime.split(':')[0], 10);
-      const blockedItem = daysOff.find(
-        d => d.date === selectedDate && 
-             (d.courtId === 'all' || d.courtId === courtId) &&
-             (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hourNum >= d.startHour && hourNum < d.endHour))
-      );
+      const blockedItem = findClosure(daysOff, selectedDate, courtId, hourNum);
 
       if (blockedItem) {
         notify(`ขออภัยค่ะ! สนามปิดให้บริการในช่วงเวลานี้ชั่วคราว \nสาเหตุ: "${blockedItem.reason}"\nกรุณาเลือกรอบเวลาอื่นหรือสนามกีฬาอื่นค่ะ`);
@@ -674,14 +640,14 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     // them and issues the voucher in one transaction.
     if (api.USE_BACKEND) {
       if (!(await ask(`ใช้ ${reward.cost} แต้ม แลก "${reward.emoji} ${reward.name}"?`, { title: '🎁 แลกแต้ม', okLabel: 'แลกเลย' }))) return;
-      api.redeemReward(reward.id)
+      if (!sessionStillMine()) return;
+      return api.redeemReward(reward.id)
         .then(v => {
           onAddAuditLog('LOYALTY_POINT_REDEEMED', 'User', loggedInUser.id, null, { gift: v.rewardName, voucherCode: v.code });
           notify(`🎉 แลกรางวัลสำเร็จ!\nรหัสรับของรางวัล: ${v.code}\nแสดงรหัสนี้ที่เคาน์เตอร์ภายในวันที่ ${formatDate(v.expiresAt)}`);
           onRefreshAll();
         })
         .catch(err => notify(`แลกรางวัลไม่สำเร็จ: ${err.message}`));
-      return;
     }
 
     // The stored balance, not the copy taken at sign-in.
@@ -692,12 +658,19 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     }
 
     if (!(await ask(`ใช้ ${reward.cost} แต้ม แลก "${reward.emoji} ${reward.name}"?`, { title: '🎁 แลกแต้ม', okLabel: 'แลกเลย' }))) return;
+    // Re-read after the question: the balance may have changed meanwhile.
+    const balanceNow = StorageService.get<User[]>('users', []).find(u => u.id === loggedInUser.id)?.points ?? 0;
+    if (balanceNow < reward.cost) {
+      notify(`แต้มไม่พอแล้ว (ต้องการ ${reward.cost} แต้ม มี ${balanceNow} แต้ม)`);
+      onRefreshAll();
+      return;
+    }
 
     // Deduct through the points ledger, like every other points change.
     const claimCode = `RW-${String(Math.floor(100000 + Math.random() * 900000))}`;
     const voucherId = 'voucher-' + Date.now();
     StorageService.addLedgerEntry(loggedInUser.id, LedgerEntryType.REDEEM, -reward.cost, loggedInUser.id, { refType: 'Voucher', refId: voucherId, note: reward.name });
-    const newPoints = currentPoints - reward.cost;
+    const newPoints = balanceNow - reward.cost;
     const updatedUser = { ...loggedInUser, points: newPoints };
     setLoggedInUser(updatedUser);
 
@@ -719,10 +692,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setRedemptions(updatedVouchers);
 
     // Add Audit Log
-    onAddAuditLog('LOYALTY_POINT_REDEEMED', 'User', loggedInUser.id, { pointsBefore: currentPoints }, { pointsAfter: newPoints, gift: reward.name, voucherCode: claimCode });
+    onAddAuditLog('LOYALTY_POINT_REDEEMED', 'User', loggedInUser.id, { pointsBefore: balanceNow }, { pointsAfter: newPoints, gift: reward.name, voucherCode: claimCode });
 
     // Send Line simulated notification
-    const cleanPhone = (loggedInUser.phone || '').replace(/[^0-9]/g, '');
+    const cleanPhone = normalizePhone(loggedInUser.phone || '');
     const lpMsg = `🎁 แลกรับสิทธิ์ของรางวัลสำเร็จ!\n🏆 คุณได้ใช้แต้มสะสมจำนวน -${reward.cost} แต้ม เพื่อแลกรับรางวัล "${reward.emoji} ${reward.name}"\n🔑 รหัสเคลมของรางวัล (Claim Code): ${claimCode}\n\n*โปรดแสดงรหัสสิทธิ์นี้ให้สตาฟเห็นเพื่อรับของรางวัลทันทีที่เคาน์เตอร์ขอบสนามค่ะ! 🎉`;
     
     // Call the pushMessage simulator
@@ -770,15 +743,9 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       notify('กรุณาเลือกสนาม และช่วงเวลาต้องการจองอย่างน้อย 1 ชั่วโมง!');
       return;
     }
-    // Verify slot double-booking for all selected
-    const occupied = selectedSlots.find(s => 
-      bookings.some(b => 
-        b.courtId === s.courtId &&
-        b.date === selectedDate &&
-        b.startTime === s.startTime &&
-        b.status !== BookingStatus.CANCELLED
-      )
-    );
+    // Taken meanwhile? Checks the whole court group (a half court blocks
+    // the full court and vice versa), as the server does.
+    const occupied = selectedSlots.find(s => !isCourtSlotAvailable(s.courtId, selectedDate, s.startTime, bookings, courts));
 
     if (occupied) {
       const cName = courts.find(c => c.id === occupied.courtId)?.name || 'สนาม';
@@ -789,7 +756,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setActiveStep(2);
   };
 
-  const handleBookingSubmit = (e: React.FormEvent) => {
+  const handleBookingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loggedInUser) {
       notify('🔒 กรุณาลงชื่อเข้าใช้ระบบก่อนค่ะ!');
@@ -801,10 +768,11 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     }
 
     if (api.USE_BACKEND) {
+      if (!sessionStillMine()) return;
       // The server prices every slot itself (member discount, half-court
       // rate) and books them all-or-nothing, so the shown total is only a
       // preview - the response's amounts are what get stored and paid.
-      api.createBookings(selectedDate, selectedSlots)
+      return api.createBookings(selectedDate, selectedSlots)
         .then(group => {
           setCurrentBooking(group.bookings[0]);
           setCurrentPayment(group.payment);
@@ -816,7 +784,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           }).join('\n');
           triggerLineNotification(
             `✅ รับคำขอจองแล้ว (${group.bookings.length} รายการ)\n📋 รหัสจองกลุ่ม: ${group.bookingCode}\n📅 วันที่: ${selectedDate}\nรายละเอียด:\n${breakdown}\n💰 ยอดที่ต้องชำระทั้งหมด: ${formatBaht(group.totalAmount)} บาท\n\nกรุณาชำระและอัปโหลด slip ภายใน 30 นาที หากไม่ชำระระบบจะยกเลิกออโต้`,
-            (loggedInUser.phone || '').replace(/[^0-9]/g, ''), memberName, "CREATED"
+            normalizePhone(loggedInUser.phone || ''), memberName, "CREATED"
           );
           setBookingSuccessAlert(`สร้างรายการจองรวม ${group.bookings.length} รายการสำเร็จ รหัสกลุ่มคือ ${group.bookingCode} แล้ว! กรุณาชำระเงินและอัพโหลดสลิป`);
           onRefreshAll();
@@ -825,11 +793,34 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           notify(`ขออภัยค่ะ จองไม่สำเร็จ: ${err.message}`);
           onRefreshAll(); // reload availability - someone may have taken the slot
         });
-      return;
+    }
+
+    // Browser-only mode: the server's checks, on fresh data - the customer
+    // may have waited on step 2 while someone else booked or the hour began.
+    const freshBookings = StorageService.get<Booking[]>('bookings', []);
+    const freshClosures = StorageService.get<DayOff[]>('days_off', []);
+    for (const sl of selectedSlots) {
+      const cName = courts.find(c => c.id === sl.courtId)?.name || 'สนาม';
+      if (!isCourtSlotAvailable(sl.courtId, selectedDate, sl.startTime, freshBookings, courts)) {
+        notify(`${cName} ${sl.startTime} เพิ่งถูกจองไป กรุณาเลือกเวลาอื่น`);
+        setActiveStep(1);
+        onRefreshAll();
+        return;
+      }
+      if (slotTiming(selectedDate, sl.startTime).started) {
+        notify(`${cName} ${sl.startTime} เริ่มไปแล้ว จองออนไลน์ไม่ได้`);
+        setActiveStep(1);
+        return;
+      }
+      if (findClosure(freshClosures, selectedDate, sl.courtId, parseInt(sl.startTime, 10))) {
+        notify(`${cName} ปิดบริการในช่วง ${sl.startTime}`);
+        setActiveStep(1);
+        return;
+      }
     }
 
     const priceInfo = currentPriceDetails();
-    const cleanPhone = (loggedInUser.phone || '').replace(/[^0-9]/g, '');
+    const cleanPhone = normalizePhone(loggedInUser.phone || '');
     const mainBookingId = 'bk-' + Date.now();
     const bkCode = `BK${selectedDate.replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -911,7 +902,6 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     setCurrentBooking(booking);
     setCurrentPayment(payment);
     setQrCodePayload(payment.qrPayload || '');
-    setSlipFile('');
     setActiveStep(3);
     setNowTick(Date.now());
     setTimeout(() => document.getElementById('promptpay-qr-display')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
@@ -921,6 +911,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     if (!currentBooking) return;
 
     if (api.USE_BACKEND) {
+      if (!sessionStillMine()) return;
       // Upload the chosen file; for the sample buttons, fetch the sample
       // image so the backend still receives a real file.
       const getFile: Promise<Blob> = realFile
@@ -929,20 +920,26 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
             if (!r.ok) throw new Error('could not load sample slip image');
             return r.blob();
           });
-      getFile
+      return getFile
         .then(file => api.uploadSlip(currentBooking.id, file, realFile?.name || 'sample-slip.jpg'))
         .then(() => {
-          setSlipFile(realFile ? URL.createObjectURL(realFile) : mockImgUrl);
           setBookingSuccessAlert("ส่งสลิปเรียบร้อยแล้ว! พนักงานจะตรวจสอบและยืนยันการจอง ดูสถานะได้ที่รายการจองด้านล่าง");
           setActiveStep(1);
           setSelectedSlots([]);
           onRefreshAll();
         })
         .catch(err => notify(`ส่งสลิปไม่สำเร็จ: ${err.message}`));
+    }
+
+    // Only a payment still waiting for its money can take a slip (as on the
+    // server) - not a cancelled, approved or refunded one.
+    const target = StorageService.get<Payment[]>('payments', []).find(p => p.bookingId === currentBooking.id);
+    if (!target || ![PaymentStatus.PENDING, PaymentStatus.SLIP_UPLOADED, PaymentStatus.EXPIRED].includes(target.status)) {
+      notify(`รายการนี้ส่งสลิปไม่ได้แล้ว${target ? ` (${target.status})` : ''}`);
+      onRefreshAll();
       return;
     }
 
-    setSlipFile(mockImgUrl);
 
     // Update system states
     const allPayments = StorageService.get<Payment[]>('payments', []);
@@ -991,11 +988,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
     if (matchedBooking) {
       return { kind: 'booked', pending: matchedBooking.status === BookingStatus.PENDING_PAYMENT, mine: !!loggedInUser && matchedBooking.userId === loggedInUser.id };
     }
-    const closure = daysOff.find(
-      d => d.date === selectedDate &&
-           (d.courtId === 'all' || d.courtId === court.id) &&
-           (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hourNum >= d.startHour && hourNum < d.endHour))
-    );
+    const closure = findClosure(daysOff, selectedDate, court.id, hourNum);
     if (closure) return { kind: 'closed', reason: closure.reason };
     // Online, an hour can only be booked before it starts (the server
     // refuses it after - the counter can still sell it).
@@ -1101,7 +1094,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       
       {/* Phones: the selection and the next step stay in reach at the bottom */}
       {isNarrow && activeStep === 1 && selectedSlots.length > 0 && (
-        <div id="mobile-booking-bar" className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center justify-between gap-3">
+        <div id="mobile-booking-bar" className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-3">
           <span>
             <span className="block text-sm font-bold text-slate-900">{selectedSlots.length} ชม. · {formatBaht(currentPriceDetails().total)} บาท</span>
             <button type="button" onClick={() => setSelectedSlots([])} className="text-xs text-rose-600 underline">ล้างที่เลือก</button>
@@ -1233,7 +1226,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       {rewardsCatalog.map(reward => {
                         const canRedeem = (loggedInUser?.points || 0) >= reward.cost;
                         return (
-                          <div key={reward.id} className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 flex justify-between items-center gap-3 hover:border-slate-750 transition">
+                          <div key={reward.id} className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 flex justify-between items-center gap-3 hover:border-slate-700 transition">
                             <div className="space-y-0.5 max-w-[70%]">
                               <span className="text-[11px] font-bold text-slate-100 flex items-center gap-1">
                                 <span className="text-sm leading-none">{reward.emoji}</span>
@@ -1249,11 +1242,12 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                               </span>
                               <button
                                 type="button"
-                                onClick={() => handleRedeemReward(reward)}
+                                disabled={busy}
+                                onClick={guarded(() => handleRedeemReward(reward))}
                                 className={`text-xs font-bold py-1 px-3.5 rounded-md transition duration-200 shadow-sm ${
                                   canRedeem 
                                     ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-extrabold hover:shadow-md hover:brightness-110 active:scale-95 cursor-pointer' 
-                                    : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-755'
+                                    : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-800'
                                 }`}
                               >
                                 {canRedeem ? 'แลกแต้ม' : 'แต้มไม่พอ'}
@@ -1322,7 +1316,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                           <div className="space-y-1.5 font-sans">
                             <div className="flex justify-between items-center text-xs">
                               <span className="text-slate-400 mb-1">ชั่วโมงสนามได้รับก๊วนที่จองสำเร็จ:</span>
-                              <span className="font-bold text-emerald-450 font-mono">{userConfirmedBookings.length} ชม. ({userConfirmedBookings.length} แต้ม)</span>
+                              <span className="font-bold text-emerald-400 font-mono">{userConfirmedBookings.length} ชม. ({userConfirmedBookings.length} แต้ม)</span>
                             </div>
                             
                             <div className="max-h-[80px] overflow-y-auto space-y-1 text-xs">
@@ -1350,7 +1344,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
           ) : (
             /* Anonymous Authed Screen */
             <div className="p-5 md:p-6">
-              <div className="flex items-center gap-2 border-b border-slate-850 pb-3 mb-4">
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-3 mb-4">
                 <Shield className="h-5 w-5 text-emerald-500 shrink-0" />
                 <div>
                   <h3 className="text-xs font-black text-slate-100 uppercase tracking-widest leading-none">ก๊วนผู้เล่น & ส่วนลดอัตโนมัติ (Customer Account Center)</h3>
@@ -1361,7 +1355,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               </div>
 
               {/* Tabs Switcher */}
-              <div className="flex bg-slate-950/60 p-1 rounded-xl w-full border border-slate-850 md:max-w-md mb-4 text-xs">
+              <div className="flex bg-slate-950/60 p-1 rounded-xl w-full border border-slate-800 md:max-w-md mb-4 text-xs">
                 <button
                   onClick={() => { setAuthTab('login'); setAuthError(null); setForgotResult(null); }}
                   className={`flex-1 py-1.5 rounded-lg font-bold text-center transition ${authTab === 'login' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-400 hover:text-white'}`}
@@ -1384,30 +1378,31 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
               {/* Success recover/Error alerts inside Auth UI */}
               {authError && (
-                <div className="bg-rose-950/30 border border-rose-900/40 text-rose-300 p-3 rounded-xl text-xs font-sans mb-4">
+                <div role="alert" className="bg-rose-950/30 border border-rose-900/40 text-rose-300 p-3 rounded-xl text-xs font-sans mb-4">
                   {authError}
                 </div>
               )}
 
               {forgotResult && (
-                <div className="bg-emerald-950/50 border border-emerald-800 text-emerald-350 p-3 rounded-xl text-xs font-sans whitespace-pre-line mb-4 leading-normal">
+                <div className="bg-emerald-950/50 border border-emerald-800 text-emerald-300 p-3 rounded-xl text-xs font-sans whitespace-pre-line mb-4 leading-normal">
                   {forgotResult}
                 </div>
               )}
 
               {/* Tab Form rendering */}
-              <form onSubmit={authTab === 'login' ? handleLogin : authTab === 'register' ? handleRegister : handleForgotPassword} className="space-y-3 font-sans text-xs">
+              <form onSubmit={e => { e.preventDefault(); void guarded(authTab === 'login' ? handleLogin : authTab === 'register' ? handleRegister : handleForgotPassword)(e); }} className="space-y-3 font-sans text-xs">
                 {authTab === 'register' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-slate-400 mb-1">ระบุชื่อเล่นก๊วน / ชื่อจริงผู้ประสานงาน:</label>
+                      <label htmlFor="auth-name" className="block text-xs font-bold text-slate-400 mb-1">ชื่อ (ชื่อเล่น หรือชื่อก๊วน):</label>
                       <input
+                        id="auth-name"
                         type="text"
                         required
                         placeholder="เช่น พี่เหน่ง ก๊วนทุบดิน, สมศักดิ์"
                         value={authName}
                         onChange={(e) => setAuthName(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white placeholder-slate-650 focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-650"
+                        className="w-full text-base sm:text-xs bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white focus:outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
                       />
                     </div>
                     <div className="bg-slate-950/40 p-2.5 rounded-lg border border-slate-800/80 flex flex-col justify-center">
@@ -1420,43 +1415,46 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-400 mb-1">
+                    <label htmlFor="auth-identity" className="block text-xs font-bold text-slate-400 mb-1">
                       {authTab === 'forgot' ? 'ระบุเบอร์โทร หรือ อีเมลที่กู้คืน:' : authTab === 'register' ? 'อีเมล (ไม่บังคับ):' : 'เบอร์โทรศัพท์ หรือ อีเมล:'}
                     </label>
                     <input
+                      id="auth-identity"
                       type={authTab === 'register' ? 'email' : 'text'}
                       required={authTab !== 'register'}
                       placeholder={authTab === 'register' ? 'เช่น user@mail.com' : 'เช่น 0845678901 หรือ user@mail.com'}
                       value={authEmail}
                       onChange={(e) => setAuthEmail(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white focus:outline-none focus:border-emerald-600"
+                      className="w-full text-base sm:text-xs bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white focus:outline-none focus:border-emerald-600"
                     />
                   </div>
 
                   {authTab !== 'forgot' && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-400 mb-1">{authTab === 'register' ? 'ตั้งรหัสผ่าน (อย่างน้อย 6 ตัว):' : 'รหัสผ่าน:'}</label>
+                      <label htmlFor="auth-password" className="block text-xs font-bold text-slate-400 mb-1">{authTab === 'register' ? 'ตั้งรหัสผ่าน (อย่างน้อย 6 ตัว):' : 'รหัสผ่าน:'}</label>
                       <input
+                        id="auth-password"
                         type="password"
                         required
                         placeholder="••••••"
                         value={authPassword}
                         onChange={(e) => setAuthPassword(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white focus:outline-none focus:border-emerald-600"
+                        className="w-full text-base sm:text-xs bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white focus:outline-none focus:border-emerald-600"
                       />
                     </div>
                   )}
 
                   {authTab === 'register' && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-400 mb-1">เบอร์มือถือ (ใช้เข้าสู่ระบบ):</label>
+                      <label htmlFor="auth-phone" className="block text-xs font-bold text-slate-400 mb-1">เบอร์มือถือ (ใช้เข้าสู่ระบบ):</label>
                       <input
+                        id="auth-phone"
                         type="tel"
                         required
                         placeholder="เช่น 08XXXXXXXX"
                         value={authPhone}
                         onChange={(e) => setAuthPhone(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white"
+                        className="w-full text-base sm:text-xs bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-white"
                       />
                     </div>
                   )}
@@ -1554,7 +1552,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     setSelectedDate(e.target.value);
                     setSelectedSlots([]);
                   }}
-                  className="w-full bg-white border border-slate-205 rounded-lg py-2.5 px-3 text-sm text-slate-800 font-bold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 focus:outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-lg py-2.5 px-3 text-base sm:text-sm text-slate-800 font-bold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 focus:outline-none"
                 />
                 <div id="quick-dates" className="flex gap-2 mt-2">
                   {quickDates.map(q => (
@@ -1607,10 +1605,18 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                     </p>
                   )}
 
-                  {viewMode === 'list' && renderCourtList()}
+                  {gridLoading && (
+                    <p id="grid-loading" role="status" className="text-center text-slate-500 py-10 font-bold">
+                      {apiError
+                        ? <>โหลดตารางไม่สำเร็จ <button type="button" onClick={onRefreshAll} className="underline text-emerald-700">ลองใหม่</button></>
+                        : 'กำลังโหลดตารางสนาม...'}
+                    </p>
+                  )}
+
+                  {!gridLoading && viewMode === 'list' && renderCourtList()}
 
                   {/* Grid-based occupancy matrix */}
-                  {viewMode === 'grid' && (
+                  {!gridLoading && viewMode === 'grid' && (
                   <div className="overflow-x-auto border border-slate-200 rounded-xl bg-slate-50/50">
                     <table className="w-full text-left border-collapse min-w-[1100px]">
                       <thead>
@@ -1776,7 +1782,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
               </button>
             </div>
 
-            <form onSubmit={handleBookingSubmit} className="space-y-6">
+            <form onSubmit={e => { e.preventDefault(); void guarded(handleBookingSubmit)(e); }} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-2">ชื่อผู้ติดต่อหลัก (ดึงข้อมูลอัตโนมัติ)</label>
@@ -1845,18 +1851,20 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       const cName = courts.find(c => c.id === s.courtId)?.name || 'สนาม';
                       // The account's tier, as the server prices it (the
                       // memberType field is only the editable form copy).
-                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, loggedInUser?.memberType || MemberType.NORMAL, courts.find(c => c.id === s.courtId));
+                      const court = courts.find(c => c.id === s.courtId);
+                      const detail = calculatePrice(selectedType, selectedDate, s.startTime, loggedInUser?.memberType || MemberType.NORMAL, court);
+                      const before = calculatePrice(selectedType, selectedDate, s.startTime, MemberType.NORMAL, court).total;
                       return (
                         <div key={idx} className="flex justify-between text-slate-600 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 font-medium font-sans">
                           <span>{idx + 1}. {cName} - เวลา {s.startTime} น.</span>
-                          <span className="font-bold text-slate-800">{formatBaht(detail.total)} บาท {detail.original > detail.total && <span className="text-xs text-slate-400 font-normal line-through">({formatBaht(detail.original)}.-)</span>}</span>
+                          <span className="font-bold text-slate-800">{formatBaht(detail.total)} บาท {before > detail.total && <span className="text-xs text-slate-400 font-normal line-through">({formatBaht(before)}.-)</span>}</span>
                         </div>
                       );
                     })}
                   </div>
 
                   <div className="flex justify-between">
-                    <span className="text-slate-500">รวมค่าบริการราคาดิบ:</span>
+                    <span className="text-slate-500">ราคาก่อนส่วนลดสมาชิก:</span>
                     <span className="font-bold text-slate-700">{formatBaht(currentPriceDetails().original)} บาท</span>
                   </div>
 
@@ -1880,9 +1888,10 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                 <button
                   id="btn-customer-booking-confirm"
                   type="submit"
-                  className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold py-2.5 px-6 rounded-lg shadow-sm transition"
+                  disabled={busy}
+                  className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-xs font-bold py-2.5 px-6 rounded-lg shadow-sm transition"
                 >
-                  ยืนยันการจอง และสลับรับ QR Code &rarr;
+                  {busy ? 'กำลังจอง...' : <>ยืนยันการจอง และสลับรับ QR Code &rarr;</>}
                 </button>
               </div>
             </form>
@@ -1969,7 +1978,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       <button
                         key={sIdx}
                         type="button"
-                        onClick={() => handleSlipUploadSimulation(sample.url)}
+                        onClick={guarded(() => handleSlipUploadSimulation(sample.url))}
                         className="w-full flex items-center gap-3 bg-white p-3 rounded-lg border border-slate-200 hover:border-emerald-600 transition hover:bg-slate-50 text-left text-xs"
                       >
                         <FileImage className="h-7 w-7 text-emerald-700" />
@@ -1988,12 +1997,17 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       <input 
                         type="file" 
                         accept="image/*" 
+                        disabled={busy}
                         onChange={(e) => {
-                          if (e.target.files && e.target.files[0]) {
+                          const file = e.target.files?.[0];
+                          // Cleared so choosing the same file again (after a
+                          // failed upload) fires onChange again.
+                          e.target.value = '';
+                          if (file) {
                             // localStorage mode can't keep a real file, so it
                             // records a placeholder image; API mode uploads
                             // the actual file.
-                            handleSlipUploadSimulation("https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=300&q=80", e.target.files[0]);
+                            void guarded(handleSlipUploadSimulation)("https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=300&q=80", file);
                           }
                         }}
                         className="hidden" 
@@ -2018,7 +2032,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                   setActiveStep(1);
                   setSelectedSlots([]);
                 }}
-                className="bg-slate-550 hover:bg-slate-100 text-xs font-bold text-slate-600 py-2 px-4 rounded text-center transition"
+                className="bg-slate-500 hover:bg-slate-100 text-xs font-bold text-slate-600 py-2 px-4 rounded text-center transition"
               >
                 ชำระภายหลัง (กลับมาส่งสลิปได้จากรายการจองด้านล่าง ภายใน {PAYMENT_HOLD_MINUTES} นาที)
               </button>

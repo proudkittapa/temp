@@ -62,6 +62,14 @@ func (e *TooManyAttemptsError) Error() string {
 	return fmt.Sprintf("too many failed logins - try again in %d minutes", int(e.RetryAfter.Minutes())+1)
 }
 
+// TooManySignupsError is returned by Register when one IP has signed up
+// too often in the last hour.
+type TooManySignupsError struct{ RetryAfter time.Duration }
+
+func (e *TooManySignupsError) Error() string {
+	return "too many sign-ups from this network - try again later"
+}
+
 var (
 	dummyHashOnce sync.Once
 	dummyHash     []byte
@@ -92,7 +100,14 @@ type AuthResult struct {
 }
 
 // Register verifies credentials duplicate and inserts a secured password payload
-func (s *AuthService) Register(ctx context.Context, name, email, phone, password string) (*AuthResult, error) {
+func (s *AuthService) Register(ctx context.Context, name, email, phone, password, clientIP string) (*AuthResult, error) {
+	wait, err := s.throttle.BeginSignup(ctx, clientIP)
+	if err != nil {
+		return nil, err
+	}
+	if wait > 0 {
+		return nil, &TooManySignupsError{RetryAfter: wait}
+	}
 	// Stored digits-only, so the same number typed with or without dashes
 	// or spaces is one account, and walk-in lookups by phone find it.
 	phone = repository.NormalizePhone(phone)

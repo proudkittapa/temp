@@ -92,10 +92,45 @@ func TestLoginThrottlePrune(t *testing.T) {
 	th := newLoginThrottle(store)
 	th.now = func() time.Time { return now }
 	fail(th, "a@x.com", "1.1.1.1", 3)
+	// Kept for the longest window (the sign-up hour); logins only look
+	// back 15 minutes, so the rows no longer count against the account.
 	now = now.Add(16 * time.Minute)
+	if w := wait(t, th, "a@x.com", "1.1.1.1"); w != 0 {
+		t.Fatalf("failures older than the login window still count (%v)", w)
+	}
+	now = now.Add(45 * time.Minute)
 	_ = th.Prune(context.Background())
 	if len(store.m) != 0 {
 		t.Fatalf("old failures should be pruned, %d keys left", len(store.m))
+	}
+}
+
+func TestSignupLimitPerIP(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	th := testThrottle(&now)
+	ctx := context.Background()
+	for i := 1; i <= maxSignupsPerIP; i++ {
+		now = now.Add(time.Minute)
+		if w, err := th.BeginSignup(ctx, "2.2.2.2"); err != nil || w != 0 {
+			t.Fatalf("sign-up %d refused (%v, %v)", i, w, err)
+		}
+	}
+	now = now.Add(time.Minute)
+	w, _ := th.BeginSignup(ctx, "2.2.2.2")
+	if w <= 0 || w > signupWindow {
+		t.Fatalf("sign-up %d allowed or wrong wait (%v)", maxSignupsPerIP+1, w)
+	}
+	// Another network is unaffected, and the refused attempt isn't stored.
+	if w, _ := th.BeginSignup(ctx, "3.3.3.3"); w != 0 {
+		t.Fatalf("other IP limited (%v)", w)
+	}
+	if n, _ := th.store.since(ctx, hashKey("signup", "2.2.2.2"), now.Add(-2*signupWindow)); len(n) != maxSignupsPerIP {
+		t.Fatalf("%d sign-ups stored, want %d", len(n), maxSignupsPerIP)
+	}
+	// An hour after the first ones, room again.
+	now = now.Add(signupWindow)
+	if w, _ := th.BeginSignup(ctx, "2.2.2.2"); w != 0 {
+		t.Fatalf("still limited after the window (%v)", w)
 	}
 }
 

@@ -56,6 +56,21 @@ export function logout(kind: SessionKind) {
   saveSession(kind, null);
 }
 
+// Calls back when another tab signs in, out, or as someone else (the token
+// changes). Re-saving the same session - refreshMe does that on every load
+// - doesn't count, or two open tabs would keep waking each other.
+export function onSessionChangedElsewhere(cb: (kind: SessionKind) => void): () => void {
+  const token = (raw: string | null) => {
+    try { return raw ? (JSON.parse(raw) as StoredSession).token : null; } catch { return null; }
+  };
+  const handler = (e: StorageEvent) => {
+    const kind = (['customer', 'staff', 'admin'] as SessionKind[]).find(k => e.key === sessionKey(k));
+    if (kind && token(e.oldValue) !== token(e.newValue)) cb(kind);
+  };
+  window.addEventListener('storage', handler);
+  return () => window.removeEventListener('storage', handler);
+}
+
 // message is in Thai for the screens (see errorText.ts); serverMessage keeps
 // the backend's own English text.
 export class ApiError extends Error {
@@ -85,13 +100,19 @@ async function request<T>(
   try {
     res = await fetch(`${API_BASE_URL}${path}`, { method: opts.method || 'GET', headers, body });
   } catch {
-    throw new ApiError('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (is the Go backend running on :8080?)', 0);
+    throw new ApiError(import.meta.env.DEV
+      ? 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (is the Go backend running on :8080?)'
+      : 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่', 0);
   }
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json.success === false) {
-    // An expired/invalid token: drop it so the UI falls back to logged-out.
-    if (res.status === 401 && opts.session && token) saveSession(opts.session, null);
-    throw new ApiError(json.error || `Request failed (${res.status})`, res.status);
+  let json: { success?: boolean; error?: string; data?: unknown } | null = null;
+  try { json = await res.json(); } catch { /* not JSON - handled below */ }
+  if (!res.ok || !json || json.success === false) {
+    // An expired/invalid token: drop it so the UI falls back to logged-out -
+    // unless the stored session is already a newer one (signed in again,
+    // maybe in another tab, while this request was out).
+    if (res.status === 401 && opts.session && token && getSession(opts.session)?.token === token) saveSession(opts.session, null);
+    // No JSON at all (e.g. a proxy's HTML error page on a 200).
+    throw new ApiError(json?.error || (json ? `Request failed (${res.status})` : 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง กรุณาลองใหม่'), res.status);
   }
   return json.data as T;
 }
@@ -585,15 +606,8 @@ export async function refundPayment(paymentId: string, reason: string, amount?: 
   }));
 }
 
-// Manager/admin: the customer paid this booking in cash at the counter.
-export async function markPaidInCash(paymentId: string): Promise<ReviewResult> {
-  const r = await request<{ booking_code: string; bookings_count: number; points_awarded: number; late?: boolean }>(
-    `/admin/payments/${encodeURIComponent(paymentId)}/mark-cash`, { method: 'POST', session: 'staff' }
-  );
-  return { bookingCode: r.booking_code, bookingsCount: r.bookings_count, pointsAwarded: r.points_awarded, late: r.late };
-}
-
-// The same, by any hour of the booking (what the booking grid has).
+// Manager/admin: the customer paid this booking in cash at the counter
+// (by any hour of the booking - what the booking grid has).
 export async function markBookingPaidInCash(bookingId: string): Promise<ReviewResult> {
   const r = await request<{ booking_code: string; bookings_count: number; points_awarded: number; late?: boolean }>(
     `/admin/bookings/${encodeURIComponent(bookingId)}/mark-cash`, { method: 'POST', session: 'staff' }
@@ -653,9 +667,11 @@ export async function adminListCourts(): Promise<Court[]> {
 }
 
 // Admin: add a standalone court (halfCourt = priced at the half-court rate).
-export async function createCourt(input: { name: string; type: CourtType; halfCourt: boolean }): Promise<Court> {
+// A half court names the full court it is half of (halfOf); the server
+// puts both in one booking group.
+export async function createCourt(input: { name: string; type: CourtType; halfCourt: boolean; halfOf?: string }): Promise<Court> {
   return toCourt(await request<ApiCourt>('/admin/courts', {
-    method: 'POST', session: 'admin', body: { name: input.name, type: input.type, half_court: input.halfCourt }
+    method: 'POST', session: 'admin', body: { name: input.name, type: input.type, half_court: input.halfCourt, half_of: input.halfCourt ? input.halfOf : undefined }
   }));
 }
 
@@ -773,16 +789,23 @@ export interface CheckoutInput {
   customerName?: string;
   customerPhone?: string; // a registered customer's phone earns the points
   courtId?: string;
+  idempotencyKey?: string; // defaults to a fresh one per call
 }
 
 // Staff: sell or rent out. Prices and stock are the server's.
+// One key per sale: if the request is sent again (a retry after a dropped
+// connection), the server returns the first sale instead of making another.
+const newIdempotencyKey = () => typeof crypto !== 'undefined' && crypto.randomUUID
+  ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+
 export async function checkout(input: CheckoutInput): Promise<{ order: OrderWithNames; pointsEarned: number }> {
   const r = await request<{ order: ApiOrder; points_earned: number }>('/pos/order', {
     method: 'POST', session: 'staff',
     body: {
       type: input.type, payment_method: input.paymentMethod, customer_name: input.customerName || '',
       customer_phone: input.customerPhone || '', court_id: input.courtId || undefined,
-      items: input.items.map(i => ({ product_id: i.productId, variant_id: i.variantId, qty: i.qty }))
+      items: input.items.map(i => ({ product_id: i.productId, variant_id: i.variantId, qty: i.qty })),
+      idempotency_key: input.idempotencyKey || newIdempotencyKey()
     }
   });
   return { order: toOrder(r.order), pointsEarned: r.points_earned };
@@ -814,10 +837,6 @@ const productBody = (p: ProductInput) => ({
 
 export async function createProducts(list: ProductInput[]): Promise<Product[]> {
   return (await request<ApiProduct[]>('/admin/products', { method: 'POST', session: 'admin', body: { products: list.map(productBody) } })).map(toProduct);
-}
-
-export async function updateProduct(id: string, p: ProductInput): Promise<Product> {
-  return toProduct(await request<ApiProduct>(`/admin/products/${encodeURIComponent(id)}`, { method: 'PUT', session: 'admin', body: productBody(p) }));
 }
 
 export async function adjustStock(id: string, delta: number, reason: string, variantId?: string): Promise<Product> {

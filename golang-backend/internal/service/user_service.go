@@ -27,6 +27,10 @@ func (s *UserService) GetUserProfile(ctx context.Context, userID string) (*model
 	return s.usrRepo.GetByID(ctx, userID)
 }
 
+// MaxManualPointsChange bounds one manual change, so a typo (or a misused
+// account) can't hand out an unlimited balance.
+const MaxManualPointsChange = 10000
+
 // AdjustUserPoints is a manager/admin's manual points change. A reason is
 // required, only customers hold points, and nobody may change their own
 // balance.
@@ -34,6 +38,9 @@ func (s *UserService) AdjustUserPoints(ctx context.Context, userID string, delta
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return 0, fmt.Errorf("%w: a reason is required for a manual points change", ErrInvalidBooking)
+	}
+	if delta == 0 || delta < -MaxManualPointsChange || delta > MaxManualPointsChange {
+		return 0, fmt.Errorf("%w: points change must be between -%d and %d", ErrInvalidBooking, MaxManualPointsChange, MaxManualPointsChange)
 	}
 	if userID == actorID {
 		return 0, fmt.Errorf("%w: you cannot change your own points", ErrForbidden)

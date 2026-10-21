@@ -79,7 +79,7 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 	}
 	if in.IsFullDay {
 		in.StartHour, in.EndHour = nil, nil
-	} else if in.StartHour == nil || in.EndHour == nil || *in.StartHour < 0 || *in.EndHour > 24 || *in.StartHour >= *in.EndHour {
+	} else if in.StartHour == nil || in.EndHour == nil || !validHourRange(*in.StartHour, *in.EndHour) {
 		return nil, fmt.Errorf("%w: a partial closure needs start_hour < end_hour within 0-24", ErrInvalidBooking)
 	}
 

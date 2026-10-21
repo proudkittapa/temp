@@ -45,6 +45,16 @@ const (
 	BookingNoShow         BookingStatus = "NO_SHOW"
 )
 
+// CancelKind says why a booking row was cancelled. Only rows cancelled by
+// the payment hold running out may be booked again by a late payment -
+// never hours a manager cancelled, a rejected slip, or a refund.
+const (
+	CancelKindExpired      = "EXPIRED"
+	CancelKindStaff        = "STAFF"
+	CancelKindSlipRejected = "SLIP_REJECTED"
+	CancelKindRefunded     = "REFUNDED"
+)
+
 type PaymentMethod string
 
 const (
@@ -87,9 +97,7 @@ const (
 type OrderStatus string
 
 const (
-	OrderPending   OrderStatus = "PENDING"
-	OrderPreparing OrderStatus = "PREPARING"
-	OrderReady     OrderStatus = "READY"
+	OrderPreparing OrderStatus = "PREPARING" // a rental still out
 	OrderDelivered OrderStatus = "DELIVERED"
 	OrderCancelled OrderStatus = "CANCELLED"
 )
@@ -253,8 +261,11 @@ type Booking struct {
 	Notes              *string       `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
 	CreatedBy          string        `json:"created_by" db:"created_by" gorm:"column:created_by"`
 	CancellationReason *string       `json:"cancellation_reason,omitempty" db:"cancellation_reason" gorm:"column:cancellation_reason"`
-	CreatedAt          time.Time     `json:"created_at" db:"created_at" gorm:"column:created_at"`
-	UpdatedAt          time.Time     `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
+	// CancelKind* - set with every cancellation (the reason text is for
+	// people; this is what the code relies on).
+	CancelKind *string   `json:"cancel_kind,omitempty" db:"cancel_kind" gorm:"column:cancel_kind;type:varchar(16)"`
+	CreatedAt  time.Time `json:"created_at" db:"created_at" gorm:"column:created_at"`
+	UpdatedAt  time.Time `json:"updated_at" db:"updated_at" gorm:"column:updated_at"`
 }
 
 // WalkInUserID is Booking.UserID for counter bookings by someone without an
@@ -274,6 +285,10 @@ type Payment struct {
 	// ensurePaymentSlipIndex in main.go) stops the same file being used for
 	// two payments that are still live, i.e. not REJECTED.
 	SlipHash *string `json:"-" db:"slip_hash" gorm:"column:slip_hash"`
+	// SlipReleased: staff rejected this slip, so the same file may be used
+	// for another payment. A slip whose booking was cancelled for any other
+	// reason stays "used" - the money may still be refunded against it.
+	SlipReleased bool `json:"-" db:"slip_released" gorm:"column:slip_released;not null;default:false"`
 	// When the payment hold ran out (status EXPIRED). Kept after a late slip
 	// arrives, which is how staff can tell the slip came in late.
 	ExpiredAt *time.Time `json:"expired_at,omitempty" db:"expired_at" gorm:"column:expired_at"`
@@ -353,6 +368,10 @@ type Order struct {
 	// Set when a manager voids the sale (status CANCELLED).
 	VoidedAt   *time.Time `json:"voided_at,omitempty" db:"voided_at" gorm:"column:voided_at"`
 	VoidReason *string    `json:"void_reason,omitempty" db:"void_reason" gorm:"column:void_reason"`
+	// IdempotencyKey is the client's id for one checkout attempt: a retry or
+	// double submit with the same key returns this order instead of selling
+	// again (unique when set - see ensureIndexes in main.go).
+	IdempotencyKey *string `json:"-" db:"idempotency_key" gorm:"column:idempotency_key;type:varchar(64)"`
 }
 
 // 9. Order Specific Line Item
@@ -367,6 +386,11 @@ type OrderItem struct {
 	ShoeSize   *string    `json:"shoe_size,omitempty" db:"shoe_size" gorm:"column:shoe_size"`       // display copy of the variant label at time of sale
 	ShoeGender *string    `json:"shoe_gender,omitempty" db:"shoe_gender" gorm:"column:shoe_gender"` // display copy of the variant gender at time of sale
 	Notes      *string    `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
+	// What the product was when sold, so editing a product later doesn't
+	// move past sales between food / equipment / rental in reports. Old
+	// rows were back-filled; NULL falls back to the product.
+	Category *ProductCat `json:"-" db:"category" gorm:"column:category"`
+	IsRental *bool       `json:"-" db:"is_rental" gorm:"column:is_rental"`
 }
 
 // 10. Admin Audit Logs Tracer

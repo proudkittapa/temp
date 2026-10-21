@@ -22,7 +22,7 @@ func NewShopHandler(pos *service.POSService, reports *service.ReportService, boo
 	return &ShopHandler{pos: pos, reports: reports, bookings: bookings, shifts: shifts}
 }
 
-func today() string { return time.Now().In(service.Bangkok).Format("2006-01-02") }
+func today() string { return service.BangkokToday() }
 
 // GET /api/v1/staff/products - staff: the active catalog with stock (and
 // shoe sizes). GET /api/v1/admin/products - managers: including inactive.
@@ -152,8 +152,12 @@ func (h *ShopHandler) DaySummary(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	from, _ := time.ParseInLocation("2006-01-02", date, service.Bangkok)
-	orders, err := h.pos.TotalsBetween(c.Request.Context(), from, from.AddDate(0, 0, 1))
+	from, to, err := service.BangkokDay(date) // valid: Summary accepted it
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	orders, err := h.pos.TotalsBetween(c.Request.Context(), from, to)
 	if err != nil {
 		respondError(c, err)
 		return

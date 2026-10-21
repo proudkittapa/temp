@@ -19,38 +19,26 @@ import (
 )
 
 type ArenaHandler struct {
-	authService        *service.AuthService
-	userService        *service.UserService
-	membershipService  *service.MembershipService
-	priceEngineService *service.PriceEngineService
-	paymentService     *service.PaymentService
-	bookingService     *service.BookingService
-	auditLogService    *service.AuditLogService
-	posService         *service.POSService
-	slips              *SlipSigner
+	authService       *service.AuthService
+	userService       *service.UserService
+	membershipService *service.MembershipService
+	bookingService    *service.BookingService
+	slips             *SlipSigner
 }
 
 func NewArenaHandler(
 	authService *service.AuthService,
 	userService *service.UserService,
 	membershipService *service.MembershipService,
-	priceEngineService *service.PriceEngineService,
-	paymentService *service.PaymentService,
 	bookingService *service.BookingService,
-	auditLogService *service.AuditLogService,
-	posService *service.POSService,
 	slips *SlipSigner,
 ) *ArenaHandler {
 	return &ArenaHandler{
-		authService:        authService,
-		userService:        userService,
-		membershipService:  membershipService,
-		priceEngineService: priceEngineService,
-		paymentService:     paymentService,
-		bookingService:     bookingService,
-		auditLogService:    auditLogService,
-		posService:         posService,
-		slips:              slips,
+		authService:       authService,
+		userService:       userService,
+		membershipService: membershipService,
+		bookingService:    bookingService,
+		slips:             slips,
 	}
 }
 
@@ -73,9 +61,13 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 		return
 	}
 
-	result, err := h.authService.Register(c.Request.Context(), input.Name, input.Email, input.Phone, input.Password)
+	result, err := h.authService.Register(c.Request.Context(), input.Name, input.Email, input.Phone, input.Password, c.ClientIP())
 	if err != nil {
-		if errors.Is(err, service.ErrDuplicateUser) {
+		var tooMany *service.TooManySignupsError
+		if errors.As(err, &tooMany) {
+			c.Header("Retry-After", strconv.Itoa(int(tooMany.RetryAfter.Seconds())+1))
+			c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "error": err.Error()})
+		} else if errors.Is(err, service.ErrDuplicateUser) {
 			c.JSON(http.StatusConflict, gin.H{"success": false, "error": err.Error()})
 		} else if errors.Is(err, service.ErrInvalidPhone) || errors.Is(err, service.ErrInvalidRegistration) {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
@@ -138,7 +130,7 @@ func (h *ArenaHandler) GetSlots(c *gin.Context) {
 
 	// "Today" is the complex's day (Bangkok), whatever zone the server runs in.
 	if dateVal == "" {
-		dateVal = time.Now().In(service.Bangkok).Format("2006-01-02")
+		dateVal = today()
 	}
 	if _, err := time.Parse("2006-01-02", dateVal); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "date must be YYYY-MM-DD"})
@@ -269,14 +261,12 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 	}
 	servedURL := slipURLPrefix + fileName
 
-	previous, err := h.bookingService.SaveSlip(c.Request.Context(), payment.ID, servedURL, slipHash, currentUserID(c))
-	if err != nil {
+	// A replaced slip's file is kept: the audit log records the swap, and
+	// the earlier image is the evidence if a customer swaps slips.
+	if _, err := h.bookingService.SaveSlip(c.Request.Context(), payment.ID, servedURL, slipHash, currentUserID(c)); err != nil {
 		_ = os.Remove(filePath) // state changed since the check - don't keep the file
 		respondError(c, err)
 		return
-	}
-	if previous != servedURL {
-		removeSlipFile(previous)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -293,16 +283,6 @@ const (
 	slipDir       = "./uploads/slips"
 	slipURLPrefix = "/uploads/slips/"
 )
-
-// removeSlipFile deletes a previously stored slip by its served URL. Only
-// names inside slipDir are touched.
-func removeSlipFile(servedURL string) {
-	name, ok := strings.CutPrefix(servedURL, slipURLPrefix)
-	if !ok || name == "" || strings.ContainsAny(name, `/\`) {
-		return
-	}
-	_ = os.Remove(filepath.Join(slipDir, name))
-}
 
 // 7. Manual points change (POST /api/v1/admin/users/:id/adjust-points)
 // {"points_delta": 5, "reason": "..."} - manager/admin only.

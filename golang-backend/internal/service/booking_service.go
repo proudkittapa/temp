@@ -34,6 +34,9 @@ var (
 	// ErrSlipChanged: the customer replaced the slip after the staff member
 	// opened it, so their verify/reject decision was about a different image.
 	ErrSlipChanged = errors.New("the customer replaced this slip after you opened it - please review the new slip")
+	// ErrBusy: a transient clash (e.g. no free code after several tries) -
+	// trying again is expected to work.
+	ErrBusy = errors.New("the system was busy - please try again")
 )
 
 const (
@@ -628,7 +631,7 @@ func uniqueBookingCode(tx *gorm.DB, date string) (string, error) {
 			return code, nil
 		}
 	}
-	return "", errors.New("could not allocate a unique booking code, please retry")
+	return "", ErrBusy
 }
 
 // hourSlotEnd validates an "HH:00" start (00:00-23:00) and returns its
@@ -742,7 +745,7 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 			}).Error; err != nil {
 				return err
 			}
-			if _, err := cancelPending(tx, group, reason, now); err != nil {
+			if _, err := cancelPending(tx, group, reason, model.CancelKindExpired, now); err != nil {
 				return err
 			}
 			cancelled = true
@@ -1049,8 +1052,10 @@ func slipAcceptable(p *model.Payment) error {
 // that is still live (anything but REJECTED) is refused, so one transfer
 // can't be presented as payment for several bookings. Only byte-identical
 // files are caught - a re-screenshot of the same slip still needs staff
-// to compare transfer references. Returns the slip URL it replaced, if
-// any, so the caller can delete the old file.
+// to compare transfer references. A slip counts as used until staff reject
+// it (Payment.SlipReleased) - a booking cancelled for another reason keeps
+// its slip, since the money behind it may still be refunded. Returns the
+// slip URL it replaced, if any (the file is kept as evidence).
 func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash, actorID string) (string, error) {
 	var previous string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -1063,7 +1068,7 @@ func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, sli
 		}
 		var reused int64
 		if err := tx.Model(&model.Payment{}).
-			Where("slip_hash = ? AND id <> ? AND status <> ?", slipHash, p.ID, model.PaymentRejected).
+			Where("slip_hash = ? AND id <> ? AND NOT slip_released", slipHash, p.ID).
 			Count(&reused).Error; err != nil {
 			return err
 		}
@@ -1154,14 +1159,21 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 		if err := checkSlipVersion(p, seenSlipAt); err != nil {
 			return err
 		}
-		// Part of it was already sent back: confirming would book the
-		// hours on money the customer no longer paid.
-		if p.RefundAmount > 0 {
-			return fmt.Errorf("%w: %.2f THB of this payment was refunded - cancel or refund the rest instead of approving", ErrInvalidState, p.RefundAmount)
-		}
-
 		group, root, err := s.bookingGroup(tx, p.BookingID)
 		if err != nil {
+			return err
+		}
+		// Without a slip only a counter walk-in can be confirmed (staff saw
+		// the transfer arrive); an online booking needs the customer's slip
+		// - or a manager recording cash.
+		if p.Status == model.PaymentPending && !isWalkIn(root) {
+			return fmt.Errorf("%w: no slip has been uploaded for this booking yet", ErrInvalidState)
+		}
+		// Part of it was already sent back (e.g. one hour of the group was
+		// cancelled with a refund): what is left must still pay for every
+		// hour that would stand, or the hours would be booked on money the
+		// customer no longer paid.
+		if err := coversStandingHours(p, group); err != nil {
 			return err
 		}
 		if err := lockGroupUser(tx, root); err != nil {
@@ -1224,14 +1236,17 @@ func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, se
 			return err
 		}
 		now := s.now()
+		// The slip was judged not to be a real payment, so the file may be
+		// used again (e.g. the right transfer re-sent for a new booking).
 		if err := tx.Model(p).Updates(map[string]interface{}{
 			"status":        model.PaymentRejected,
 			"refund_reason": reason,
+			"slip_released": true,
 			"updated_at":    now,
 		}).Error; err != nil {
 			return err
 		}
-		cancelled, err := cancelPending(tx, group, "Slip rejected: "+reason, now)
+		cancelled, err := cancelPending(tx, group, "Slip rejected: "+reason, model.CancelKindSlipRejected, now)
 		if err != nil {
 			return err
 		}
@@ -1252,16 +1267,18 @@ func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, se
 	return res, err
 }
 
-// cancelPending cancels the group's rows that are still PENDING_PAYMENT.
-func cancelPending(tx *gorm.DB, group []model.Booking, reason string, now time.Time) (int, error) {
+// cancelPending cancels the group's rows that are still PENDING_PAYMENT,
+// recording why (kind: model.CancelKind*).
+func cancelPending(tx *gorm.DB, group []model.Booking, reason, kind string, now time.Time) (int, error) {
 	cancelled := 0
 	for _, b := range group {
 		if b.Status != model.BookingPendingPayment {
 			continue
 		}
-		if err := tx.Model(&model.Booking{}).Where("id = ?", b.ID).Updates(map[string]interface{}{
+		if err := tx.Model(&model.Booking{}).Where("id = ? AND status = ?", b.ID, model.BookingPendingPayment).Updates(map[string]interface{}{
 			"status":              model.BookingCancelled,
 			"cancellation_reason": reason,
+			"cancel_kind":         kind,
 			"updated_at":          now,
 		}).Error; err != nil {
 			return cancelled, err

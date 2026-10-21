@@ -55,6 +55,20 @@ var ErrInsufficientPointsForReward = errors.New("not enough points for this rewa
 // Redeem spends the customer's points on a reward and issues a voucher, in
 // one transaction (the points ledger records the REDEEM entry).
 func (s *RewardService) Redeem(ctx context.Context, userID, rewardID string) (*VoucherView, error) {
+	// vouchers.code is unique: two redemptions drawing the same random code
+	// at once - the loser retries with a new code.
+	for attempt := 0; ; attempt++ {
+		out, err := s.redeemTx(ctx, userID, rewardID)
+		if !repository.IsUniqueViolation(err) {
+			return out, err
+		}
+		if attempt == 2 {
+			return nil, ErrBusy
+		}
+	}
+}
+
+func (s *RewardService) redeemTx(ctx context.Context, userID, rewardID string) (*VoucherView, error) {
 	var out *VoucherView
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var item model.RewardCatalogItem
@@ -118,7 +132,7 @@ func uniqueVoucherCode(tx *gorm.DB) (string, error) {
 			return code, nil
 		}
 	}
-	return "", errors.New("could not allocate a voucher code, please retry")
+	return "", ErrBusy
 }
 
 func (s *RewardService) views(db *gorm.DB, vouchers []model.Voucher, withUser bool) ([]VoucherView, error) {

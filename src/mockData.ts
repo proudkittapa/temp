@@ -5,7 +5,6 @@ import {
   PricingConfig,
   DayType,
   PriceType,
-  OperatingHours,
   User,
   UserRole,
   MemberType,
@@ -21,13 +20,11 @@ import {
   OrderType,
   AuditLog,
   LineMessage,
-  OrderItem,
   MemberDiscountRule,
   PointsLedgerEntry,
   LedgerEntryType,
-  RewardCatalogItem,
-  Voucher,
-  Shift
+  Shift,
+  DayOff
 } from './types';
 
 // Default initial seeds
@@ -89,16 +86,6 @@ const DEFAULT_PRICING_RULES: PricingRule[] = [
   // Meeting Room
   { id: 'p-meet-all', courtType: CourtType.MEETING_ROOM, dayType: DayType.WEEKDAY, startHour: 7, endHour: 23, pricePerHour: 400, priceType: PriceType.NORMAL, label: 'ห้องประชุม ราคาคงที่วันธรรมดา', isActive: true },
   { id: 'p-meet-all-we', courtType: CourtType.MEETING_ROOM, dayType: DayType.WEEKEND, startHour: 7, endHour: 23, pricePerHour: 500, priceType: PriceType.NORMAL, label: 'ห้องประชุม ราคาคงที่เสาร์-อาทิตย์', isActive: true }
-];
-
-const DEFAULT_OPERATING_HOURS: OperatingHours[] = [
-  ...Array.from({ length: 7 }, (_, i) => ({
-    id: `op-${i}`,
-    dayOfWeek: i,
-    openTime: '07:00',
-    closeTime: '23:00',
-    isClosed: false
-  }))
 ];
 
 const DEFAULT_PRODUCTS: Product[] = [
@@ -344,14 +331,6 @@ export const DEFAULT_PRICING_CONFIG: PricingConfig = {
   closeHour: 23
 };
 
-// FR-4.2 rewards catalog.
-export const DEFAULT_REWARDS_CATALOG: RewardCatalogItem[] = [
-  { id: 'rw-water', name: 'น้ำดื่มเย็น', emoji: '🥤', pointsCost: 5, isActive: true },
-  { id: 'rw-energy', name: 'เครื่องดื่มเกลือแร่สปอนเซอร์', emoji: '⚡', pointsCost: 8, isActive: true },
-  { id: 'rw-towel', name: 'เช่าผ้าเย็นสะอาด', emoji: '🧼', pointsCost: 10, isActive: true },
-  { id: 'rw-hour', name: 'สนาม Off-Peak ฟรี 1 ชั่วโมง', emoji: '🏸', pointsCost: 25, isActive: true },
-];
-
 // State manager for localStorage
 export class StorageService {
   static get<T>(key: string, defaultValue: T): T {
@@ -431,10 +410,6 @@ export class StorageService {
     if (hours <= 0) return 0;
     return this.addLedgerEntry(userId, LedgerEntryType.EARN_BOOKING, hours, 'system', { note: `${hours}h confirmed booking` });
   }
-
-  static clear(): void {
-    localStorage.clear();
-  }
 }
 
 // Pricing Helper Calculation
@@ -448,17 +423,18 @@ export function getDayType(dateStr: string): DayType {
   return (day === 0 || day === 6) ? DayType.WEEKEND : DayType.WEEKDAY;
 }
 
-export function isHourOffPeak(courtType: CourtType, dateStr: string, hourNum: number): boolean {
+// The active pricing rule for a court type at an hour - the rules double as
+// opening hours (no rule = closed), as on the server.
+function findPricingRule(courtType: CourtType, dateStr: string, hour: number): PricingRule | undefined {
   const pricingRules = StorageService.get<PricingRule[]>('pricing_rules', DEFAULT_PRICING_RULES);
   const dayType = getDayType(dateStr);
-  const rule = pricingRules.find(
-    r => r.courtType === courtType &&
-         r.dayType === dayType &&
-         hourNum >= r.startHour &&
-         hourNum < r.endHour &&
-         r.isActive
-  );
-  return rule ? rule.priceType === PriceType.OFFPEAK : true;
+  return pricingRules.find(r => r.courtType === courtType && r.dayType === dayType && hour >= r.startHour && hour < r.endHour && r.isActive);
+}
+
+// Off-peak by the hour's pricing rule. An hour no rule covers is closed, so
+// it is not off-peak (it used to count as off-peak, unlike the server).
+export function isHourOffPeak(courtType: CourtType, dateStr: string, hourNum: number): boolean {
+  return findPricingRule(courtType, dateStr, hourNum)?.priceType === PriceType.OFFPEAK;
 }
 
 // A court is the "hub" of its mutex group when it represents the whole
@@ -588,6 +564,14 @@ export function memberTierLabel(memberType: MemberType | undefined): string {
 // owner and date and are paid by one payment (attached to the first row).
 // Same rule as the backend's bookingGroup, which also matches owner and date
 // so a code collision can never pull in someone else's booking.
+// The closure covering `courtId` at `hour` on `date`, if any: an
+// all-courts or this-court closure, full day or that hour range. The same
+// rule as the server's repository.ClosureFor; every screen uses this one.
+export function findClosure(daysOff: DayOff[], date: string, courtId: string, hour: number): DayOff | undefined {
+  return daysOff.find(d => d.date === date && (d.courtId === 'all' || d.courtId === courtId) &&
+    (d.isFullDay || d.isFullDay === undefined || (d.startHour !== undefined && d.endHour !== undefined && hour >= d.startHour && hour < d.endHour)));
+}
+
 export function bookingGroupOf(root: Booking, bookings: Booking[]): Booking[] {
   return bookings.filter(b => b.bookingCode === root.bookingCode && b.userId === root.userId && b.date === root.date);
 }
@@ -599,8 +583,6 @@ export function calculatePrice(
   memberType: MemberType = MemberType.NORMAL,
   court?: Pick<Court, 'shareOfGroup'>
 ): { total: number; original: number; priceType: PriceType; discountMessage?: string; isOpen: boolean } {
-  const pricingRules = StorageService.get<PricingRule[]>('pricing_rules', DEFAULT_PRICING_RULES);
-  const dayType = getDayType(dateStr);
   const hour = parseInt(startHourStr.split(':')[0], 10);
   const { open, close } = openingHours();
   if (!(hour >= open && hour < close)) {
@@ -611,13 +593,7 @@ export function calculatePrice(
   // hours, exactly as on the server (SlotQuoter.Quote): an hour no active
   // rule covers is closed, not priced at some fallback rate the server
   // would refuse to book.
-  const rule = pricingRules.find(
-    r => r.courtType === courtType &&
-         r.dayType === dayType &&
-         hour >= r.startHour &&
-         hour < r.endHour &&
-         r.isActive
-  );
+  const rule = findPricingRule(courtType, dateStr, hour);
   if (!rule) {
     return { total: 0, original: 0, priceType: PriceType.NORMAL, discountMessage: '', isOpen: false };
   }
@@ -739,7 +715,6 @@ export function initializeState() {
     StorageService.set('courts', DEFAULT_COURTS);
     StorageService.set('pricing_rules', DEFAULT_PRICING_RULES);
     StorageService.set('pricing_config', DEFAULT_PRICING_CONFIG);
-    StorageService.set('operating_hours', DEFAULT_OPERATING_HOURS);
     StorageService.set('products', DEFAULT_PRODUCTS);
     StorageService.set('users', DEFAULT_USERS);
     StorageService.set('bookings', DEFAULT_BOOKINGS());
@@ -748,8 +723,6 @@ export function initializeState() {
     StorageService.set('audit_logs', DEFAULT_AUDIT_LOGS());
     StorageService.set('line_messages', DEFAULT_LINE_MESSAGES());
     StorageService.set('member_discounts', DEFAULT_MEMBER_DISCOUNTS);
-    StorageService.set('rewards_catalog', DEFAULT_REWARDS_CATALOG);
-    StorageService.set('vouchers', [] as Voucher[]);
     StorageService.set('points_ledger', [] as PointsLedgerEntry[]);
     StorageService.set('shifts', [] as Shift[]);
     StorageService.set('init', 'true');
@@ -759,11 +732,7 @@ export function initializeState() {
     const courts = StorageService.get<Court[]>('courts', []);
     if (!courts.some(c => c.mutexGroupId === 'bball-court-1')) {
       const filtered = courts.filter(c => c.type !== CourtType.BASKETBALL);
-      filtered.push(
-        { id: 'b_full_a', name: 'สนามบาสเกตบอล A (เต็มสนาม)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 1, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-        { id: 'b_half_b', name: 'สนามบาสเกตบอล B (ครึ่งสนาม: ซ้าย)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' },
-        { id: 'b_half_c', name: 'สนามบาสเกตบอล C (ครึ่งสนาม: ขวา)', type: CourtType.BASKETBALL, mutexGroupId: 'bball-court-1', shareOfGroup: 0.5, offPeakOnly: true, isActive: true, createdAt: '2026-01-01T00:00:00.000Z' }
-      );
+      filtered.push(...DEFAULT_COURTS.filter(c => c.type === CourtType.BASKETBALL));
       StorageService.set('courts', filtered.map(c => ({ ...c, shareOfGroup: c.shareOfGroup ?? 1 })));
     }
     // Migration check for member_discounts
@@ -773,12 +742,6 @@ export function initializeState() {
     // Migrations for entities added by the loyalty ledger / vouchers / shifts / pricing config redesign
     if (!localStorage.getItem('sports_complex_pricing_config')) {
       StorageService.set('pricing_config', DEFAULT_PRICING_CONFIG);
-    }
-    if (!localStorage.getItem('sports_complex_rewards_catalog')) {
-      StorageService.set('rewards_catalog', DEFAULT_REWARDS_CATALOG);
-    }
-    if (!localStorage.getItem('sports_complex_vouchers')) {
-      StorageService.set('vouchers', [] as Voucher[]);
     }
     if (!localStorage.getItem('sports_complex_points_ledger')) {
       StorageService.set('points_ledger', [] as PointsLedgerEntry[]);

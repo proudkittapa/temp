@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -17,12 +18,21 @@ var allowedSlipExt = map[string]string{"jpg": "jpg", "jpeg": "jpg", "png": "png"
 
 const maxSlipBytes = 5 << 20
 
+// Messages for errors that aren't the client's to read in detail.
+const (
+	msgBusy     = "the system was busy - please try again"
+	msgInternal = "internal server error - please try again"
+)
+
 // respondError maps service sentinel errors to HTTP status codes so clients
 // can tell "slot taken" (409) from "bad input" (400) from a server fault.
+// An unrecognised error is a server fault: it is logged here and the client
+// gets a generic message (the text may hold SQL, constraint or driver
+// details).
 func respondError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
-	if repository.IsRetryableConflict(err) {
-		c.JSON(http.StatusConflict, gin.H{"success": false, "error": "the system was busy with the same booking - please try again"})
+	if repository.IsRetryableConflict(err) || errors.Is(err, service.ErrBusy) {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": msgBusy})
 		return
 	}
 	switch {
@@ -42,6 +52,11 @@ func respondError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrLatePaymentSlotGone), errors.Is(err, service.ErrInsufficientPointsForReward),
 		errors.Is(err, service.ErrVoucherNotUsable), errors.Is(err, service.ErrOutOfStock):
 		status = http.StatusConflict
+	}
+	if status == http.StatusInternalServerError {
+		log.Printf("ERROR %s %s: %v", c.Request.Method, c.FullPath(), err)
+		c.JSON(status, gin.H{"success": false, "error": msgInternal})
+		return
 	}
 	c.JSON(status, gin.H{"success": false, "error": err.Error()})
 }

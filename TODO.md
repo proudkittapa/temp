@@ -6,6 +6,9 @@ Each needs a yes/no from the owner before it is built.
 - [ ] **Blind cash count:** staff see the expected drawer total before counting. Hide it until the counted amount is entered?
 - [ ] **Manager permissions vs. REQUIREMENTS.md:** what managers may do with manual point changes and the dashboard differs from the spec. Which is right - the app or the spec?
 - [ ] **Basketball closure:** a closure on the full court doesn't block half courts B/C (and vice versa). Should a closure cover the whole court group?
+- [ ] **Voiding a sale whose points were already spent:** the points come back only as far as the balance allows (a customer who bought, earned 25 points and redeemed them keeps the reward). Refuse such voids, cancel the reward, or allow a negative balance?
+- [ ] **Cash refunds and the drawer:** refunds are treated as bank transfers (the shift's expected cash ignores them). If staff ever refund cash from the drawer, the shift must subtract them.
+- [ ] **Login lockout policy:** 20 wrong passwords from anywhere lock an account for 15 minutes (someone who knows a staff phone number can keep it locked). Keep, or switch to a delay/CAPTCHA? Behind a proxy, `TRUSTED_PROXIES` must be set (the server now warns in release mode).
 - [ ] **Business details:** the real business name and PromptPay account name for the payment screen and receipts (the payment screen now just says "check the recipient name in your banking app"). See also item 5.
 
 ## 1. LINE Login — sign in with LINE *or* phone number
@@ -47,3 +50,13 @@ Each needs a yes/no from the owner before it is built.
 ## 6. Test the features
 - [ ] Add items 1–5 to `TESTING_CHECKLIST.md` and run through the whole checklist on real phones (iOS + Android, inside the LINE app and in a normal browser).
 - [ ] Scan the PromptPay QR with at least two Thai banking apps.
+
+## 7. Smaller improvements found in the 2026-10-21 code review (not done)
+- [ ] Day summary: split refunds by method and count only refunds of money counted as received.
+- [ ] Backend concurrency tests on a real Postgres (verify vs cancel, expiry vs slip upload, void vs shift close) and an automatic retry of deadlock/serialization errors instead of "busy, try again".
+- [ ] Database backstop against double booking: a partial unique index on (court_id, date, start_time) for non-cancelled rows, behind the existing locks.
+- [ ] Receipts show the print time and the viewer as cashier, not when/by whom the money was taken.
+- [ ] Reports year picker covers last/this/next year only.
+- [ ] Excel import: show a preview of parsed rows before saving; read files with `readAsArrayBuffer`.
+- [ ] Rental security deposit (FR-5.3) is not modelled.
+- [ ] Tidy-ups: drop `export` from symbols used only inside their file (api.ts, mockData.ts, Dialog.tsx); `bangkokNow` and `localDateOf` each build their own date formatter.

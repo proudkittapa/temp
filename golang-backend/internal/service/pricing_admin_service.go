@@ -68,7 +68,7 @@ func validateRule(r *model.PricingRule) error {
 	// Rules decide which hours each sport is open inside the opening hours
 	// (PricingConfig.OpenHour/CloseHour); a rule outside them is kept but
 	// books nothing until the hours are widened.
-	case r.StartHour < 0 || r.EndHour > 24 || r.StartHour >= r.EndHour:
+	case !validHourRange(r.StartHour, r.EndHour):
 		return fmt.Errorf("%w: start_hour must be before end_hour, within 00:00-24:00", ErrInvalidBooking)
 	// A free hour would produce a 0.00 THB PromptPay QR, which banking
 	// apps reject.
@@ -180,13 +180,17 @@ func (s *PricingAdminService) UpdateMemberDiscount(ctx context.Context, d model.
 		}).Error; err != nil {
 			return err
 		}
-		return s.audit(tx, actorID, actorName, "MEMBER_DISCOUNT_UPDATED", "PricingRule", string(d.MemberType), existing, d)
+		return s.audit(tx, actorID, actorName, "MEMBER_DISCOUNT_UPDATED", "MemberDiscount", string(d.MemberType), existing, d)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &d, nil
 }
+
+// validHourRange: [start, end) is a non-empty range of whole hours within
+// one day - pricing rules, opening hours and partial closures.
+func validHourRange(start, end int) bool { return start >= 0 && end <= 24 && start < end }
 
 // MaxAdvanceDaysLimit bounds PricingConfig.MaxAdvanceDays.
 const MaxAdvanceDaysLimit = 365
@@ -203,7 +207,10 @@ func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent
 	}
 	var cfg model.PricingConfig
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&cfg, "id = ?", "global").Error; err != nil {
+		// Locked: two admins saving at once each change their own fields,
+		// and Save writes every column - unlocked, the second would put
+		// back the first one's old values.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cfg, "id = ?", "global").Error; err != nil {
 			return err
 		}
 		before := cfg
@@ -219,7 +226,7 @@ func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent
 		if closeHour != nil {
 			cfg.CloseHour = *closeHour
 		}
-		if cfg.OpenHour < 0 || cfg.CloseHour > 24 || cfg.OpenHour >= cfg.CloseHour {
+		if !validHourRange(cfg.OpenHour, cfg.CloseHour) {
 			return fmt.Errorf("%w: opening hours must satisfy 0 <= open_hour < close_hour <= 24", ErrInvalidBooking)
 		}
 		if err := tx.Save(&cfg).Error; err != nil {
