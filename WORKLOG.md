@@ -18,6 +18,19 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Visual feature guide (docs/features.html)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `74fcdfa`)
+- **Changed (docs only):** one self-contained Thai HTML page for first-time
+  users: features by role (customer, counter staff, manager, admin), the
+  customer booking flow, rules the system enforces, a who-can-do-what
+  table and what's coming. Open the file in a browser. Update it when
+  features change.
+- **Verified:** n/a (docs).
+
+---
+
 ## 2026-10-21 — Member search with +66; Excel read as ArrayBuffer
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
