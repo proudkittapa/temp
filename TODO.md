@@ -152,20 +152,21 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] **Phone lookups use a regex over every user row** (`repository/user.go` canonicalPhoneSQL: login, register, walk-in, checkout): normalise all stored phones once (merge duplicates), then compare `phone = ?`; split login's email-OR-phone into two indexed queries.
 - [ ] **Retry protection (idempotency):** the checkout key is new on every attempt (`api.ts` checkout, StaffPOS) so it protects nothing - keep one key per cart until success. Add the same key to partial refunds, reward redeem, manual points/stock adjust, walk-in and online booking create (replay on unique violation).
 - [ ] **Live refresh:** slip queue, the selected date's bookings and the customer's payment screen poll every 10-15 s while the page is visible and refetch on focus (today nothing updates until a click). Payment screen should follow the server status (expired / approved).
-- [ ] **Walk-in grid shows the previous date's bookings while loading** (StaffPOS) - copy CustomerPanel's `loadedDate` gate; disable cell actions until loaded.
+- [x] Walk-in grid while loading another date: now shows "กำลังโหลด…", greyed and not clickable, and booking is refused until that date's data is in (it used to show every slot free). Done 2026-10-21.
 - [ ] **Customers download the staff/admin app** (one 436 KB gzip bundle, ~70% xlsx + recharts): lazy-load StaffPOS/AdminPanel, `await import('xlsx')` in the Excel handlers, charts in a lazy component.
-- [ ] **`index.html`:** `lang="th"` and a real title (now "My Google AI Studio App"); demo users/passwords (`DEFAULT_USERS`) are in the production bundle - gate behind browser-only mode.
+- [x] `index.html`: `lang="th"`, real title and description. Done 2026-10-21.
+- [ ] Demo users/passwords (`DEFAULT_USERS`) are in the production bundle - gate behind browser-only mode.
 
 ### Scaling to 2+ servers
 - [ ] Slip images are on the server's own disk - move to shared storage (S3/GCS or a shared volume) before a second server.
 - [ ] Background jobs run in every server - elect one with `pg_try_advisory_lock` per tick; batch `CompleteFinishedBookings`.
 - [ ] Startup migrations/indexes run unlocked - wrap in one advisory lock or run as a one-shot job.
-- [ ] Cash-drawer attribution uses each server's clock (and `ReturnRentalItem` takes its time before the drawer lock): stamp `shift_id` on payments/orders/deposit settlements under the drawer lock and compute expected cash by shift.
+- [ ] Cash-drawer attribution uses each server's clock (`ReturnRentalItem` now takes its time after the drawer lock - fixed 2026-10-21): stamp `shift_id` on payments/orders/deposit settlements under the drawer lock and compute expected cash by shift.
 
 ### Correctness
 - [ ] Booking cancel-with-refund takes back only the points left (clamped at 0) - rewards bought with them are kept; reuse VoidOrder's voucher clawback.
-- [ ] Lock order differs (return vs void: item→order vs order→items; void restocks in line order, checkout sorted; return locks products before the drawer, checkout drawer first) - one documented order everywhere.
-- [ ] `CancelBookings` mutates `refund`/`res` captured outside the retried closure - copy into locals.
+- [x] Lock order: rental return now locks order → item → drawer → stock, void locks its items and restocks in checkout's sorted order. Done 2026-10-21. (MarkPaidInCash drawer-before-closure vs CreateBookings closure-before-drawer is still open; both shared locks, only matters with a queued close + day-off.)
+- [x] `CancelBookings` (and the expiry job's counter) reset per retry attempt. Done 2026-10-21.
 - [ ] `SaveSlip` on an EXPIRED payment doesn't take the user lock, so the unpaid cap can be exceeded; expiry job can starve behind 500 un-expirable rows (keyset paging).
 - [ ] `LockCourtGroupTx` uses a mutex group read before the transaction - re-read after locking the court row.
 - [ ] Database backstops: CHECK `points >= 0`, `stock >= 0`, `refund_amount <= amount`; unique "one open shift"; money columns `numeric(12,2)` instead of float.
@@ -183,4 +184,5 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] Pricing/availability/drawer rules exist in Go and TypeScript - server returns the availability matrix (status, price, reason) and error codes instead of English text matched by ~130 regexes.
 - [ ] Two data modes (110 `USE_BACKEND` branches) - one DataSource interface, or drop browser-only mode for a Docker demo.
 - [ ] Split StaffPOS / AdminPanel / CustomerPanel (2-3.5k lines each) by tab.
-- [ ] Small: token in localStorage + no CSP; slip upload has no client-side type/size check or downscale; CSV formula guard misses leading tab/CR/whitespace; 7-9 px text; unused deps (`@google/genai`, `express`, `dotenv`, `motion`); cash refunds don't reduce the drawer (section 0).
+- [x] Slip upload: type check and downscale to ≤1600 px JPEG when not JPG/PNG/WebP or over 1.5 MB (`src/slipImage.ts`); CSV formula guard covers leading spaces/tab/CR and leaves numbers alone. Done 2026-10-21.
+- [ ] Small: token in localStorage + no CSP; 7-9 px text; unused deps (`@google/genai`, `express`, `dotenv`, `motion`); cash refunds don't reduce the drawer (section 0).

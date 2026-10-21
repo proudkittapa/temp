@@ -5,6 +5,7 @@ import {
   User, UserRole, LedgerEntryType
 } from '../types';
 import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime, businessInfo } from '../mockData';
+import { prepareSlipImage, SlipImageError } from '../slipImage';
 import * as api from '../api';
 import { canUseCounter, canUseSettings } from '../permissions';
 import { notify, ask } from './Dialog';
@@ -920,20 +921,20 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
       // Upload the chosen file; for the sample buttons, fetch the sample
       // image so the backend still receives a real file.
       const getFile: Promise<Blob> = realFile
-        ? Promise.resolve(realFile)
+        ? prepareSlipImage(realFile)
         : fetch(mockImgUrl).then(r => {
             if (!r.ok) throw new Error('could not load sample slip image');
             return r.blob();
           });
       return getFile
-        .then(file => api.uploadSlip(currentBooking.id, file, realFile?.name || 'sample-slip.jpg'))
+        .then(file => api.uploadSlip(currentBooking.id, file, (file as File).name || realFile?.name || 'sample-slip.jpg'))
         .then(() => {
           setBookingSuccessAlert("ส่งสลิปเรียบร้อยแล้ว! พนักงานจะตรวจสอบและยืนยันการจอง ดูสถานะได้ที่รายการจองด้านล่าง");
           setActiveStep(1);
           setSelectedSlots([]);
           onRefreshAll();
         })
-        .catch(err => notify(`ส่งสลิปไม่สำเร็จ: ${err.message}`));
+        .catch(err => notify(err instanceof SlipImageError ? err.message : `ส่งสลิปไม่สำเร็จ: ${err.message}`));
     }
 
     // Only a payment still waiting for its money can take a slip (as on the
@@ -2003,7 +2004,7 @@ export default function CustomerPanel({ onAddAuditLog, triggerRefresh, onRefresh
                       <FileImage className="h-4 w-4 mr-1.5" /> เลือกรูปสลิปจากเครื่อง
                       <input 
                         type="file" 
-                        accept="image/*" 
+                        accept="image/jpeg,image/png,image/webp,image/heic,image/*"
                         disabled={busy}
                         onChange={(e) => {
                           const file = e.target.files?.[0];

@@ -427,6 +427,11 @@ func (s *POSService) replayCheckout(ctx context.Context, key string) (*CheckoutR
 // lineLockKey orders product/variant row locks the same way in every
 // checkout, so two carts holding the same items in a different order can't
 // deadlock.
+// itemLockKey is lineLockKey for a saved order line.
+func itemLockKey(l model.OrderItem) string {
+	return lineLockKey(POSOrderItemInput{ProductID: l.ProductID, VariantID: l.VariantID})
+}
+
 func lineLockKey(in POSOrderItemInput) string {
 	if in.VariantID != nil {
 		return in.ProductID + "|" + *in.VariantID
@@ -708,8 +713,11 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID string, keep f
 	}
 	var view *OrderView
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		// Lock order: the order, then its item, then the drawer, then stock -
+		// the same as VoidOrder (order -> items) and checkout (drawer ->
+		// products), so a return racing a void or a sale can't deadlock.
 		var item model.OrderItem
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ?", itemID).Error; err != nil {
+		if err := tx.First(&item, "id = ?", itemID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound
 			}
@@ -717,6 +725,9 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID string, keep f
 		}
 		var order model.Order
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ?", item.OrderID).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ?", itemID).Error; err != nil {
 			return err
 		}
 		if order.Type != model.OrderEquipmentRent {
@@ -728,6 +739,32 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID string, keep f
 		}
 		if item.ReturnedAt != nil {
 			return fmt.Errorf("%w: already returned on %s", ErrInvalidState, item.ReturnedAt.In(Bangkok).Format("2006-01-02 15:04"))
+		}
+		// Is this the last item out? Then it settles the deposit.
+		var out int64
+		if err := tx.Model(&model.OrderItem{}).Where("order_id = ? AND returned_at IS NULL AND id <> ?", order.ID, item.ID).Count(&out).Error; err != nil {
+			return err
+		}
+		settle := out == 0 && order.DepositAmount > 0 && order.DepositSettledAt == nil
+		if keep > 0 && !settle {
+			return fmt.Errorf("%w: the deposit is settled when the last item comes back", ErrInvalidBooking)
+		}
+		back := 0.0
+		if settle {
+			if keep > order.DepositAmount {
+				return fmt.Errorf("%w: at most %.2f THB of the deposit can be kept", ErrInvalidBooking, order.DepositAmount)
+			}
+			if keep > 0 && note == "" {
+				return fmt.Errorf("%w: say why the deposit is kept", ErrInvalidBooking)
+			}
+			back = RoundBaht(order.DepositAmount - keep)
+			// Cash out of the drawer: needs an open shift, and the time is
+			// taken after the lock so it lands in exactly one shift.
+			if back > 0 {
+				if err := lockDrawerForCash(tx); err != nil {
+					return err
+				}
+			}
 		}
 		now := s.now()
 		if err := tx.Model(&item).Update("returned_at", now).Error; err != nil {
@@ -741,32 +778,12 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID string, keep f
 				return err
 			}
 		}
-		var out int64
-		if err := tx.Model(&model.OrderItem{}).Where("order_id = ? AND returned_at IS NULL", order.ID).Count(&out).Error; err != nil {
-			return err
-		}
 		if out == 0 {
 			if err := tx.Model(&model.Order{}).Where("id = ? AND status = ?", order.ID, model.OrderPreparing).Update("status", model.OrderDelivered).Error; err != nil {
 				return err
 			}
 		}
-		settle := out == 0 && order.DepositAmount > 0 && order.DepositSettledAt == nil
-		if keep > 0 && !settle {
-			return fmt.Errorf("%w: the deposit is settled when the last item comes back", ErrInvalidBooking)
-		}
 		if settle {
-			if keep > order.DepositAmount {
-				return fmt.Errorf("%w: at most %.2f THB of the deposit can be kept", ErrInvalidBooking, order.DepositAmount)
-			}
-			if keep > 0 && note == "" {
-				return fmt.Errorf("%w: say why the deposit is kept", ErrInvalidBooking)
-			}
-			back := RoundBaht(order.DepositAmount - keep)
-			if back > 0 {
-				if err := lockDrawerForCash(tx); err != nil {
-					return err
-				}
-			}
 			upd := map[string]any{"deposit_returned": back, "deposit_kept": keep, "deposit_settled_at": now}
 			if note != "" {
 				upd["deposit_note"] = note
@@ -851,10 +868,13 @@ func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, ac
 				return fmt.Errorf("%w: %s was paid in a shift that is already closed - it can't be voided now", ErrInvalidState, order.OrderCode)
 			}
 		}
+		// Items locked (order -> items, as ReturnRentalItem) and restocked in
+		// the order checkout locks stock in, so a void can't deadlock a sale.
 		var lines []model.OrderItem
-		if err := tx.Where("order_id = ?", order.ID).Find(&lines).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("order_id = ?", order.ID).Order("id").Find(&lines).Error; err != nil {
 			return err
 		}
+		sort.Slice(lines, func(i, j int) bool { return itemLockKey(lines[i]) < itemLockKey(lines[j]) })
 		for _, l := range lines {
 			if l.ReturnedAt != nil {
 				continue // a returned rental item is already back in stock

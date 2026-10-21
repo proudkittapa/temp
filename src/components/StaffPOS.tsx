@@ -55,6 +55,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [posGridSportType, setPosGridSportType] = useState<CourtType>(CourtType.BADMINTON);
   const [walkinCourtId, setWalkinCourtId] = useState<string>('');
   const [walkinDate, setWalkinDate] = useState<string>('');
+  // API mode: the date whose bookings are loaded. Until it matches
+  // walkinDate the grid would show every slot free, so it waits.
+  const [loadedDate, setLoadedDate] = useState<string>('');
+  const gridReady = !api.USE_BACKEND || loadedDate === walkinDate;
   const [walkinSlot, setWalkinSlot] = useState<string>('');
   const [walkinName, setWalkinName] = useState<string>('');
   const [walkinPhone, setWalkinPhone] = useState<string>('');
@@ -196,6 +200,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
         setCourts(apiCourts);
         setBookings(dayBookings);
         setDaysOff(closures);
+        setLoadedDate(walkinDate);
       } catch (err) {
         if (!cancelled) setStaffApiError(err instanceof Error ? err.message : String(err));
       }
@@ -350,6 +355,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
     if (pendingWalkin) {
       notify(`กรุณายืนยันหรือยกเลิกรายการ ${pendingWalkin.bookingCode} ที่รอชำระเงินก่อนค่ะ`);
+      return;
+    }
+    if (!gridReady) {
+      notify('กำลังโหลดการจองของวันนี้ กรุณารอสักครู่แล้วลองใหม่');
       return;
     }
     if (slotTiming(walkinDate, walkinSlot).ended) {
@@ -1951,7 +1960,10 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
             </div>
 
             {/* Grid display table */}
-            <div className="overflow-x-auto border border-slate-200 rounded-xl bg-white shadow-inner">
+            {!gridReady && (
+              <p id="staff-grid-loading" role="status" className="text-xs text-slate-500 mb-2">⏳ กำลังโหลดการจองของวันที่เลือก…</p>
+            )}
+            <div className={`overflow-x-auto border border-slate-200 rounded-xl bg-white shadow-inner${gridReady ? '' : ' opacity-40 pointer-events-none'}`} aria-busy={!gridReady}>
               <table className="w-full text-left border-collapse min-w-[1100px]">
                 <thead>
                   <tr className="bg-[#f8fafc] text-[10px] uppercase font-black text-slate-500 border-b border-slate-200">

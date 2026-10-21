@@ -271,13 +271,17 @@ type CancelResult struct {
 // A reason is required and audit-logged. With refund=true the price of the
 // cancelled paid hours is recorded as refunded. Points earned for cancelled
 // confirmed hours are taken back.
-func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, onlyIDs []string, reason string, refund bool, actorID, actorName string) (*CancelResult, error) {
+func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, onlyIDs []string, reason string, wantRefund bool, actorID, actorName string) (*CancelResult, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return nil, fmt.Errorf("%w: a cancellation reason is required", ErrInvalidBooking)
 	}
 	res := &CancelResult{}
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		// A retried attempt starts over: the payment may have changed
+		// meanwhile (e.g. a slip arrived), so decide refund afresh.
+		*res = CancelResult{}
+		refund := wantRefund
 		p, root, err := s.groupPayment(tx, bookingID, true)
 		if err != nil {
 			return err

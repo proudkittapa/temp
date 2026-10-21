@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Review batch A: small bug fixes
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `1be7f0c`)
+- **Changed:**
+  1. Staff walk-in grid (API mode): `loadedDate` gate - while another
+     date loads, "⏳ กำลังโหลด…", grid greyed/unclickable, submit refused
+     (it showed every slot free; the review's "old date's bookings" claim
+     was wrong - the grid filters by date). (`StaffPOS.tsx`)
+  2. Slip upload: new `src/slipImage.ts` - non-images refused with a Thai
+     message; anything not JPG/PNG/WebP or over 1.5 MB is drawn to a
+     canvas and sent as ≤1600 px JPEG (HEIC phones too); small files go
+     unchanged so the server's duplicate-slip hash still matches.
+     (`CustomerPanel.tsx`)
+  3+5. `ReturnRentalItem`: lock order → item (was item → order, the
+     reverse of VoidOrder), decide the deposit settlement first, take the
+     drawer lock before touching stock (checkout's order) and the time
+     after it. `VoidOrder`: lock its items and restock in checkout's sorted
+     key order (`itemLockKey`). (`pos.go`)
+  4. `CancelBookings`: `res` and `refund` reset at the start of each
+     RetryTx attempt (param renamed `wantRefund`); expiry job's
+     `cancelled` flag too. (`booking_admin.go`, `booking_service.go`)
+  6. CSV export: formula guard also catches leading spaces, tab and CR;
+     numbers (e.g. -50) are no longer prefixed. (`AdminPanel.tsx`)
+  7. `index.html`: `lang="th"`, title "จองสนามกีฬา | Sports Complex",
+     meta description.
+- **Verified:** go vet + go test, tsc. Live API: shift 1200 → rent 60 +
+  200 deposit → 1460 → return keeping 20 → 1280 (status DELIVERED,
+  returned 180); second return refused; void of a new rental → deposit
+  back, item marked returned, drawer unchanged at 1280; cancel-with-refund
+  of an unpaid booking → 1 cancelled, refund 0, REJECTED. Playwright:
+  grid banner + aria-busy while a 2 s-delayed date loads, gone after;
+  `prepareSlipImage` in the page: 24.8 MB PNG → 1.2 MB 1600×1280 JPEG,
+  1 KB PNG unchanged, PDF refused; no page errors.
+- **Not done / follow-ups:** batches B (retry keys, reward clawback on
+  cancel) and C (live refresh) - TODO section 11.
+
+---
+
 ## 2026-10-21 — Review fixes: DB limits/timeouts, walk-in expiry; review in TODO
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

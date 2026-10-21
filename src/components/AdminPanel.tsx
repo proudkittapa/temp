@@ -1407,10 +1407,13 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   // Monthly CSV exports (FR-7.4): the booking register and the counter
   // sales. API mode reads the month from the server.
   const csvCell = (v: unknown) => {
-    // Quote every field (names can hold commas) and neutralise leading
-    // = + - @ so a customer name can't run as a spreadsheet formula.
+    // Quote every field (names can hold commas) and neutralise text that
+    // starts with = + - @ (also after spaces) or a tab / CR, so a customer
+    // name can't run as a spreadsheet formula. Numbers (e.g. -50) stay
+    // numbers.
     const t = String(v ?? '');
-    return `"${(/^[=+\-@]/.test(t) ? `'${t}` : t).replace(/"/g, '""')}"`;
+    const risky = typeof v !== 'number' && /^(\s*[=+\-@]|[\t\r])/.test(t);
+    return `"${(risky ? `'${t}` : t).replace(/"/g, '""')}"`;
   };
   const downloadCsv = (filename: string, header: string[], rows: unknown[][]) => {
     // The BOM makes Excel read the file as UTF-8 (Thai names stay readable).

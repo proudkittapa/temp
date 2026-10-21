@@ -744,6 +744,7 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 	for _, p := range stale {
 		cancelled := false
 		err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+			cancelled = false // a retried attempt starts over
 			locked, err := lockPayment(tx, p.ID)
 			if err != nil {
 				return err
