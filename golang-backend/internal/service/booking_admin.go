@@ -523,9 +523,9 @@ func (s *BookingService) MarkPaidInCash(ctx context.Context, paymentID, actorID,
 		if err := lockGroupUser(tx, root); err != nil {
 			return err
 		}
-		// Cash into the drawer: wait for a shift close in progress (see
-		// lockDrawerShared) before taking the time.
-		if err := lockDrawerShared(tx); err != nil {
+		// Cash into the drawer: needs an open shift, and waits for a shift
+		// close in progress (see lockDrawerForCash) before taking the time.
+		if err := lockDrawerForCash(tx); err != nil {
 			return err
 		}
 		now := s.now()

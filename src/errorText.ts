@@ -91,6 +91,7 @@ const RULES: Rule[] = [
 
   // Cash drawer shifts
   [/a shift is already open/i, 'มีกะที่เปิดอยู่แล้ว ปิดกะเดิมก่อน'],
+  [/open the cash drawer shift before taking cash/i, 'ต้องเปิดกะลิ้นชักก่อนรับเงินสด (แท็บ "ยอดลิ้นชักวันนี้")'],
   [/no shift is open/i, 'ยังไม่ได้เปิดกะ'],
   [/the count is ([\d.]+) THB off - add a note/i, m => `ยอดนับต่างจากที่ควรมี ${baht(m[1])} บาท กรุณาใส่หมายเหตุอธิบาย`],
   [/opening float must be between/i, 'เงินทอนตั้งต้นต้องอยู่ระหว่าง 0 - 1,000,000 บาท'],

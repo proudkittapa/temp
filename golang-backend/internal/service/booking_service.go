@@ -346,10 +346,11 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		}
 		result.BookingCode = code
 
-		// Cash into the drawer: wait for a shift close in progress before
-		// taking the time, so the sale lands in exactly one shift.
+		// Cash into the drawer: needs an open shift, and waits for a shift
+		// close in progress before taking the time, so the sale lands in
+		// exactly one shift.
 		if payMethod == model.PaymentCash {
-			if err := lockDrawerShared(tx); err != nil {
+			if err := lockDrawerForCash(tx); err != nil {
 				return err
 			}
 		}

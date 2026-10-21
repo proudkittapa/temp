@@ -42,7 +42,7 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusForbidden
 	case errors.Is(err, repository.ErrSlotTaken), errors.Is(err, service.ErrSlotUnavailable), errors.Is(err, repository.ErrInsufficientPoints):
 		status = http.StatusConflict
-	case errors.Is(err, service.ErrInvalidState):
+	case errors.Is(err, service.ErrInvalidState), errors.Is(err, service.ErrNoOpenShift):
 		status = http.StatusConflict
 	case errors.Is(err, service.ErrInvalidBooking):
 		status = http.StatusBadRequest

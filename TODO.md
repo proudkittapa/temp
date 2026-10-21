@@ -24,7 +24,7 @@ first and items that need outside accounts later.
 
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
 Each needs a yes/no from the owner before it is built.
-- [ ] **Cash with no shift open:** staff are warned before taking cash when no drawer shift is open (that cash is in no shift's count), but can still go ahead. Block it instead?
+- [x] **Cash with no shift open:** decided 2026-10-21 - cash is refused until a shift is open (server and screen).
 - [ ] **Blind cash count:** staff see the expected drawer total before counting. Hide it until the counted amount is entered?
 - [ ] **Manager permissions vs. REQUIREMENTS.md:** what managers may do with manual point changes and the dashboard differs from the spec. Which is right - the app or the spec?
 - [ ] **Basketball closure:** a closure on the full court doesn't block half courts B/C (and vice versa). Should a closure cover the whole court group?

@@ -410,7 +410,9 @@ replacements).
 ### 8f. Cash drawer shifts and voids (FR-6.1/6.2)
 One drawer, so one shift is open at a time. Expected cash = opening float +
 cash booking payments approved + non-voided cash counter sales while the
-shift was open (refunds are transfers, not from the drawer). Closing stores
+shift was open (refunds are transfers, not from the drawer). Cash (walk-ins,
+sales, rentals, mark-cash) is refused with 409 "open the cash drawer shift
+before taking cash" while no shift is open; PromptPay is not affected. Closing stores
 expected, counted and variance (counted - expected); a note is required
 when they differ.
 ```bash

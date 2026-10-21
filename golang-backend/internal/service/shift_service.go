@@ -97,6 +97,28 @@ func lockDrawerShared(tx *gorm.DB) error {
 	return tx.Exec("SELECT pg_advisory_xact_lock_shared(?)", shiftLockKey).Error
 }
 
+// ErrNoOpenShift: cash may only be taken while a drawer shift is open -
+// cash taken outside one is in no shift's count, so the drawer never adds
+// up (owner decision 2026-10-21).
+var ErrNoOpenShift = errors.New("open the cash drawer shift before taking cash")
+
+// lockDrawerForCash is lockDrawerShared for money coming into the drawer:
+// after the lock (so a shift being closed has finished), it refuses when no
+// shift is open.
+func lockDrawerForCash(tx *gorm.DB) error {
+	if err := lockDrawerShared(tx); err != nil {
+		return err
+	}
+	var open int64
+	if err := tx.Model(&model.Shift{}).Where("closed_at IS NULL").Count(&open).Error; err != nil {
+		return err
+	}
+	if open == 0 {
+		return ErrNoOpenShift
+	}
+	return nil
+}
+
 // Open starts a shift with the float counted into the drawer.
 func (s *ShiftService) Open(ctx context.Context, openingFloat float64, staffID, staffName string) (*ShiftView, error) {
 	if openingFloat < 0 || openingFloat > 1000000 {

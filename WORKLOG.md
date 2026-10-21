@@ -18,10 +18,35 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Cash only with an open shift
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `ff4fa47`)
+- **Background:** Owner decision ("make sure they open the shift"): cash
+  taken with no drawer shift open is in no shift's count, so it is refused
+  instead of only warned.
+- **Changed:** backend `lockDrawerForCash` (shift_service.go) - the drawer
+  lock plus "a shift must be open", used by cash walk-ins
+  (`CreateBookings`), mark-cash (`MarkPaidInCash`) and cash checkout/rentals
+  (`checkoutTx`); new `ErrNoOpenShift` -> 409 "open the cash drawer shift
+  before taking cash". Voids are unchanged (a closed shift's sale was
+  already refused). Staff POS: the cash warning became a refusal with a
+  "ไปเปิดกะ" button that opens the shift tab; banner text says cash is
+  blocked; Thai translation of the new message. TODO item ticked,
+  checklist 7.21 rewritten, backend README note.
+- **Verified:** `go vet`, `go test`, `tsc`, vitest 39/39. Live: no shift ->
+  cash walk-in and cash sale refused with the message, PromptPay sale 200;
+  open shift -> cash sale 200. Browser: cash walk-in with no shift shows
+  "ต้องเปิดกะลิ้นชักก่อนรับเงินสด", "ไปเปิดกะ" lands on the shift tab, no
+  booking made, no page errors.
+- **Not done:** the other owner decisions in TODO.md item 0.
+
+---
+
 ## 2026-10-21 — TODO ordered by what to do next
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `5987cce`)
+- **Commit(s):** `ff4fa47` (on `main`, parent `5987cce`)
 - **Changed:** `TODO.md` starts with "Order of work" (owner decisions ->
   receipts/payment screen -> pre-launch safety -> deploy -> real-phone tests
   -> LINE -> forgot password -> tablet layout -> small improvements) and has

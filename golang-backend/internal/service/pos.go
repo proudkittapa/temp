@@ -433,10 +433,11 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 				return err
 			}
 		}
-		// Cash into the drawer: wait for a shift close in progress before
-		// taking the time, so the sale lands in exactly one shift.
+		// Cash into the drawer: needs an open shift, and waits for a shift
+		// close in progress before taking the time, so the sale lands in
+		// exactly one shift.
 		if input.PaymentMeth == model.PaymentCash {
-			if err := lockDrawerShared(tx); err != nil {
+			if err := lockDrawerForCash(tx); err != nil {
 				return err
 			}
 		}

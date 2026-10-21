@@ -729,12 +729,16 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     setSelectedReceiptOrder(null);
   };
 
-  // Cash taken with no drawer shift open is in no shift's count, so the
-  // drawer won't add up at closing. Ask before taking it.
+  // Cash only with a drawer shift open (owner decision 2026-10-21): cash
+  // taken outside a shift is in no shift's count, so the drawer never adds
+  // up. The server refuses it too. Offers to go and open the shift.
   const confirmCashWithoutShift = async (): Promise<boolean> => {
     if (shift) return true;
-    return ask('ยังไม่ได้เปิดกะลิ้นชัก — เงินสดรายการนี้จะไม่ถูกนับในยอดปิดกะ\nควรเปิดกะก่อนที่แท็บ "ยอดลิ้นชักวันนี้"\n\nรับเงินสดต่อโดยไม่เปิดกะ?',
-      { title: '⚠️ ยังไม่ได้เปิดกะ', okLabel: 'รับเงินสดต่อ', cancelLabel: 'ยกเลิก (ไปเปิดกะก่อน)' });
+    if (await ask('ต้องเปิดกะลิ้นชักก่อนรับเงินสด\nนับเงินทอนในลิ้นชัก แล้วกด "เปิดกะ" ที่แท็บ "ยอดลิ้นชักวันนี้"',
+      { title: '⚠️ ยังไม่ได้เปิดกะ', okLabel: 'ไปเปิดกะ', cancelLabel: 'ปิด' })) {
+      setActivePosTab('todays_total');
+    }
+    return false;
   };
 
   // One counter action at a time: a double click or an impatient second tap
@@ -1462,7 +1466,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       {!shift && (
         <button type="button" id="no-shift-banner" onClick={() => setActivePosTab('todays_total')}
           className="w-full text-left text-xs bg-amber-50 border border-amber-300 text-amber-900 rounded-xl px-4 py-2 font-bold">
-          ⚠️ ยังไม่ได้เปิดกะลิ้นชัก — นับเงินทอนตั้งต้นแล้วเปิดกะก่อนรับเงินสด (กดที่นี่)
+          ⚠️ ยังไม่ได้เปิดกะลิ้นชัก — รับเงินสดไม่ได้จนกว่าจะเปิดกะ (กดที่นี่เพื่อเปิดกะ)
         </button>
       )}
 
