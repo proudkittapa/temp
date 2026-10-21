@@ -35,6 +35,9 @@ func respondError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": msgBusy})
 		return
 	}
+	if repository.IsLiveSlotConflict(err) {
+		err = repository.ErrSlotTaken
+	}
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		status = http.StatusNotFound

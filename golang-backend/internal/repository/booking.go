@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"arena-backend/internal/model"
 	"gorm.io/gorm"
@@ -13,6 +14,17 @@ import (
 // ErrSlotTaken is returned (wrapped) when a requested slot overlaps an
 // active booking on the same court or a conflicting mutex-group sibling.
 var ErrSlotTaken = errors.New("slot already booked")
+
+// LiveSlotIndex is the database backstop against double booking: one
+// non-cancelled booking per court, date and start hour (see ensureIndexes
+// in main.go). The row locks and overlap checks normally stop a clash first.
+const LiveSlotIndex = "idx_bookings_live_slot"
+
+// IsLiveSlotConflict reports an insert/update that LiveSlotIndex refused.
+func IsLiveSlotConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == LiveSlotIndex
+}
 
 type BookingRepository struct {
 	db *gorm.DB

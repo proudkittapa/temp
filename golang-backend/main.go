@@ -793,6 +793,11 @@ func ensureIndexes(db *gorm.DB) {
 		{"payments.verified_at", "CREATE INDEX IF NOT EXISTS idx_payments_verified_at ON payments (verified_at)"},
 		{"payments.booking_id", "CREATE INDEX IF NOT EXISTS idx_payments_booking_id ON payments (booking_id)"},
 		{"bookings.date,status", "CREATE INDEX IF NOT EXISTS idx_bookings_date_status ON bookings (date, status)"},
+		// Backstop against double booking: one live booking per court, date
+		// and start hour (bookings are whole hours). Full vs half courts are
+		// different court rows - the overlap check covers those.
+		{"bookings live slot", "CREATE UNIQUE INDEX IF NOT EXISTS " + repository.LiveSlotIndex +
+			" ON bookings (court_id, date, start_time) WHERE status <> 'CANCELLED'"},
 		{"audit_logs.created_at", "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at)"},
 		{"points ledger ref", "CREATE INDEX IF NOT EXISTS idx_points_ledger_ref ON points_ledger_entries (ref_type, ref_id)"},
 	}

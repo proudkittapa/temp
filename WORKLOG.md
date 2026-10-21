@@ -18,6 +18,30 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Rental form without group name; report years; double-booking backstop
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `34a56a4`)
+- **Changed:**
+  - Rental form: removed the required "ชื่อก๊วน / ผู้ค้ำประกัน" box (the
+    owner doesn't use it). The order is named after the linked member, or
+    "ลูกค้าทั่วไป (Walk-in)"; fields renumbered. (`StaffPOS.tsx`)
+  - Admin → reports year picker: next year down to 5 years back (was
+    last/this/next). (`AdminPanel.tsx`)
+  - Partial unique index `idx_bookings_live_slot` on bookings (court_id,
+    date, start_time) WHERE status <> 'CANCELLED' (`main.go` ensureIndexes;
+    warns instead of failing if old duplicates exist). A violation maps to
+    409 "slot already booked" (`repository.IsLiveSlotConflict`,
+    `respondError`), already translated in errorText.
+- **Verified:** go vet + go test (new `booking_conflict_test.go`), tsc.
+  Live: index created on arena_fresh; a duplicate live row inserted by SQL
+  is refused; second customer on the same slot gets the normal 409;
+  cancel then rebook the same slot works.
+- **Not done / follow-ups:** concurrency tests and automatic retry of busy
+  errors (TODO step 4).
+
+---
+
 ## 2026-10-21 — Member's name comes from the database (locked)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

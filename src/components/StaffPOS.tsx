@@ -91,7 +91,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   const [cartCustomerPhone, setCartCustomerPhone] = useState<string>('');
 
   // Rental items list
-  const [rentalRenterName, setRentalRenterName] = useState<string>('');
   const [rentalCourtId, setRentalCourtId] = useState<string>('');
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [rentalCustomerPhone, setRentalCustomerPhone] = useState<string>('');
@@ -1172,8 +1171,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
   // Equipment rental (FR-5.3): the catalog price, one item; shoes by size.
   const handleRentalRentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rentalRenterName || !selectedProductId) {
-      notify('กรุณากรอกชื่อผู้ขอเช่าเล่น และ เลือกชนิดอุปกรณ์กีฬา!');
+    if (!selectedProductId) {
+      notify('กรุณาเลือกชนิดอุปกรณ์กีฬา');
       return;
     }
     const prodObj = products.find(p => p.id === selectedProductId);
@@ -1193,7 +1192,6 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     if (!(await confirmCashWithoutShift())) return; // rentals are paid in cash
     const sizeNote = variant ? ` (รองเท้า${variant.gender === 'F' ? 'หญิง' : 'ชาย'} เบอร์ ${variant.label})` : '';
     const done = (orderCode: string, pts: number) => {
-      setRentalRenterName('');
       setRentalCourtId('');
       setRentalCustomerPhone('');
       setRentalMember(null);
@@ -1204,7 +1202,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
     if (api.USE_BACKEND) {
       return api.checkout({
-        type: OrderType.EQUIPMENT_RENT, paymentMethod: PaymentMethod.CASH, customerName: `${rentalRenterName} (เช่าอุปกรณ์)`,
+        type: OrderType.EQUIPMENT_RENT, paymentMethod: PaymentMethod.CASH, customerName: '', // the server uses the member's name, or "walk-in"
         customerPhone: rentalCustomerPhone, courtId: rentalCourtId || undefined,
         items: [{ productId: prodObj.id, variantId: variant?.id, qty: 1 }]
       })
@@ -1224,7 +1222,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
       id: orderId,
       orderCode,
       userId: customer?.id,
-      customerName: `${rentalRenterName} (เช่าอุปกรณ์)`,
+      customerName: customer?.name ?? 'ลูกค้าทั่วไป (Walk-in)',
       courtId: rentalCourtId || undefined,
       type: OrderType.EQUIPMENT_RENT,
       status: OrderStatus.PREPARING, // out on rent until returned
@@ -2443,7 +2441,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               <div className="space-y-4">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">บันทึกจ่ายปล่อยเช่าแร็กเก็ตและอุปกรณ์กีฬา</h3>
-                  <p className="text-xs text-slate-500">กรุณากรอกชื่อผู้ประกันแร็กเก็ต สต๊าฟจะเก็บค่าค้ำหรือค่าบริการล่วงหน้าและบันทึกสต๊อก</p>
+                  <p className="text-xs text-slate-500">เลือกอุปกรณ์ ใส่เบอร์สมาชิกถ้ามี (เพื่อสะสมแต้ม) แล้วเก็บค่าเช่าเป็นเงินสด</p>
                 </div>
 
                 <form onSubmit={e => { e.preventDefault(); void guarded(handleRentalRentSubmit)(e); }} className="space-y-4 text-xs">
@@ -2452,29 +2450,16 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     <MemberPhoneInput
                       id="rental-member-phone"
                       value={rentalCustomerPhone}
-                      {...memberPhoneHandlers(rentalMember, setRentalMember, setRentalCustomerPhone, setRentalRenterName)}
+                      {...memberPhoneHandlers(rentalMember, setRentalMember, setRentalCustomerPhone, () => {})}
                       placeholder="พิมพ์เบอร์หรือชื่อ เช่น 0812345678"
                       className="w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-xs"
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-slate-700 font-semibold mb-1.5">1. คืน/คีย์ชื่อก๊วน หรือ ชื่อผู้ติดต่อค้ำประกัน:</label>
-                    <input 
-                      type="text" 
-                      required
-                      placeholder="เช่น คุณเอก แบดกบฏ เช่า 2 ไม้"
-                      value={rentalRenterName}
-                      onChange={(e) => setRentalRenterName(e.target.value)}
-                      readOnly={!!rentalMember}
-                      title={rentalMember ? 'ชื่อจากข้อมูลสมาชิก (แก้ไม่ได้)' : undefined}
-                      className={`w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-slate-800${rentalMember ? ' opacity-70 cursor-not-allowed' : ''}`}
-                    />
-                  </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-slate-700 font-semibold mb-1.5">2. เลือกแร็กเกต/อุปกรณ์เช่า:</label>
+                      <label className="block text-slate-700 font-semibold mb-1.5">1. เลือกแร็กเกต/อุปกรณ์เช่า:</label>
                       <select
                         value={selectedProductId}
                         onChange={(e) => { setSelectedProductId(e.target.value); setRentalVariantId(''); }}
@@ -2487,7 +2472,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                     </div>
 
                     <div>
-                      <label className="block text-slate-700 font-semibold mb-1.5">3. ค่าบริการเช่า (บาท):</label>
+                      <label className="block text-slate-700 font-semibold mb-1.5">2. ค่าบริการเช่า (บาท):</label>
                       <p className="w-full bg-slate-100 border border-slate-200 py-1.5 px-3 rounded-lg font-bold text-xs">
                         {formatBaht(products.find(p => p.id === selectedProductId)?.price ?? 0)} บาท
                         <span className="font-normal text-slate-500"> (ราคาตั้งในหน้า Admin)</span>
@@ -2539,7 +2524,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   )}
 
                   <div>
-                    <label className="block text-slate-700 font-semibold mb-1.5">4. จองคอร์ทที่ใช้อ้างอิงเช่า (ระบุได้):</label>
+                    <label className="block text-slate-700 font-semibold mb-1.5">3. จองคอร์ทที่ใช้อ้างอิงเช่า (ระบุได้):</label>
                     <select
                       value={rentalCourtId}
                       onChange={(e) => setRentalCourtId(e.target.value)}

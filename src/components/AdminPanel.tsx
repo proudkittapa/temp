@@ -2956,7 +2956,8 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                     onChange={(e) => setReportsYear(e.target.value)}
                     className="w-full bg-white border border-slate-200 rounded p-2 text-xs"
                   >
-                    {[-1, 0, 1].map(d => Number(getTodayDateStr().slice(0, 4)) + d).map(y => (
+                    {/* next year down to 5 years back */}
+                    {Array.from({ length: 7 }, (_, i) => Number(getTodayDateStr().slice(0, 4)) + 1 - i).map(y => (
                       <option key={y} value={String(y)}>{y}</option>
                     ))}
                   </select>
