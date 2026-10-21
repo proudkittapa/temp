@@ -18,10 +18,26 @@ Entry format:
 
 ---
 
+## 2026-10-21 — TODO: single login with roles/permissions; basketball A/B/C
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `b0ee7a7`)
+- **Changed (docs only):** owner decisions recorded in `TODO.md`: managers
+  keep today's rights for now; basketball is three courts (A, B, C) each
+  bookable/closable full or by half. New sections 9 (one sign-in, screens
+  by permission, admin-defined roles with permissions) and 10 (basketball
+  A/B/C plan: groups of full + two halves, migration keeping existing
+  bookings, group-aware closures, grid, occupancy); added to the order of
+  work. Not built now: both are larger changes (owner asked to keep
+  token use low).
+- **Verified:** n/a (docs).
+
+---
+
 ## 2026-10-21 — Blind cash count; voided sales cancel rewards bought with their points
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
-- **Commit(s):** this commit (on `main`, parent `f887d02`)
+- **Commit(s):** `b0ee7a7` (on `main`, parent `f887d02`)
 - **Background:** Owner decisions: "cash count - yes" (staff count without
   seeing the expected amount) and "reward should be cancelled once the sale
   is voided and points used".

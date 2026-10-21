@@ -21,13 +21,16 @@ first and items that need outside accounts later.
 8. **Staff POS and Admin on a tablet** - section 3.
 9. **Remaining small improvements** - section 7: refunds split by method,
    report year picker, Excel import preview, rental deposit, tidy-ups.
+10. **Basketball courts A, B, C, each full or half** - section 10 (before
+    launch if basketball is sold from day one; it changes the court list).
+11. **One login, screens by permission, admin-defined roles** - section 9.
 
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
 Each needs a yes/no from the owner before it is built.
 - [x] **Cash with no shift open:** decided 2026-10-21 - cash is refused until a shift is open (server and screen).
 - [x] **Blind cash count:** decided 2026-10-21 - counter staff don't see the expected cash (server withholds it); they confirm their count first, then explain any difference. Managers/admins still see it.
-- [ ] **Manager permissions vs. REQUIREMENTS.md:** what managers may do with manual point changes and the dashboard differs from the spec. Which is right - the app or the spec?
-- [ ] **Basketball closure:** a closure on the full court doesn't block half courts B/C (and vice versa). Should a closure cover the whole court group?
+- [x] **Manager permissions:** decided 2026-10-21 - for now managers keep what the app allows today (manual point changes, full dashboard and reports). Roles and permissions become configurable in section 9.
+- [x] **Basketball courts:** clarified 2026-10-21 - A, B and C are three separate courts, each bookable full or by half, and each closable fully or by half. Work planned in section 10.
 - [x] **Voiding a sale whose points were already spent:** decided 2026-10-21 - the customer's unused rewards are cancelled to cover the points; if the reward was already received, the sale can't be voided.
 - [ ] **Cash refunds and the drawer:** refunds are treated as bank transfers (the shift's expected cash ignores them). If staff ever refund cash from the drawer, the shift must subtract them.
 - [ ] **Login lockout policy:** 20 wrong passwords from anywhere lock an account for 15 minutes (someone who knows a staff phone number can keep it locked). Keep, or switch to a delay/CAPTCHA? Behind a proxy, `TRUSTED_PROXIES` must be set (the server now warns in release mode).
@@ -87,3 +90,17 @@ Each needs a yes/no from the owner before it is built.
 - [ ] A server or managed host for the Go backend + Postgres, the frontend built with `VITE_DATA_SOURCE=api npm run build`, served over HTTPS.
 - [ ] Production settings in `golang-backend/.env` (never in the repo): `GIN_MODE=release`, a long random `JWT_SECRET` (the server refuses to start without it in release mode), `DATABASE_URL`, `PROMPTPAY_ID`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXIES` behind a reverse proxy, and **no** `SEED_DEMO_USERS`.
 - [ ] Create the real admin account and remove/disable demo accounts; daily database backups and a tested restore; a place to keep slip images (`uploads/`) that survives redeploys.
+
+## 9. One login for everyone; screens by permission; roles set by the admin
+Today the app has separate sign-ins for the customer page, Staff POS (`#/staff`, `#/manager`) and Admin (`#/admin`), and each keeps its own session.
+- [ ] One sign-in page for every account. After sign-in the user lands on what they can use (customer booking, counter, settings) and only sees the menus/tabs/buttons their permissions allow; the demo role switcher goes away in production.
+- [ ] Permissions as data: a list of named permissions (e.g. book online, verify slips, sell & rent, open/close shift, cancel & refund, record cash, adjust points, edit pricing, manage courts & closures, view reports (limited/full), export, manage users & roles, view audit log). Every server route checks a permission instead of a fixed role.
+- [ ] Admin screen to create/edit roles and tick their permissions; assign a role to each staff account. Built-in roles CUSTOMER / STAFF / MANAGER / ADMIN are created with today's rights (managers as they are now: manual points, full dashboard) so nothing changes until the admin edits them; ADMIN can't remove its own access to roles.
+- [ ] Session: one token per user; `api.ts` sessions per panel (`customer` / `staff` / `admin`) merge into one; audit log keeps who did what.
+
+## 10. Basketball: courts A, B, C - each bookable full or by half, closable full or by half
+Today there is one basketball floor: "A (full)" plus halves "B (left)" and "C (right)" of that same floor. The owner clarified there are three courts.
+- [ ] Courts: A, B and C, each a booking group of three rows - full court, left half, right half (the existing `mutex_group_id` + `share_of_group` model already supports this: full blocks both halves, a half blocks the full court, the two halves don't block each other). Migration: keep `b_full_a` as A full, rename `b_half_b` / `b_half_c` to A left / A right (their bookings stay valid), add B and C (full + halves) in new groups. Same in the browser-only seed (`DEFAULT_COURTS` + `initializeState` migration).
+- [ ] Closures by group: closing a full court also closes its halves; closing one half closes that half and the full court, not the other half. Server `repository.ClosureFor` and every availability check, frontend `findClosure` (needs the court list), the closure form (choose court + full/left/right), and "affected bookings" when a closure is saved.
+- [ ] Grid: show basketball as A/B/C with full/half choices (9 rows today's way, or one row per court with a full/half toggle); half courts keep the half-court price and the off-peak-only rule unless the owner changes it.
+- [ ] Dashboard occupancy counts 3 basketball courts; update tests, `TESTING_CHECKLIST.md` and the README court section.
