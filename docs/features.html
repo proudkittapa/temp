@@ -34,6 +34,11 @@ th{background:var(--bg)}
 .yes{color:var(--accent);font-weight:700}
 .no{color:var(--muted)}
 .scroll{overflow-x:auto}
+figure{margin:10px 0 0}
+figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px}
+figcaption{font-size:.85rem;color:var(--muted);margin-top:4px}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:12px}
+.phone img{max-width:260px}
 code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:.88em}
 </style>
 </head>
@@ -46,11 +51,26 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
     <a href="#staff"><span class="tag" style="background:var(--c2)"></span> พนักงานเคาน์เตอร์</a>
     <a href="#manager"><span class="tag" style="background:var(--c3)"></span> ผู้จัดการ</a>
     <a href="#admin"><span class="tag" style="background:var(--c4)"></span> ผู้ดูแลระบบ</a>
+    <a href="#login">เข้าสู่ระบบ</a>
+    <a href="#config">การตั้งค่า</a>
     <a href="#rules">กฎสำคัญ</a>
     <a href="#roles">ใครทำอะไรได้</a>
   </nav>
 
-  <div class="ok"><b>เข้าสู่ระบบที่เดียว:</b> ทุกคนใช้เบอร์โทร (หรืออีเมลพนักงาน) + รหัสผ่าน ระบบจะแสดงเฉพาะหน้าจอและเมนูที่บทบาทของคุณทำได้</div>
+  <h2 id="login">เข้าสู่ระบบ</h2>
+  <div class="scroll"><table>
+    <tr><th>ใคร</th><th>เข้าที่</th><th>เข้าสู่ระบบอย่างไร</th></tr>
+    <tr><td>ลูกค้า</td><td><code>/</code> (หน้าแรกของเว็บ)</td><td>ดูตารางสนามได้โดยไม่ต้องล็อกอิน ตอนกดจองจะให้ <b>สมัครสมาชิก</b> (ชื่อ, เบอร์มือถือ, อีเมลถ้ามี, รหัสผ่าน) หรือ <b>เข้าสู่ระบบ</b> ด้วยเบอร์โทรหรืออีเมล + รหัสผ่าน</td></tr>
+    <tr><td>พนักงาน / ผู้จัดการ</td><td><code>/#/staff</code></td><td>เบอร์โทรหรืออีเมล + รหัสผ่าน แล้วเห็นเฉพาะแท็บที่บทบาทของตนทำได้</td></tr>
+    <tr><td>ผู้ดูแลระบบ</td><td><code>/#/admin</code></td><td>เหมือนกัน ใช้บัญชีที่มีสิทธิ์ตั้งค่า</td></tr>
+  </table></div>
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><h3>สร้างบัญชีพนักงาน</h3><p>ให้พนักงานสมัครเป็นลูกค้าก่อน แล้วผู้ดูแลไปที่ <b>บัญชีสตาฟ</b> เปลี่ยนบทบาทเป็นพนักงาน/ผู้จัดการ มีผลทันที ระงับบัญชีได้ที่หน้าเดียวกัน</p></div>
+    <div class="card"><h3>ลืมรหัสผ่าน</h3><p>ตอนนี้ให้ติดต่อพนักงานที่เคาน์เตอร์ (การรีเซ็ตด้วยรหัสทาง SMS/LINE กำลังจะมา)</p></div>
+    <div class="card"><h3>ใส่รหัสผิดหลายครั้ง</h3><p>บัญชีถูกล็อกชั่วคราว 15 นาที แล้วลองใหม่ได้</p></div>
+    <div class="card"><h3>บัญชีทดลอง (เฉพาะเครื่องนักพัฒนา)</h3><p>รหัสผ่าน <code>123456</code>: ลูกค้า <code>0845678901</code> · พนักงาน <code>0834567890</code> · ผู้จัดการ <code>0823456789</code> · ผู้ดูแล <code>0812345678</code><br><span class="muted">เปิดเมื่อ <code>SEED_DEMO_USERS=true</code> เท่านั้น ห้ามใช้บนเซิร์ฟเวอร์จริง</span></p></div>
+  </div>
+  <figure><img src="img/03-staff-login.jpg" alt="หน้าเข้าสู่ระบบพนักงาน"><figcaption>หน้าเข้าสู่ระบบพนักงาน (<code>/#/staff</code>) — แถบ Simulator ด้านบนมีเฉพาะเวอร์ชันทดลอง</figcaption></figure>
 
   <h2 id="customer"><span class="tag" style="background:var(--c1)"></span> ลูกค้า — จองและจ่ายเงินเองทางมือถือ</h2>
   <div class="flow">
@@ -74,6 +94,10 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <li>ได้ 1 แต้มต่อ 100 บาท (จองสนามและซื้อของที่เคาน์เตอร์)</li>
       <li>แลกของรางวัล เช่น ชั่วโมงฟรีช่วง Off-peak → ได้รหัสคูปองไปใช้ที่เคาน์เตอร์</li>
       <li>ดูการจองและคูปองของตัวเองได้ในแอป</li></ul></div>
+  </div>
+  <div class="shots">
+    <figure class="phone"><img src="img/01-customer-home.jpg" alt="หน้าแรกลูกค้าบนมือถือ"><figcaption>หน้าแรกบนมือถือ: เลือกกีฬาและวันที่</figcaption></figure>
+    <figure class="phone"><img src="img/02-customer-grid.jpg" alt="รายการสนาม"><figcaption>รายการสนามและจำนวนชั่วโมงที่ว่าง แตะเพื่อเลือกเวลา</figcaption></figure>
   </div>
 
   <h2 id="staff"><span class="tag" style="background:var(--c2)"></span> พนักงานเคาน์เตอร์</h2>
@@ -100,6 +124,10 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <li>ยอดลิ้นชักวันนี้ (ดูอย่างเดียว)</li>
       <li>ปิดกะแบบนับเงินก่อน ไม่เห็นยอดที่ควรมี (blind count) ถ้าไม่ตรงต้องใส่หมายเหตุ</li>
       <li>บันทึกลูกค้าไม่มาเล่น (No-show)</li></ul></div>
+  </div>
+  <div class="shots">
+    <figure><img src="img/04-staff-walkin.jpg" alt="จอง Walk-in"><figcaption>จอง Walk-in: คลิกช่องเบอร์ → รายชื่อสมาชิกให้เลือก</figcaption></figure>
+    <figure><img src="img/05-staff-pos.jpg" alt="ขาย F&B"><figcaption>ขาย F&amp;B: กดสินค้า → ตะกร้า → ใส่เบอร์สมาชิก → เงินสด/พร้อมเพย์</figcaption></figure>
   </div>
 
   <h2 id="manager"><span class="tag" style="background:var(--c3)"></span> ผู้จัดการ — ทำได้ทุกอย่างของพนักงาน และ</h2>
@@ -140,6 +168,40 @@ code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding
       <li>รายงานรายเดือน/รายปี และส่งออกไฟล์</li>
       <li>บันทึกการแก้ไข (Audit log) ว่าใครทำอะไรเมื่อไร</li></ul></div>
   </div>
+
+  <div class="shots">
+    <figure><img src="img/06-admin-settings.jpg" alt="ตั้งค่าราคาและข้อมูลร้าน"><figcaption>แท็บ Pricing Engine: จองล่วงหน้า เวลาเปิด-ปิด ข้อมูลร้าน และกฎราคา</figcaption></figure>
+    <figure><img src="img/07-admin-roles.jpg" alt="สิทธิ์และบทบาท"><figcaption>แท็บสิทธิ์และบทบาท: สร้างบทบาทและเลือกสิทธิ์</figcaption></figure>
+  </div>
+
+  <h2 id="config">การตั้งค่าทั้งหมด</h2>
+  <h3>ตั้งในหน้าผู้ดูแล (เปลี่ยนได้ทุกเมื่อ มีบันทึกใน Audit log)</h3>
+  <div class="scroll"><table>
+    <tr><th>ตั้งค่า</th><th>อยู่ที่แท็บ</th><th>ค่าเริ่มต้น / หมายเหตุ</th></tr>
+    <tr><td>จองออนไลน์ล่วงหน้าได้กี่วัน</td><td>Pricing Engine</td><td>30 วัน (พนักงานจองที่เคาน์เตอร์ได้ไม่จำกัด)</td></tr>
+    <tr><td>เวลาเปิด-ปิดให้จอง</td><td>Pricing Engine</td><td>07:00 – 23:00 จองได้เฉพาะชั่วโมงที่มีกฎราคา</td></tr>
+    <tr><td>กฎราคา (กีฬา, วันธรรมดา/เสาร์-อาทิตย์, ช่วงชั่วโมง, ปกติ/Peak, บาท/ชม.)</td><td>Pricing Engine</td><td>ช่วงเวลาของกฎที่เปิดอยู่ห้ามซ้อนกัน นำเข้าจาก Excel ได้</td></tr>
+    <tr><td>ราคาครึ่งสนาม</td><td>Pricing Engine</td><td>50% ของสนามเต็ม</td></tr>
+    <tr><td>ข้อมูลร้าน: ชื่อ ที่อยู่ เบอร์ เลขภาษี 13 หลัก จด VAT</td><td>Pricing Engine → ข้อมูลร้าน</td><td>ว่าง = ใบเสร็จขึ้น "ยังไม่ได้ตั้งชื่อร้าน" · จด VAT ต้องมีชื่อ ที่อยู่ เลขภาษี</td></tr>
+    <tr><td>ส่วนลดตามระดับสมาชิก</td><td>ตั้งค่าสิทธิ์ส่วนลด</td><td>% ส่วนลดของแต่ละระดับ</td></tr>
+    <tr><td>สนาม: เพิ่ม เปลี่ยนชื่อ เปิด/ปิดการจอง</td><td>บริหารสนาม &amp; วันปิดบริการ</td><td>สนามไม่ถูกลบ (เก็บประวัติ)</td></tr>
+    <tr><td>วันปิด/ช่วงปิด ทั้งสนาม กลุ่มสนาม หรือครึ่งสนาม</td><td>บริหารสนาม &amp; วันปิดบริการ</td><td>การจองที่มีอยู่แล้วต้องจัดการเอง (ยกเลิก/คืนเงิน)</td></tr>
+    <tr><td>สินค้า ราคา สต๊อก (รองเท้าแยกเบอร์) ของให้เช่า</td><td>คุมตู้เครื่องดื่ม F&amp;B</td><td>นำเข้าจาก Excel ได้</td></tr>
+    <tr><td>บทบาทของผู้ใช้ ระดับสมาชิก แต้ม ระงับบัญชี</td><td>บัญชีสตาฟ</td><td>ปรับแต้มต้องใส่เหตุผล</td></tr>
+    <tr><td>บทบาทและสิทธิ์</td><td>สิทธิ์และบทบาท</td><td>บทบาทเริ่มต้น: ลูกค้า พนักงาน ผู้จัดการ ผู้ดูแล</td></tr>
+  </table></div>
+  <h3 style="margin-top:16px">ตั้งบนเซิร์ฟเวอร์ (ไฟล์ <code>golang-backend/.env</code> — ผู้ติดตั้งระบบตั้ง ห้ามใส่ในแชทหรือ git)</h3>
+  <div class="scroll"><table>
+    <tr><th>ตัวแปร</th><th>ใช้ทำอะไร</th><th>ค่าเริ่มต้น</th></tr>
+    <tr><td><code>DATABASE_URL</code></td><td>ที่อยู่ฐานข้อมูล PostgreSQL</td><td>ต้องตั้ง</td></tr>
+    <tr><td><code>JWT_SECRET</code></td><td>กุญแจเซ็นการล็อกอิน ยาว 32 ตัวขึ้นไป</td><td>ต้องตั้ง (<code>openssl rand -hex 32</code>)</td></tr>
+    <tr><td><code>PROMPTPAY_ID</code></td><td>เบอร์/เลขพร้อมเพย์ที่ใช้สร้าง QR รับเงิน</td><td>ต้องตั้งเป็นของร้าน</td></tr>
+    <tr><td><code>BASKETBALL_COURT_COUNT</code> · <code>BADMINTON_COURT_COUNT</code> · <code>PICKLEBALL_COURT_COUNT</code> · <code>MEETING_ROOM_COUNT</code></td><td>จำนวนสนามแต่ละประเภทตอนสร้างครั้งแรก</td><td>3 · 12 · 3 · 1</td></tr>
+    <tr><td><code>PORT</code></td><td>พอร์ตของเซิร์ฟเวอร์</td><td>8080</td></tr>
+    <tr><td><code>CORS_ALLOWED_ORIGINS</code></td><td>เว็บที่อนุญาตให้เรียก API (ถ้าแยกโดเมน)</td><td>–</td></tr>
+    <tr><td><code>SEED_DEMO_USERS</code></td><td>สร้างบัญชีทดลอง</td><td><code>false</code> (บนเซิร์ฟเวอร์จริงต้องเป็น false)</td></tr>
+    <tr><td><code>VITE_DATA_SOURCE</code> · <code>VITE_API_BASE_URL</code></td><td>หน้าเว็บ: <code>api</code> = ใช้ฐานข้อมูลจริง · ที่อยู่ API</td><td>ไม่ตั้ง = โหมดทดลองในเบราว์เซอร์ · <code>/api/v1</code></td></tr>
+  </table></div>
 
   <h2 id="rules">กฎสำคัญที่ระบบบังคับให้เอง</h2>
   <div class="grid">

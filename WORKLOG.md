@@ -18,6 +18,21 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Feature guide: login, all settings, screenshots
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `3c13bd4`)
+- **Changed (docs only):** `docs/features.html` gains a login section
+  (addresses, register/login, making staff accounts, lockout, demo
+  accounts), a settings section (every admin setting with its tab and
+  default, and every server `.env` variable), and 7 screenshots in
+  `docs/img/` (customer phone views, staff login/walk-in/POS, admin
+  settings/roles), taken with Playwright from the API-mode demo data.
+- **Verified:** screenshots spot-checked; page opened locally.
+- **Not done / follow-ups:** retake screenshots when the UI changes.
+
+---
+
 ## 2026-10-21 — Visual feature guide (docs/features.html)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
