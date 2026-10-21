@@ -1268,7 +1268,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const wb = XLSX.read(evt.target?.result as ArrayBuffer, { type: 'array' });
         const wsname = wb.SheetNames[0];
@@ -1343,6 +1343,14 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         });
 
         const skippedNote = skipped.length ? `\n\nข้าม ${skipped.length} รายการ:\n${skipped.slice(0, 15).join('\n')}${skipped.length > 15 ? '\n…' : ''}` : '';
+        // Preview: nothing is saved until the admin has seen what was read.
+        if (importedCount > 0) {
+          const lines = apiRows.slice(0, 20).map(r =>
+            `• ${r.name} — ${r.category === ProductCat.EQUIPMENT ? (r.isRental ? 'อุปกรณ์ให้เช่า' : 'อุปกรณ์') : 'อาหาร/เครื่องดื่ม'} · ${formatBaht(r.price)} บาท · สต๊อก ${r.stock}`);
+          const more = apiRows.length > 20 ? `\n… และอีก ${apiRows.length - 20} รายการ` : '';
+          if (!(await ask(`จะนำเข้าสินค้าใหม่ ${importedCount} รายการ:\n${lines.join('\n')}${more}${skippedNote}`,
+            { title: 'ตรวจรายการก่อนนำเข้า', okLabel: `นำเข้า ${importedCount} รายการ` }))) return;
+        }
         if (importedCount > 0 && api.USE_BACKEND) {
           api.createProducts(apiRows)
             .then(list => {

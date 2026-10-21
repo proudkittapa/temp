@@ -18,6 +18,20 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Excel product import: preview before saving
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `0139a14`)
+- **Changed:** after reading the file, the admin sees the rows that will
+  be added (name, type, price, stock; first 20) and the skipped ones, and
+  must press "นำเข้า N รายการ" - cancel saves nothing. (`AdminPanel.tsx`)
+- **Verified:** tsc. Playwright (API mode, admin, generated .xlsx with 2
+  good rows + 1 bad): preview listed both and the skipped row, confirm
+  saved 2; no page errors.
+- **Not done / follow-ups:** none.
+
+---
+
 ## 2026-10-21 — Day summary: refunds split by method
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

@@ -88,7 +88,7 @@ Each needs a yes/no from the owner before it is built.
 - [x] Database backstop against double booking: partial unique index `idx_bookings_live_slot` on (court_id, date, start_time) for non-cancelled rows; a hit returns 409 "slot already booked". Done 2026-10-21.
 - [x] Receipts show who took the money and when (payment verified_by/verified_at for bookings, the seller for counter sales), plus the print time. Done 2026-10-21.
 - [x] Reports year picker: next year down to 5 years back. Done 2026-10-21.
-- [ ] Excel import: show a preview of parsed rows before saving (files are now read with `readAsArrayBuffer`).
+- [x] Excel import: preview of the rows to add and the skipped ones, saved only after confirming. Done 2026-10-21.
 - [ ] Rental security deposit (FR-5.3) is not modelled.
 - [x] Tidy-ups: `export` dropped from symbols used only inside their file (api.ts, mockData.ts, Dialog.tsx); `bangkokNow` reuses shared formatters. Done 2026-10-21.
 
