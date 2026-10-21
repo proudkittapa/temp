@@ -277,6 +277,7 @@ func main() {
 		// Counter shop (FR-5.2/5.3): catalog, sales, rentals and returns
 		api.GET("/staff/products", can(model.PermSellRent), shopHandler.ListProducts(false))
 		api.POST("/pos/order", can(model.PermSellRent), shopHandler.Checkout)
+		api.GET("/staff/members", can(model.PermSellRent, model.PermCounterBookings), arenaHandler.SearchMembers)
 		api.GET("/staff/orders", can(model.PermSellRent, model.PermCancelRefund), shopHandler.ListOrders)
 		api.GET("/staff/rentals", can(model.PermSellRent), shopHandler.ActiveRentals)
 		api.POST("/staff/rentals/items/:id/return", can(model.PermSellRent), shopHandler.ReturnRental)

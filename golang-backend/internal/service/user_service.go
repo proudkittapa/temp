@@ -63,6 +63,37 @@ func (s *UserService) FetchAllUsers(ctx context.Context, roleFilter string) ([]m
 	return s.usrRepo.FetchAll(ctx, roleFilter)
 }
 
+// MemberMatch is what the counter sees when it looks up a customer to give
+// points to: enough to pick the right person, nothing more.
+type MemberMatch struct {
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	Phone      string           `json:"phone"`
+	MemberType model.MemberType `json:"member_type"`
+	Points     int              `json:"points"`
+}
+
+// SearchMembers finds active customers whose phone starts with q's digits
+// or whose name contains q (at least 2 characters), up to 8, for the
+// counter's member-phone dropdown.
+func (s *UserService) SearchMembers(ctx context.Context, q string) ([]MemberMatch, error) {
+	q = strings.TrimSpace(q)
+	out := []MemberMatch{}
+	if len([]rune(q)) < 2 || len([]rune(q)) > 50 {
+		return out, nil
+	}
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	tx := s.db.WithContext(ctx).Model(&model.User{}).
+		Where("role = ? AND is_active", model.RoleCustomer)
+	if digits := repository.NormalizePhone(q); len(digits) >= 2 {
+		tx = tx.Where("(phone LIKE ? OR name ILIKE ?)", esc.Replace(digits)+"%", "%"+esc.Replace(q)+"%")
+	} else {
+		tx = tx.Where("name ILIKE ?", "%"+esc.Replace(q)+"%")
+	}
+	err := tx.Order("name").Limit(8).Select("id, name, phone, member_type, points").Scan(&out).Error
+	return out, err
+}
+
 // SetRole changes a user's role (admin only - the route enforces it), e.g.
 // to make a registered customer counter staff. Role is re-read on every
 // request, so it takes effect at once.

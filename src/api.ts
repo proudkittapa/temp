@@ -535,6 +535,16 @@ export interface PaymentForReview {
   bookings: Booking[];
 }
 
+export interface MemberMatch { id: string; name: string; phone: string; memberType: MemberType; points: number }
+
+// Counter staff: customers whose phone starts with q or whose name contains
+// it (at least 2 characters, up to 8 results) - the member-phone dropdown.
+export async function searchMembers(q: string): Promise<MemberMatch[]> {
+  const rows = await request<{ id: string; name: string; phone: string; member_type: string; points: number }[]>(
+    `/staff/members?q=${encodeURIComponent(q)}`, { session: 'staff' });
+  return rows.map(r => ({ id: r.id, name: r.name, phone: r.phone, memberType: r.member_type as MemberType, points: r.points }));
+}
+
 export async function listPaymentsForReview(status: PaymentStatus = PaymentStatus.SLIP_UPLOADED): Promise<PaymentForReview[]> {
   const rows = await request<{ payment: ApiPayment; bookings: ApiBooking[]; user_name: string; user_phone: string }[]>(
     `/staff/payments?status=${status}`,

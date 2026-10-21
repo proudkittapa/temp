@@ -8,6 +8,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
 import { notify, ask, askText, dialog } from './Dialog';
 import DemoLogins, { DEMO_STAFF, DEMO_ADMINS } from './DemoLogins';
+import MemberPhoneInput from './MemberPhoneInput';
 import { can, canUseCounter, Permission } from '../permissions';
 import { Check, X, ShoppingCart, Activity, AlertTriangle, ShieldCheck, Receipt, Plus, Minus, CheckCircle2, AlertOctagon } from 'lucide-react';
 
@@ -1710,12 +1711,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   </div>
                   <div>
                     <label className="block text-slate-700 font-semibold mb-1.5">5. เบอร์มือถือรับ LINE แทงสถานะ</label>
-                    <input 
-                      type="tel" 
+                    <MemberPhoneInput
+                      id="walkin-member-phone"
                       required
-                      placeholder="เช่น 089xxxxxxx" 
-                      value={walkinPhone} 
-                      onChange={(e) => setWalkinPhone(e.target.value)}
+                      placeholder="พิมพ์เบอร์หรือชื่อสมาชิก เช่น 089xxxxxxx"
+                      value={walkinPhone}
+                      onChange={setWalkinPhone}
+                      onPick={m => { if (!walkinName.trim()) setWalkinName(m.name); }}
                       className="w-full bg-slate-50 border border-slate-200 py-2 px-3 rounded-lg text-xs"
                     />
                   </div>
@@ -2324,11 +2326,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                   <div className="space-y-3 pt-3 border-t border-slate-800 text-xs">
                     <div>
                       <label className="block text-[10px] text-amber-400 font-bold mb-1">🎁 เบอร์โทรสมาชิก (สะสมแต้ม 1 แต้ม / 100 บาท, เว้นได้):</label>
-                      <input
-                        type="tel"
+                      <MemberPhoneInput
+                        id="cart-member-phone"
+                        dark
                         value={cartCustomerPhone}
-                        onChange={(e) => setCartCustomerPhone(e.target.value)}
-                        placeholder="เช่น 0812345678"
+                        onChange={setCartCustomerPhone}
+                        onPick={m => { if (!cartCustomerName.trim()) setCartCustomerName(m.name); }}
+                        placeholder="พิมพ์เบอร์หรือชื่อ เช่น 0812345678"
                         className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white"
                       />
                     </div>
@@ -2426,11 +2430,12 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                 <form onSubmit={e => { e.preventDefault(); void guarded(handleRentalRentSubmit)(e); }} className="space-y-4 text-xs">
                   <div>
                     <label className="block text-amber-600 font-bold mb-1.5">🎁 เบอร์โทรสมาชิก (สะสมแต้ม, เว้นได้):</label>
-                    <input
-                      type="tel"
+                    <MemberPhoneInput
+                      id="rental-member-phone"
                       value={rentalCustomerPhone}
-                      onChange={(e) => setRentalCustomerPhone(e.target.value)}
-                      placeholder="เช่น 0812345678"
+                      onChange={setRentalCustomerPhone}
+                      onPick={m => { if (!rentalRenterName.trim()) setRentalRenterName(m.name); }}
+                      placeholder="พิมพ์เบอร์หรือชื่อ เช่น 0812345678"
                       className="w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-xs"
                     />
                   </div>

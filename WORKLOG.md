@@ -18,6 +18,32 @@ Entry format:
 
 ---
 
+## 2026-10-21 — Member-phone fields: dropdown of matching members
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`, parent `8dc659a`)
+- **Changed:** the "🎁 เบอร์โทรสมาชิก" boxes were plain text, so staff had to
+  know the exact number. Now they drop down matching customers.
+  - Backend: `GET /staff/members?q=` (permission sell_rent or
+    counter_bookings) - active customers whose phone starts with q's digits
+    or whose name contains q (min 2 chars, max 8 results, LIKE wildcards
+    escaped); returns id, name, phone, tier, points only.
+    (`user_service.go` SearchMembers, `handlers.go`, `main.go`)
+  - Frontend: new `MemberPhoneInput.tsx` (debounced search, arrows/Enter/
+    Escape, "ไม่พบสมาชิก" hint, free typing still allowed; local mode filters
+    stored users). Used for the F&B cart, rental and walk-in phone fields;
+    picking fills the customer name if it is empty. `api.searchMembers`.
+- **Verified:** go vet + go test (incl. route access test), tsc, vitest 53/53.
+  curl: "08", "084-5" and a Thai name match; "a%" and 1 char return
+  nothing; a customer gets 403. Playwright (API mode, staff): walk-in pick by
+  name with Enter fills phone + name; unknown number shows the hint; cart
+  "0856" lists the student member and click fills the phone; no page errors.
+  Local mode type-checked only.
+- **Not done / follow-ups:** "+66 8..." partial numbers aren't matched
+  (full +66 numbers are normalised by the existing checkout code).
+
+---
+
 ## 2026-10-21 — Fix `npm run dev:api`: backend didn't compile
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, reported by the owner
