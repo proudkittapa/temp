@@ -18,6 +18,31 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Frontend: load only what the open screen shows
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 4 of the code-quality plan)
+- **Commit(s):** this commit (on `main`, parent `93b95ad`)
+- **Changed:**
+  - `staff/useStaffPOS.tsx`: the main load (every 15 s and after every
+    action) fetched 8 data sets on every tab; now the slip queue and the
+    current shift always, plus the open tab's: products (shop, rentals),
+    rentals out (rentals), day summary / today's orders / today's bookings
+    / shift history for managers (day total). The grid load fetches the
+    date's bookings and closures only on the walk-in tab; session check,
+    courts and pricing (prices, receipt header) always. Opening a tab
+    loads its data (`activePosTab` in the deps).
+  - `customer/useCustomerPanel.tsx`: on the payment step (polled every
+    10 s) only `/auth/me` + `/me/bookings`; leaving it reloads everything.
+- **Verified:** `tsc`, `vitest` 60/60. Playwright (API backend), requests
+  per 15 s refresh as a manager: walk-in 7, slips 5, shop 6, rentals 7,
+  vouchers 5, day total 9 (all 13 before). Customer: step 1 = 8 per 30 s
+  (unchanged), payment step 2 per 10 s (8 before); a manager marking the
+  booking paid in cash -> the customer's screen showed the paid notice by
+  itself. Staff tabs all render; walk-in cash booking and shop sale saved;
+  undo no-show OK; no page errors.
+
+---
+
 ## 2026-10-22 — Frontend: load the staff/admin code only when needed
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 4 of the code-quality plan)

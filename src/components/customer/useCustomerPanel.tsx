@@ -199,6 +199,7 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
   const myLineMessages = loggedInUser
     ? lineMessages.filter(m => normalizePhone(m.recipientPhone) === normalizePhone(loggedInUser.phone || ''))
     : [];
+  const paymentStep = activeStep === 3;
   useLiveLoad(async isCurrent => {
     if (!api.USE_BACKEND || !selectedDate) return;
     try {
@@ -214,6 +215,19 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
         return; // loggedInUserId changes, so this effect re-runs logged out
       }
       if (me) setLoggedInUser(me);
+
+      // On the payment step (polled every 10 s) only the customer's own
+      // bookings and payments change what is shown - not the grid, rewards
+      // or pricing; going back to booking reloads everything.
+      if (paymentStep && me) {
+        const mine = await api.listMyBookings();
+        if (!isCurrent()) return;
+        const mineById = new Map(mine.bookings.map(b => [b.id, b]));
+        setBookings(prev => [...prev.filter(b => !mineById.has(b.id)), ...mine.bookings]);
+        setPayments(mine.payments);
+        setApiError(null);
+        return;
+      }
 
       // What the grid needs must all arrive; the extras (rewards, vouchers,
       // the price preview's pricing cache) may fail on their own without
@@ -255,7 +269,7 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
     } catch (err) {
       if (isCurrent()) setApiError(err instanceof Error ? err.message : String(err));
     }
-  }, [triggerRefresh, selectedDate, loggedInUserId], liveTick);
+  }, [triggerRefresh, selectedDate, loggedInUserId, paymentStep], liveTick);
 
   // The payment screen follows the server: the payment as last loaded
   // (approved, rejected, expired, refunded), not the copy from when it was

@@ -165,21 +165,36 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   // other counters' bookings and sales) and when staff come back to it.
   const liveTick = useLiveTick(15000);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  // Each load (every refresh tick and after each action) fetches what every
+  // tab shows - the slip-queue badge, the shift banner - plus what the open
+  // tab shows, not all of it every time; opening a tab loads its data.
   useLiveLoad(isCurrent => {
     if (!api.USE_BACKEND || !staffUserId) return;
     const isManager = can(staffUser, 'view_reports');
-    return Promise.all([api.listPaymentsForReview(), api.daySummary(getTodayDateStr()), api.listProducts(), api.listOrders(getTodayDateStr()), api.activeRentals(),
-      api.currentShift(), isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[]), api.listBookingsByDate(getTodayDateStr(), 'staff')])
-      .then(([queue, summary, prods, dayOrders, rentals, openShift, history, todays]) => {
+    const today = getTodayDateStr();
+    const tab = activePosTab;
+    const onDay = tab === 'todays_total';
+    const skip = Promise.resolve(null);
+    return Promise.all([
+      api.listPaymentsForReview(),
+      api.currentShift(),
+      onDay ? api.daySummary(today) : skip,
+      tab === 'fb' || tab === 'rentals' ? api.listProducts() : skip,
+      onDay ? api.listOrders(today) : skip,
+      tab === 'rentals' ? api.activeRentals() : skip,
+      onDay ? (isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[])) : skip,
+      onDay ? api.listBookingsByDate(today, 'staff') : skip
+    ])
+      .then(([queue, openShift, summary, prods, dayOrders, rentals, history, todays]) => {
         if (!isCurrent()) return;
-        setTodayBookingsApi(todays);
-        setShift(openShift);
-        setShiftHistory(history);
         setReviewQueue(queue);
-        setDaySummary(summary);
-        setProducts(prods);
-        setOrders(dayOrders);
-        setActiveRentalOrders(rentals);
+        setShift(openShift);
+        if (summary) setDaySummary(summary);
+        if (prods) setProducts(prods);
+        if (dayOrders) setOrders(dayOrders);
+        if (rentals) setActiveRentalOrders(rentals);
+        if (history) setShiftHistory(history);
+        if (todays) setTodayBookingsApi(todays);
         setStaffApiError(null);
         setLastSyncAt(Date.now());
       })
@@ -188,7 +203,7 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
         if (err instanceof api.ApiError && err.status === 401) setStaffUser(null);
         setStaffApiError(err.message);
       });
-  }, [triggerRefresh, staffUserId, staffRole], liveTick);
+  }, [triggerRefresh, staffUserId, staffRole, activePosTab], liveTick);
 
   // API mode: the walk-in grid shows the backend's bookings for the chosen
   // date (online + walk-in), so the counter can't sell a slot that was
@@ -206,23 +221,28 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
       }
       // Name or role changed by an admin since sign-in.
       setStaffUser(me);
+      // The grid's bookings and closures only while the walk-in tab is
+      // open; court names and pricing (prices, the receipt header) always.
+      const onWalkin = activePosTab === 'walkin';
       const [apiCourts, dayBookings, closures] = await Promise.all([
         api.listCourts(),
-        api.listBookingsByDate(walkinDate, 'staff'),
-        api.listDaysOff(walkinDate, walkinDate),
+        onWalkin ? api.listBookingsByDate(walkinDate, 'staff') : Promise.resolve(null),
+        onWalkin ? api.listDaysOff(walkinDate, walkinDate) : Promise.resolve(null),
         // Price previews read it; a failure here mustn't block the grid.
         api.syncPricingCache().catch(() => undefined)
       ]);
       if (!isCurrent()) return;
       setCourts(apiCourts);
-      setBookings(dayBookings);
-      setDaysOff(closures);
-      setLoadedDate(walkinDate);
+      if (dayBookings && closures) {
+        setBookings(dayBookings);
+        setDaysOff(closures);
+        setLoadedDate(walkinDate);
+      }
       setGridError(null);
     } catch (err) {
       if (isCurrent()) setGridError(err instanceof Error ? err.message : String(err));
     }
-  }, [triggerRefresh, staffUserId, walkinDate], liveTick);
+  }, [triggerRefresh, staffUserId, walkinDate, activePosTab], liveTick);
 
   // Load everything
   useEffect(() => {
