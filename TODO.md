@@ -76,7 +76,7 @@ Each needs a yes/no from the owner before it is built.
 - [ ] Optional: staff/admin can trigger a reset for a customer at the counter after checking ID.
 
 ## 5. VAT on receipts
-- [x] Hard-coded placeholder header replaced by the admin setting (name, address, phone, tax ID, VAT registered) - `PUT /admin/business`, `StaffPOS.tsx` receipt.
+- [x] Hard-coded placeholder header replaced by the admin setting (name, address, phone, tax ID, VAT registered) - `PUT /admin/business`, `StaffPOS.tsx` receipt (dialog in the panel since the 2026-10-22 split).
 - [x] VAT-registered: seller name, address, 13-digit tax ID and the VAT 7% breakdown are printed (title ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ).
 - [ ] Still to do if VAT-registered: a running tax-invoice number (the receipt number is now the booking/order code), and a full tax invoice (ใบกำกับภาษีเต็มรูป) with the customer's name/address/tax ID when asked.
 - [x] Not registered: no VAT lines, titled ใบเสร็จรับเงิน.
@@ -181,7 +181,8 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] React type checking (done 2026-10-22): `@types/react`/`@types/react-dom` added; `strict`, `noUnusedLocals`, `noFallthroughCasesInSwitch` on in `tsconfig.json` (`npm run lint` = 0 errors). The ~3,500 errors were nearly all from React being untyped; 8 real ones fixed. Left off: `noImplicitReturns` (15, style only).
 - [ ] Pricing/availability/drawer rules exist in Go and TypeScript - server returns the availability matrix (status, price, reason) and error codes instead of English text matched by ~130 regexes.
 - [ ] Two data modes (110 `USE_BACKEND` branches) - one DataSource interface, or drop browser-only mode for a Docker demo.
-- [ ] Split StaffPOS / AdminPanel / CustomerPanel (2-3.5k lines each) by tab.
+- [x] Split StaffPOS / AdminPanel / CustomerPanel by tab (done 2026-10-22): panels 131-414 lines, one file per tab (35-491 lines) under `components/{staff,admin,customer}/`, state and handlers in `use<Panel>.tsx` behind a typed context.
+- [ ] Next: the three `use<Panel>.tsx` hooks are still 1.2-1.9k lines - split them by area (e.g. staff: walk-in, slips, shop/rentals, shift) into smaller hooks.
 - [x] Slip upload: type check and downscale to ≤1600 px JPEG when not JPG/PNG/WebP or over 1.5 MB (`src/slipImage.ts`); CSV formula guard covers leading spaces/tab/CR and leaves numbers alone. Done 2026-10-21.
 - [ ] Small: token in localStorage + no CSP; 7-9 px text; unused deps (`@google/genai`, `express`, `dotenv`, `motion`); cash refunds don't reduce the drawer (section 0).
 

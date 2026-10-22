@@ -18,6 +18,46 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Split the three big panels by tab
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 2 of the code-quality plan)
+- **Commit(s):** this commit (on `main`, parent `70868b9`)
+- **Changed:** code moved, not rewritten. For each of StaffPOS (3,269
+  lines), AdminPanel (3,478) and CustomerPanel (2,269):
+  - `components/<area>/use<Panel>.tsx`: the component body (state,
+    effects, handlers) unchanged, returning everything as one object, plus
+    `<Panel>Context` / `use<Panel>Context()` (typed from the hook's return
+    type, throws outside the panel). Module-level helpers and types of the
+    old file live here too, exported.
+  - One component per tab/section reading the context:
+    staff/ WalkinTab, SlipsTab, ShopTab, RentalsTab, VouchersTab,
+    DayTotalTab; admin/ DashboardTab, PricingTab, CourtsTab, ProductsTab,
+    UsersTab, MemberDiscountsTab, ReportsTab, AuditLogTab (RolesTab was
+    already separate); customer/ AccountBox, PickSlotsStep, ConfirmStep,
+    PaymentStep, MyBookingsBox, LineSimulator.
+  - The panel files keep the login screen, header, tab bar, shared dialogs
+    and the provider: 414 / 140 / 131 lines.
+  - Done with a one-off script using the TypeScript compiler API (names
+    each file needs taken from the AST, unused imports removed by the
+    language service); strict mode then verified it. One manual fix:
+    `PaymentStep` lost the `currentBooking` narrowing of its old
+    `activeStep === 3 && currentBooking &&` wrapper -> `if (!currentBooking)
+    return null`.
+  - REQUIREMENTS.md file map and TODO updated.
+- **Verified:** `npm run lint` 0 errors, `vitest` 60/60, `vite build` in
+  both modes. Playwright against the API backend, no page errors:
+  every staff tab and all 9 admin tabs open; typing in the walk-in form
+  keeps the text; customer login -> pick an hour -> confirm -> QR + payee
+  -> slip upload (DB: SLIP_UPLOADED); staff slip queue: slip replaced ->
+  warning + approve blocked -> acknowledge -> approve (DB: CONFIRMED /
+  VERIFIED); undo no-show from the booking dialog (points back).
+  - A console 404 seen on the staff page also happens on the code before
+    the split (not from this change).
+- **Not done / follow-ups:** the hooks are still 1.2-1.9k lines; splitting
+  them by area is the next step (TODO 11, structure).
+
+---
+
 ## 2026-10-22 — TypeScript strict mode on
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 1 of the code-quality plan)
