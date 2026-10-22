@@ -170,8 +170,9 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] Kept rental deposits (`orders.deposit_kept`) are not in any income report or CSV, and the staff day ledger's expected cash leaves out deposits still held (the shift count includes them) - decide whether kept deposits are income, then add them.
 
 ### Performance (beyond indexes)
-- [ ] Admin dashboard: ~33 sequential queries (6-month loop = 18) - one GROUP BY month query per table, daily rollup or 60 s cache for all-time totals.
-- [ ] Unbounded lists: `GET /admin/users` returns everyone; audit log does a full COUNT + 4-column LIKE per page (use has_more + keyset paging); monthly export loads the month in memory with an IN list that fails past ~65k orders (join on date range, stream CSV); `GET /admin/shifts` = 4 queries per shift (store cash_deposits at close, skip closed shifts).
+- [x] Admin dashboard: ~33 sequential queries -> 6 grouped ones (done 2026-10-22; output compared identical with the old code on 11 dates incl. month boundaries). A daily rollup / cache for all-time totals only if the tables get very large.
+- [x] Unbounded lists (done 2026-10-22): `GET /admin/users` is paged (200 default, `search`, `has_more`; the users tab searches on the server); audit log returns `has_more` instead of a full COUNT, with keyset paging (`before_id`); order lines/products/staff are loaded in IN-batches of 1,000 (no 65k-parameter failure). Still open: the monthly export is built in memory (fine for a month of one complex); the audit screen still loads the newest 500 and filters them in the browser.
+- [ ] `GET /admin/shifts` = 4 queries per shift (store cash_deposits at close, skip closed shifts).
 - [ ] Checkout makes 4-7 round trips per cart line under locks - lock all products in one query, bulk update, batch insert items.
 - [ ] Pricing config loaded 3× per booking; roles + user reloaded on every request - small in-process caches invalidated on admin writes.
 - [ ] Frontend: every action refetches everything (~13 requests per sale) - per-resource queries (e.g. TanStack Query) with targeted invalidation; ~~`request()` timeout~~ (GETs time out after 20 s since 2026-10-21); grid cells read localStorage and recompute on every keystroke - memoise the slot matrix, `calculateLedger` once per render.

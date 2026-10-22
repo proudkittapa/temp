@@ -224,14 +224,15 @@ func (h *ShopHandler) MonthReport(c *gin.Context) {
 func (h *ShopHandler) AuditLogs(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	offset, _ := strconv.Atoi(c.Query("offset"))
-	logs, total, err := h.reports.AuditLogs(c.Request.Context(), service.AuditQuery{
+	logs, more, err := h.reports.AuditLogs(c.Request.Context(), service.AuditQuery{
 		Search: c.Query("search"), TargetType: c.Query("target_type"), Limit: limit, Offset: offset,
+		BeforeID: c.Query("before_id"),
 	})
 	if err != nil {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": logs, "total": total})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": logs, "has_more": more})
 }
 
 // POST /api/v1/admin/orders/:id/void {"reason": "..."} - managers: cancel

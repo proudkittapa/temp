@@ -59,8 +59,19 @@ func (s *UserService) AdjustUserPoints(ctx context.Context, userID string, delta
 }
 
 // FetchAllUsers returns a list of registered users filtered optionally by role
-func (s *UserService) FetchAllUsers(ctx context.Context, roleFilter string) ([]model.User, error) {
-	return s.usrRepo.FetchAll(ctx, roleFilter)
+// ListUsers is one page of the admin user list (newest first, up to 1000;
+// default 200) and whether more match.
+func (s *UserService) ListUsers(ctx context.Context, role, search string, limit, offset int) ([]model.User, bool, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if len([]rune(search)) > 100 {
+		return []model.User{}, false, nil
+	}
+	return s.usrRepo.FetchPage(ctx, repository.UserFilter{Role: role, Search: search, PhoneDigits: partialPhone(search), Limit: limit, Offset: offset})
 }
 
 // MemberMatch is what the counter sees when it looks up a customer to give

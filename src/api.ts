@@ -118,7 +118,8 @@ const READ_TIMEOUT_MS = 20000;
 
 async function request<T>(
   path: string,
-  opts: { method?: string; body?: unknown; form?: FormData; session?: SessionKind } = {}
+  // withMeta: resolve to the whole body ({ data, has_more, ... }), not just data.
+  opts: { method?: string; body?: unknown; form?: FormData; session?: SessionKind; withMeta?: boolean } = {}
 ): Promise<T> {
   const headers: Record<string, string> = {};
   const token = opts.session ? getSession(opts.session)?.token : undefined;
@@ -173,7 +174,7 @@ async function request<T>(
     throw new ApiError(json?.error || (json ? `Request failed (${res.status})` : 'เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง กรุณาลองใหม่'), res.status);
   }
   if (writeScope && pendingWrites.get(writeScope)?.key === headers['Idempotency-Key']) pendingWrites.delete(writeScope);
-  return json.data as T;
+  return (opts.withMeta ? json : json.data) as T;
 }
 
 // Resolves a server-relative path like "/api/v1/slips/x.png?exp=..&sig=.."
@@ -636,8 +637,14 @@ export async function rejectPayment(paymentId: string, reason: string, slipUploa
 
 // ---- users (Admin panel; manager/admin) ----
 
-export async function listUsers(): Promise<User[]> {
-  return (await request<ApiUser[]>('/admin/users', { session: 'admin' })).map(toUser);
+// One page of accounts, newest first (the server never sends the whole
+// list); search matches part of the name, email or phone.
+export async function listUsers(opts: { search?: string; limit?: number } = {}): Promise<{ users: User[]; hasMore: boolean }> {
+  const q = new URLSearchParams();
+  if (opts.search) q.set('search', opts.search);
+  q.set('limit', String(opts.limit ?? 200));
+  const r = await request<{ data: ApiUser[]; has_more?: boolean }>(`/admin/users?${q}`, { session: 'admin', withMeta: true });
+  return { users: r.data.map(toUser), hasMore: !!r.has_more };
 }
 
 // Sets the membership tier the server prices this customer's bookings with.

@@ -628,16 +628,23 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 }
 
 // views loads the lines (with product names) of the given orders.
+// inBatch is the most ids sent in one IN list.
+const inBatch = 1000
+
 func (s *POSService) views(db *gorm.DB, orders []model.Order) ([]OrderView, error) {
 	idList := make([]string, len(orders))
 	for i, o := range orders {
 		idList[i] = o.ID
 	}
+	// In batches: one IN list per query is capped by Postgres' 65,535
+	// parameters, which a month's export (all its orders) could pass.
 	var lines []model.OrderItem
-	if len(idList) > 0 {
-		if err := db.Where("order_id IN ?", idList).Order("id").Find(&lines).Error; err != nil {
+	for start := 0; start < len(idList); start += inBatch {
+		var batch []model.OrderItem
+		if err := db.Where("order_id IN ?", idList[start:min(start+inBatch, len(idList))]).Order("id").Find(&batch).Error; err != nil {
 			return nil, err
 		}
+		lines = append(lines, batch...)
 	}
 	// Names of just the products on these lines, not the whole catalog.
 	names := map[string]string{}
@@ -648,9 +655,9 @@ func (s *POSService) views(db *gorm.DB, orders []model.Order) ([]OrderView, erro
 			productIDs = append(productIDs, l.ProductID)
 		}
 	}
-	if len(productIDs) > 0 {
+	for start := 0; start < len(productIDs); start += inBatch {
 		var products []model.Product
-		if err := db.Select("id, name").Where("id IN ?", productIDs).Find(&products).Error; err != nil {
+		if err := db.Select("id, name").Where("id IN ?", productIDs[start:min(start+inBatch, len(productIDs))]).Find(&products).Error; err != nil {
 			return nil, err
 		}
 		for _, p := range products {
@@ -670,9 +677,9 @@ func (s *POSService) views(db *gorm.DB, orders []model.Order) ([]OrderView, erro
 			staffIDs = append(staffIDs, o.CreatedBy)
 		}
 	}
-	if len(staffIDs) > 0 {
+	for start := 0; start < len(staffIDs); start += inBatch {
 		var staff []model.User
-		if err := db.Select("id, name").Where("id IN ?", staffIDs).Find(&staff).Error; err != nil {
+		if err := db.Select("id, name").Where("id IN ?", staffIDs[start:min(start+inBatch, len(staffIDs))]).Find(&staff).Error; err != nil {
 			return nil, err
 		}
 		for _, u := range staff {

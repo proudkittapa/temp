@@ -192,11 +192,10 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
           return;
         }
         setAdminUser(me);
-        const [closures, pricing, apiUsers, apiProducts, apiCourts, logs] = await Promise.all([
+        const [closures, pricing, apiProducts, apiCourts, logs] = await Promise.all([
           // Each list only if the role may read it - a custom role missing
           // one permission must still get the rest of the panel.
           api.listDaysOff(getTodayDateStr()), api.syncPricingCache(),
-          can(me, 'manage_members', 'adjust_points', 'manage_staff') ? api.listUsers() : Promise.resolve([] as User[]),
           can(me, 'manage_products') ? api.adminListProducts() : Promise.resolve([] as Product[]),
           can(me, 'manage_closures', 'manage_courts') ? api.adminListCourts() : api.listCourts(),
           can(me, 'view_audit_log') ? api.auditLogs({ limit: 500 }) : Promise.resolve([] as AuditLog[])
@@ -206,7 +205,6 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
           api.listRoles().then(r => { if (!cancelled) setRoles(r); }).catch(() => {});
         }
         setDaysOff(closures);
-        setUsers(apiUsers);
         setProducts(apiProducts);
         setCourts(apiCourts);
         setOpenHourSetting(pricing.config.openHour ?? 7);
@@ -223,6 +221,21 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
     })();
     return () => { cancelled = true; };
   }, [triggerRefresh, adminUserId, adminRole]);
+
+  // API mode: the user list is one page from the server, searched there
+  // (after a pause in typing) - it is never loaded whole.
+  const [usersHasMore, setUsersHasMore] = useState(false);
+  useEffect(() => {
+    if (!api.USE_BACKEND || !adminUserId || !can(adminUser, 'manage_members', 'adjust_points', 'manage_staff')) return;
+    let cancelled = false;
+    const search = userSearchQuery.trim();
+    const t = setTimeout(() => {
+      api.listUsers({ search })
+        .then(r => { if (!cancelled) { setUsers(r.users); setUsersHasMore(r.hasMore); } })
+        .catch(err => { if (!cancelled) setAdminApiError(err instanceof Error ? err.message : String(err)); });
+    }, search ? 300 : 0);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [triggerRefresh, adminUserId, adminRole, userSearchQuery]);
 
   // The dashboard's date: its numbers, bookings and closures (the list
   // above has closures from today on only, so a past date needs its own).
@@ -336,6 +349,7 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
     userIdToPromote,
     setUserIdToPromote,
     userSearchQuery,
+    usersHasMore,
     setUserSearchQuery,
     userRoleFilter,
     setUserRoleFilter,

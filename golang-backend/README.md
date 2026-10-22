@@ -409,6 +409,7 @@ curl -X POST http://localhost:8080/api/v1/admin/products/pd-9/stock -H "Authoriz
 curl "http://localhost:8080/api/v1/admin/dashboard?date=2026-10-20" -H "Authorization: Bearer <Manager_Token>"
 curl "http://localhost:8080/api/v1/admin/report?month=2026-10" -H "Authorization: Bearer <Manager_Token>"   # bookings + orders for the CSVs
 curl "http://localhost:8080/api/v1/admin/audit-logs?search=refund&target_type=Payment&limit=100" -H "Authorization: Bearer <Admin_Token>"
+# -> { data: [...newest first], has_more }. Next page: &before_id=<id of the last entry> (or &offset=)
 ```
 The dashboard counts paid hours (confirmed, completed, no-show) by playing
 date and counter sales by sale time (Bangkok day). Occupancy = sold
@@ -466,7 +467,8 @@ nobody can change their own balance.
 
 ### 10. Users and Membership Tiers (manager/admin)
 ```bash
-curl "http://localhost:8080/api/v1/admin/users?role=CUSTOMER" -H "Authorization: Bearer <Manager_Token>"
+curl "http://localhost:8080/api/v1/admin/users?role=CUSTOMER&search=085&limit=200" -H "Authorization: Bearer <Manager_Token>"
+# -> { data: [...newest first, 200 by default, max 1000], has_more }; search = part of name, email or phone
 # The tier the server prices this customer's bookings with (FR-2.3)
 curl -X PUT http://localhost:8080/api/v1/admin/users/<user_id>/member-type \
   -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" \

@@ -296,15 +296,39 @@ func (r *UserRepository) GetMemberDiscount(ctx context.Context, mType model.Memb
 }
 
 // FetchAll retrieves lists database rows representing users. Helpful for Admin panel customer dashboards.
-func (r *UserRepository) FetchAll(ctx context.Context, roleFilter string) ([]model.User, error) {
-	var users []model.User
+// UserFilter narrows the admin user list. Search matches part of the name
+// or email, or digits anywhere in the phone; PhoneDigits is Search reduced to
+// a phone number (empty if it has no digits).
+type UserFilter struct {
+	Role        string
+	Search      string
+	PhoneDigits string
+	Limit       int
+	Offset      int
+}
+
+// FetchPage returns users newest first, at most f.Limit of them, and
+// whether more match - the list is never sent whole.
+func (r *UserRepository) FetchPage(ctx context.Context, f UserFilter) ([]model.User, bool, error) {
 	query := r.db.WithContext(ctx)
-	if roleFilter != "" {
-		query = query.Where("role = ?", roleFilter)
+	if f.Role != "" {
+		query = query.Where("role = ?", f.Role)
 	}
-	err := query.Order("created_at DESC").Find(&users).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to query users ledger: %w", err)
+	if term := strings.TrimSpace(f.Search); term != "" {
+		esc := strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+		like := "%" + esc.Replace(term) + "%"
+		if f.PhoneDigits != "" {
+			query = query.Where("(name ILIKE ? OR email ILIKE ? OR phone LIKE ?)", like, like, "%"+esc.Replace(f.PhoneDigits)+"%")
+		} else {
+			query = query.Where("(name ILIKE ? OR email ILIKE ?)", like, like)
+		}
 	}
-	return users, nil
+	var users []model.User
+	if err := query.Order("created_at DESC, id").Limit(f.Limit + 1).Offset(f.Offset).Find(&users).Error; err != nil {
+		return nil, false, fmt.Errorf("failed to query users ledger: %w", err)
+	}
+	if len(users) > f.Limit {
+		return users[:f.Limit], true, nil
+	}
+	return users, false, nil
 }

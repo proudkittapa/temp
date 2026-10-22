@@ -315,15 +315,19 @@ func (h *ArenaHandler) ModifyPoints(c *gin.Context) {
 	})
 }
 
-// GET /api/v1/admin/users?role=CUSTOMER - manager/admin: accounts for the
-// Admin panel's user list (password hashes are never serialized).
+// GET /api/v1/admin/users?role=CUSTOMER&search=&limit=&offset= - manager/
+// admin: one page of accounts for the Admin panel's user list, newest first
+// (200 by default, at most 1000), with has_more; search matches part of the
+// name, email or phone. Password hashes are never serialized.
 func (h *ArenaHandler) ListUsers(c *gin.Context) {
-	users, err := h.userService.FetchAllUsers(c.Request.Context(), c.Query("role"))
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	users, more, err := h.userService.ListUsers(c.Request.Context(), c.Query("role"), c.Query("search"), limit, offset)
 	if err != nil {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": users})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": users, "has_more": more})
 }
 
 // GET /api/v1/staff/members?q=081 - counter staff: customers A-Z (all when

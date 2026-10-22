@@ -28,6 +28,7 @@ export default function UsersTab() {
     userPendingChanges,
     userRoleFilter,
     userSearchQuery,
+    usersHasMore,
     userTierFilter,
     users
   } = useAdminPanelContext();
@@ -103,6 +104,12 @@ export default function UsersTab() {
         {/* Comprehensive Users list & management search */}
         <div className="col-span-1 lg:col-span-8 space-y-4">
           <span className="text-xs font-black text-slate-800 block uppercase tracking-wider">🗄️ ระบบบริหารสมุดรายชื่อสิทธิ์สมาชิกพอร์ทัล ({users.length} รายการ)</span>
+
+          {usersHasMore && (
+            <p id="users-has-more" className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              แสดง {users.length} บัญชีล่าสุด — พิมพ์ชื่อ เบอร์ หรืออีเมลในช่องค้นหาเพื่อหาบัญชีอื่น
+            </p>
+          )}
 
           {/* Search Bar filter controls */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">

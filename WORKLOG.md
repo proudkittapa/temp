@@ -18,6 +18,48 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Backend speed-ups, part 1: dashboard, user list, audit log
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 3 of the code-quality plan)
+- **Commit(s):** this commit (on `main`, parent `d763a02`)
+- **Changed:**
+  - `ReportService.Dashboard`: ~33 sequential queries (18 in a 6-month
+    loop) -> 6: settings + all-time totals in one select of subqueries;
+    bookings day/pending/all-time with FILTER; paid bookings by month and
+    sport; counter-sale lines by kind and Bangkok month with the day's
+    share; day occupancy; hourly occupancy. `physicalCourts` removed.
+  - `GET /admin/users`: paged (`limit` 200 default, max 1000, `offset`),
+    `search` (part of name/email/phone, LIKE-escaped), `has_more`.
+    Repository `FetchAll` -> `FetchPage`. Admin users tab: the list is
+    loaded by its own effect and searched on the server 300 ms after
+    typing stops; a note shows when more accounts exist than are listed.
+  - `GET /admin/audit-logs`: `has_more` instead of `total` (no COUNT of
+    every matching row per page); keyset paging with `before_id` (offset
+    still works); order `created_at DESC, id DESC`.
+  - `POSService.views`: order lines, product names and staff names
+    fetched in IN-batches of 1,000 (one IN list over a month's orders
+    could pass Postgres' 65,535-parameter limit).
+  - `api.ts`: `request(..., { withMeta })` returns the whole body;
+    `listUsers({ search, limit })` -> `{ users, hasMore }`.
+  - README (API examples), TODO 11 updated.
+- **Verified:** `go vet`, `go test ./...`, `tsc`, `vitest` 60/60.
+  - Dashboard: old and new binaries side by side on the same database,
+    JSON identical for 11 dates (2025-12-31 ... 2026-12-15), after adding
+    temporary rows across months, sports and statuses and two orders at
+    the Bangkok month boundary (23:30 / 00:30); rows removed afterwards.
+    Local timing 10 ms -> 7 ms (the gain is the 27 fewer round trips to a
+    remote database).
+  - API: users default/limit 3 (has_more true)/phone/Thai name/email+role
+    searches, `50%` escaped; audit page 2 by `before_id` equals offset 3;
+    bad cursor -> 400; month report loads with order lines.
+  - Playwright: users tab lists 8, search "นักเรียน" -> 1 (one request),
+    cleared -> 8; no page errors.
+- **Not done / follow-ups:** checkout round trips, caches, `GET
+  /admin/shifts` per-shift queries (next commits); the audit screen still
+  loads the newest 500 and filters in the browser.
+
+---
+
 ## 2026-10-22 — Panel hooks split by area
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("split them by area first")
