@@ -333,6 +333,8 @@ curl -X POST http://localhost:8080/api/v1/admin/payments/<payment_id>/refund \
 curl -X POST http://localhost:8080/api/v1/admin/bookings/<booking_id>/mark-cash -H "Authorization: Bearer <Manager_Token>"
 # Any staff: the customer didn't come for this (started) hour - takes back its point
 curl -X POST http://localhost:8080/api/v1/staff/bookings/<booking_id>/no-show -H "Authorization: Bearer <Staff_Token>"
+# ...and undo it: the customer came late (refused if the hour was sold again); gives the point back
+curl -X POST http://localhost:8080/api/v1/staff/bookings/<booking_id>/undo-no-show -H "Authorization: Bearer <Staff_Token>"
 # Booking money received today by method (cash drawer) and refunds
 curl "http://localhost:8080/api/v1/staff/summary?date=2026-06-20" -H "Authorization: Bearer <Staff_Token>"
 ```

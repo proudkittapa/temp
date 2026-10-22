@@ -18,6 +18,40 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Undo a no-show
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (owner: "staff can undo no show")
+- **Commit(s):** this commit (on `main`, parent `1b1428c`)
+- **Changed:**
+  - `BookingService.UndoNoShow` (`booking_admin.go`) +
+    `POST /staff/bookings/:id/undo-no-show` (counter permission, as
+    marking): NO_SHOW -> CONFIRMED (the minute job completes it again if
+    the hour is over). Locks customer, court group, then the booking (the
+    order of a new booking); refused with 409 "the hour was already sold to
+    another customer" when a booking holds that court or a conflicting one
+    at that hour. Gives back what the no-show mark(s) took and earlier
+    undos haven't returned (ledger rows on the booking with note
+    "No-show..."), as EARN_BOOKING "No-show undone ...". Rewards cancelled
+    to cover the points stay cancelled. Audit `BOOKING_NO_SHOW_UNDONE`.
+  - StaffPOS: "↩️ ลูกค้ามาแล้ว (ยกเลิก "ไม่มา")" (`#undo-no-show-button`) in
+    the booking detail of a no-show; browser-only mode does the same
+    (local no-show ledger rows now carry the booking id). `api.undoNoShow`.
+    Thai texts for the two new server errors (`errorText.ts`, tests).
+  - Docs: README, golang-backend/README, TODO 12 (ticked), features.html,
+    TESTING_CHECKLIST 4b.1f.
+- **Verified:** `go vet`, `go test ./...`, `tsc`, `vitest` 60/60.
+  - Live API: paid booking (points 1 -> 2), no-show (-> 1), undo
+    (CONFIRMED, points_restored 1, -> 2), second undo refused, no-show
+    again (-> 1), a live booking put on that hour -> undo 409, points stay 1.
+  - Playwright (API mode): today's no-show in the day list -> ออกใบเสร็จ
+    -> undo -> "ยกเลิก "ไม่มา" แล้ว ... คืนแต้ม 1 แต้ม", row shows
+    ยืนยันแล้ว, ledger has the undo row; no page errors.
+- **Not done / follow-ups:** no time limit on undo (it is audited); a
+  no-show undone after the court was closed for a day off isn't checked
+  against the closure.
+
+---
+
 ## 2026-10-21 — Review fixes for the graceful lifecycle and the resale fixes
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

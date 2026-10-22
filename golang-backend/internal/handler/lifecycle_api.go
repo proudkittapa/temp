@@ -86,6 +86,18 @@ func (h *ArenaHandler) MarkNoShow(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": b})
 }
 
+// POST /api/v1/staff/bookings/:id/undo-no-show - staff: the customer came
+// after all; refused once the hour was sold again.
+func (h *ArenaHandler) UndoNoShow(c *gin.Context) {
+	actorID, actorName := actor(c)
+	res, err := h.bookingService.UndoNoShow(c.Request.Context(), c.Param("id"), actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": res})
+}
+
 // RewardHandler serves the loyalty rewards club (FR-4.2/4.3).
 type RewardHandler struct {
 	rewards *service.RewardService

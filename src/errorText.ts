@@ -17,6 +17,9 @@ const detail = (s: string) => s.replace(SENTINEL, '');
 const RULES: Rule[] = [
   // A bulk import names the failing row; translate the rest after it.
   [/^row (\d+): (.*)$/i, m => `แถวที่ ${m[1]}: ${thaiErrorText(m[2])}`],
+  // Undo of a no-show (before the generic "slot already booked" rule).
+  [/the hour was already sold to another customer/i, 'ชั่วโมงนี้ขายให้ลูกค้าคนอื่นไปแล้ว — ยกเลิก "ไม่มา" ไม่ได้'],
+  [/booking is \w+, not a no-show/i, 'การจองนี้ไม่ได้อยู่ในสถานะ "ไม่มา" แล้ว (รีเฟรชหน้าจอ)'],
   // Sign-in and accounts
   [/invalid login credentials/i, 'เบอร์โทร/อีเมล หรือรหัสผ่านไม่ถูกต้อง'],
   [/too many failed logins - try again in (\d+) minutes/i, m => `ลองผิดหลายครั้งเกินไป กรุณารอ ${m[1]} นาทีแล้วลองใหม่`],

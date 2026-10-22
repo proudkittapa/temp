@@ -664,6 +664,95 @@ func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, act
 	return &b, nil
 }
 
+// UndoNoShow puts a no-show back to CONFIRMED - the customer came after
+// all (late) - and gives back the points the no-show took (rewards
+// cancelled to cover them stay cancelled; their points are what is given
+// back). Refused once the freed hour was sold again: a booking on the same
+// or a conflicting court at that hour holds it. The minute job marks the
+// hour COMPLETED again if it has already ended.
+func (s *BookingService) UndoNoShow(ctx context.Context, bookingID, actorID, actorName string) (*UndoNoShowResult, error) {
+	var peek model.Booking
+	if err := s.db.WithContext(ctx).Select("id", "user_id", "court_id").Take(&peek, "id = ?", bookingID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	var court model.Court
+	if err := s.db.WithContext(ctx).Take(&court, "id = ?", peek.CourtID).Error; err != nil {
+		return nil, err
+	}
+	res := &UndoNoShowResult{}
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		*res = UndoNoShowResult{} // a retried attempt starts over
+		// Lock order as a new booking: customer, court group, then rows.
+		if peek.UserID != "" && peek.UserID != model.WalkInUserID {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Take(&model.User{}, "id = ?", peek.UserID).Error; err != nil &&
+				!errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		group, err := s.bkRepo.LockCourtGroupTx(tx, court)
+		if err != nil {
+			return err
+		}
+		var b model.Booking
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&b, "id = ?", bookingID).Error; err != nil {
+			return err
+		}
+		if len(b.Date) > 10 {
+			b.Date = b.Date[:10]
+		}
+		if b.Status != model.BookingNoShow {
+			return fmt.Errorf("%w: booking is %s, not a no-show", ErrInvalidState, b.Status)
+		}
+		if err := s.bkRepo.CheckOverlapTx(tx, court, group, b.Date, b.StartTime, b.EndTime); err != nil {
+			if errors.Is(err, repository.ErrSlotTaken) {
+				return fmt.Errorf("%w: the hour was already sold to another customer", repository.ErrSlotTaken)
+			}
+			return err
+		}
+		now := s.now()
+		if err := tx.Model(&model.Booking{}).Where("id = ?", b.ID).
+			Updates(map[string]interface{}{"status": model.BookingConfirmed, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		b.Status = model.BookingConfirmed
+		// What the no-show mark(s) took and earlier undos haven't given back
+		// (both write their note with this prefix on this booking).
+		var net int
+		if err := tx.Model(&model.PointsLedgerEntry{}).Select("COALESCE(SUM(points), 0)").
+			Where("ref_type = ? AND ref_id = ? AND note LIKE ?", "Booking", b.ID, "No-show%").Scan(&net).Error; err != nil {
+			return err
+		}
+		if give := -net; give > 0 {
+			refType, note := "Booking", fmt.Sprintf("No-show undone %s %s (%s)", b.Date, b.StartTime, b.BookingCode)
+			if _, err := s.usrRepo.AddPointsEntry(ctx, tx, b.UserID, model.LedgerEarnBooking, give, actorID, &refType, &b.ID, &note); err != nil {
+				return err
+			}
+			res.PointsRestored = give
+		}
+		res.Booking = b
+		return tx.Create(&model.AuditLog{
+			ID: ids.New("log"), UserID: actorID, UserName: actorName,
+			Action: "BOOKING_NO_SHOW_UNDONE", TargetType: "Booking", TargetID: b.ID,
+			BeforeState: model.AuditJSON(map[string]any{"status": model.BookingNoShow}),
+			AfterState:  model.AuditJSON(map[string]any{"status": model.BookingConfirmed, "points_restored": res.PointsRestored}),
+			CreatedAt:   now,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// UndoNoShowResult is the restored booking and the points given back.
+type UndoNoShowResult struct {
+	Booking        model.Booking `json:"booking"`
+	PointsRestored int           `json:"points_restored"`
+}
+
 // CompleteFinishedBookings marks confirmed hours whose end has passed
 // (Bangkok time) as COMPLETED. main runs it every minute.
 func (s *BookingService) CompleteFinishedBookings(ctx context.Context) (int64, error) {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
-  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift
+  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift, PointsLedgerEntry
 } from '../types';
 import { StorageService, findClosure, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf, formatDate, formatDateTime, businessInfo, formatTaxId, findNoShow, resalePrice, noShowOpenAt } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
@@ -1027,9 +1027,44 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
     }
     StorageService.set('bookings', stored.map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
     if (booking.totalAmount > 0) { // a free (voucher) hour earned no point to take back
-      StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -1, 'staff', { note: `No-show ${booking.date} ${booking.startTime}` });
+      StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -1, 'staff', { refType: 'Booking', refId: booking.id, note: `No-show ${booking.date} ${booking.startTime}` });
     }
     done();
+  };
+
+  // Any staff: the customer marked as a no-show came after all (late). The
+  // booking is confirmed again and its points come back - unless the freed
+  // hour was already sold to someone else.
+  const handleUndoNoShow = async (booking: Booking) => {
+    if (!(await ask(`ลูกค้ามาใช้สนามแล้ว — ยกเลิกการบันทึก "ไม่มา" ของ ${booking.startTime}-${booking.endTime} (${booking.bookingCode})?\nการจองกลับเป็นยืนยันแล้ว และคืนแต้มที่หักไป (ทำไม่ได้ถ้าขายชั่วโมงนี้ให้คนอื่นไปแล้ว)`, { okLabel: 'ลูกค้ามาแล้ว' }))) return;
+    const done = (points: number) => {
+      onAddAuditLog('BOOKING_NO_SHOW_UNDONE', 'Booking', booking.id, { status: BookingStatus.NO_SHOW }, { status: BookingStatus.CONFIRMED, pointsRestored: points });
+      closeBookingDetail();
+      onRefreshAll();
+      notify(`ยกเลิก "ไม่มา" แล้ว — การจองกลับเป็นยืนยันแล้ว${points > 0 ? ` · คืนแต้ม ${points} แต้ม` : ''}`);
+    };
+    if (api.USE_BACKEND) {
+      return api.undoNoShow(booking.id).then(r => done(r.pointsRestored)).catch(err => notify(`ยกเลิกไม่สำเร็จ: ${err.message}`));
+    }
+    const stored = StorageService.get<Booking[]>('bookings', []);
+    if (stored.find(b => b.id === booking.id)?.status !== BookingStatus.NO_SHOW) {
+      notify('ยกเลิกไม่สำเร็จ: การจองนี้ไม่ได้อยู่ในสถานะ "ไม่มา" แล้ว');
+      closeBookingDetail();
+      onRefreshAll();
+      return;
+    }
+    if (findConflictingBooking(booking.courtId, booking.date, booking.startTime, stored, courts)) {
+      notify('ยกเลิกไม่สำเร็จ: ชั่วโมงนี้ขายให้ลูกค้าคนอื่นไปแล้ว');
+      return;
+    }
+    StorageService.set('bookings', stored.map(b => b.id === booking.id ? { ...b, status: BookingStatus.CONFIRMED } : b));
+    // What the no-show mark(s) took and earlier undos haven't given back.
+    const net = StorageService.get<PointsLedgerEntry[]>('points_ledger', [])
+      .filter(e => e.refId === booking.id && e.note?.startsWith('No-show'))
+      .reduce((n, e) => n + e.points, 0);
+    const given = -net > 0 ? StorageService.addLedgerEntry(booking.userId, LedgerEntryType.EARN_BOOKING, -net, 'staff',
+      { refType: 'Booking', refId: booking.id, note: `No-show undone ${booking.date} ${booking.startTime}` }) : 0;
+    done(given);
   };
 
   // Manager/admin refund of a payment with no booking standing for it -
@@ -3173,7 +3208,8 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
               const ids = new Set(bookingGroupOf(b, bookingPool()).map(x => x.id));
               const payStatus = api.USE_BACKEND ? b.paymentStatus : payments.find(p => ids.has(p.bookingId))?.status;
               const canCash = canManageBookings && b.status === BookingStatus.PENDING_PAYMENT && payStatus !== PaymentStatus.SLIP_UPLOADED;
-              if (!canNoShow && !canCancel && !canCash) return null;
+              const canUndoNoShow = b.status === BookingStatus.NO_SHOW;
+              if (!canNoShow && !canCancel && !canCash && !canUndoNoShow) return null;
               return (
                 <div id="booking-actions" className="flex flex-wrap gap-2 text-[11px]">
                   {canCash && (
@@ -3184,6 +3220,13 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
                       title={noShowYet ? 'สนามจะว่างให้ขายต่อในราคาพิเศษ' : undefined}
                       className="disabled:opacity-50 flex-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold py-1.5 rounded-lg">
                       🚫 ไม่มาใช้สนาม{noShowYet ? '' : ` (กดได้ตั้งแต่ ${noShowFrom.toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false })})`}
+                    </button>
+                  )}
+                  {canUndoNoShow && (
+                    <button type="button" id="undo-no-show-button" disabled={busy} onClick={guarded(() => handleUndoNoShow(b))}
+                      title="ลูกค้ามาสาย - ยกเลิกการบันทึกไม่มา (ถ้ายังไม่ได้ขายชั่วโมงนี้ให้คนอื่น)"
+                      className="disabled:opacity-50 flex-1 bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 font-bold py-1.5 rounded-lg">
+                      ↩️ ลูกค้ามาแล้ว (ยกเลิก "ไม่มา")
                     </button>
                   )}
                   {canCancel && (

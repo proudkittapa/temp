@@ -753,6 +753,13 @@ export async function markNoShow(bookingId: string): Promise<void> {
   await request(`/staff/bookings/${encodeURIComponent(bookingId)}/no-show`, { method: 'POST', session: 'staff' });
 }
 
+// The customer came after all: the no-show goes back to confirmed and its
+// points are given back. Refused (409) once the hour was sold again.
+export async function undoNoShow(bookingId: string): Promise<{ pointsRestored: number }> {
+  const res = await request<{ points_restored: number }>(`/staff/bookings/${encodeURIComponent(bookingId)}/undo-no-show`, { method: 'POST', session: 'staff' });
+  return { pointsRestored: res.points_restored };
+}
+
 export interface DaySummary {
   date: string;
   cashReceived: number;

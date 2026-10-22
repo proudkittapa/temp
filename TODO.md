@@ -197,5 +197,5 @@ Today a no-show keeps the money (no refund, the hour's point is taken back) but 
 - [x] Browser-only mode: same rules in `mockData.ts` / StaffPOS; add to `TESTING_CHECKLIST.md`.
 - Decided: marking a no-show **always** frees the court (no separate button).
 Follow-up review fixes (2026-10-21, see WORKLOG): a freed **half** court is re-sold at the percent of its normal **half** price (250 -> 125; before it cost 250, the same as a normal half, and at 100% double); a full court over one no-show half is discounted on that half only (125 + 250); resale never costs more than the customer's normal price; `NO_SHOW_RESALE_PRICE_PERCENT` must be 1-100. Re-sold no-shows count once in occupancy; the admin grid and the day-off "affected bookings" list ignore no-shows. **Owner: confirm** the half-court change (it departs from "the percent replaces the half-court rate" above).
-- [ ] **Undo a no-show** (owner decision): a customer marked no-show who arrives late, before the hour is re-sold, can't be put back today.
+- [x] **Undo a no-show** (owner: yes, 2026-10-22): any staff, from the booking's detail ("↩️ ลูกค้ามาแล้ว"), `POST /staff/bookings/:id/undo-no-show`. Back to CONFIRMED, the points the no-show took come back (rewards cancelled to cover them stay cancelled); refused once the hour was sold to someone else.
 

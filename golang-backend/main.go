@@ -311,6 +311,7 @@ func main() {
 		api.POST("/staff/payments/:id/verify", can(model.PermVerifySlips), arenaHandler.VerifyPayment)
 		api.POST("/staff/payments/:id/reject", can(model.PermVerifySlips), arenaHandler.RejectPayment)
 		api.POST("/staff/bookings/:id/no-show", can(model.PermCounterBookings), arenaHandler.MarkNoShow)
+		api.POST("/staff/bookings/:id/undo-no-show", can(model.PermCounterBookings), arenaHandler.UndoNoShow)
 		api.GET("/staff/summary", can(model.PermDaySummary), shopHandler.DaySummary)
 
 		// Cancellations, refunds and cash recorded by a manager (FR-6.3)

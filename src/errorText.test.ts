@@ -64,6 +64,8 @@ describe('thaiErrorText', () => {
 
   it('translates the no-show grace message', () => {
     expect(thaiErrorText('invalid state for this action: a no-show can be marked from 15 minutes after the hour starts')).toBe('บันทึก "ไม่มา" ได้หลังเริ่มเวลาไปแล้ว 15 นาที');
+    expect(thaiErrorText('slot already booked: the hour was already sold to another customer')).toBe('ชั่วโมงนี้ขายให้ลูกค้าคนอื่นไปแล้ว — ยกเลิก "ไม่มา" ไม่ได้');
+    expect(thaiErrorText('invalid state for this action: booking is CONFIRMED, not a no-show')).toBe('การจองนี้ไม่ได้อยู่ในสถานะ "ไม่มา" แล้ว (รีเฟรชหน้าจอ)');
   });
 
   it('passes unknown and already-Thai messages through', () => {
