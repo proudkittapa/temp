@@ -25,7 +25,7 @@ Entry format:
 - **Changed:** code moved, not rewritten. Each `use<Panel>.tsx` (staff
   1,909 lines, admin 1,723, customer 1,217) now has:
   - `use<Panel>Core`: state, refs, effects, data loading and small shared
-    helpers (571 / 427 / 399 lines with the composition below);
+    helpers (546 / 427 / 399 lines with the composition below);
   - one hook per area, each in its own file, receiving what it uses from
     the core and from earlier areas through one typed `deps` parameter:
     - staff/: sessionActions, shiftActions, slipActions, bookingActions,
