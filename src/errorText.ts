@@ -17,6 +17,20 @@ const detail = (s: string) => s.replace(SENTINEL, '');
 const RULES: Rule[] = [
   // A bulk import names the failing row; translate the rest after it.
   [/^row (\d+): (.*)$/i, m => `แถวที่ ${m[1]}: ${thaiErrorText(m[2])}`],
+  // From the 2026-10-22 security fixes (before the generic sentinel rules).
+  [/you can't approve the payment for your own booking/i, 'อนุมัติการชำระเงินของการจองตัวเองไม่ได้ — ให้พนักงานคนอื่นหรือผู้จัดการอนุมัติ'],
+  [/role "(.+?)" has permissions you don't have/i, m => `ให้บทบาท "${m[1]}" ไม่ได้ — บทบาทนี้มีสิทธิ์ที่คุณไม่มี`],
+  [/this account has permissions you don't have/i, 'แก้บัญชีนี้ไม่ได้ — บัญชีนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)'],
+  [/this slip was never approved - check that the transfer is in the bank account/i, 'สลิปนี้ยังไม่เคยได้รับอนุมัติ — ตรวจในบัญชีธนาคารว่าเงินเข้าจริงก่อน แล้วยืนยันการคืนเงิน'],
+  [/this payment has no refund waiting for a check/i, 'รายการนี้ไม่มีการคืนเงินที่รอตรวจแล้ว (รีเฟรชหน้าจอ)'],
+  [/the count doesn't match - count again, or add a note/i, 'ยอดเงินที่นับไม่ตรง — นับใหม่ หรือใส่หมายเหตุอธิบายส่วนต่าง'],
+  [/\b(reason|notes) is too long \(at most (\d+) characters\)/i, m => `${m[1].toLowerCase() === 'reason' ? 'เหตุผล' : 'หมายเหตุ'}ยาวเกินไป (ไม่เกิน ${m[2]} ตัวอักษร)`],
+  [/this booking already has (\d+) slips - please contact staff/i, m => `การจองนี้ส่งสลิปมาแล้ว ${m[1]} ครั้ง — กรุณาติดต่อพนักงาน`],
+  [/too many slips sent today - please contact staff/i, 'วันนี้ส่งสลิปหลายครั้งเกินไป — กรุณาติดต่อพนักงาน'],
+  [/slip must be a real JPG, PNG or WEBP image/i, 'ไฟล์นี้ไม่ใช่รูปสลิป — กรุณาส่งรูปภาพ JPG, PNG หรือ WEBP'],
+  [/slip image dimensions are too large/i, 'รูปสลิปใหญ่เกินไป — กรุณาใช้ภาพหน้าจอสลิป'],
+  [/^invalid request body: (?:wrong type for (\w+)|(\w+) is missing or invalid)$/i, m => `ข้อมูลที่ส่งไม่ถูกต้อง (${m[1] || m[2]}) — กรุณารีเฟรชหน้าแล้วลองใหม่`],
+  [/^invalid request body$/i, 'ข้อมูลที่ส่งไม่ถูกต้อง — กรุณารีเฟรชหน้าแล้วลองใหม่'],
   // Undo of a no-show (before the generic "slot already booked" rule).
   [/the hour was already sold to another customer/i, 'ชั่วโมงนี้ขายให้ลูกค้าคนอื่นไปแล้ว — ยกเลิก "ไม่มา" ไม่ได้'],
   [/booking is \w+, not a no-show/i, 'การจองนี้ไม่ได้อยู่ในสถานะ "ไม่มา" แล้ว (รีเฟรชหน้าจอ)'],

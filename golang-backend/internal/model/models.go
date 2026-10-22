@@ -316,6 +316,11 @@ type Payment struct {
 	// for another payment. A slip whose booking was cancelled for any other
 	// reason stays "used" - the money may still be refunded against it.
 	SlipReleased bool `json:"-" db:"slip_released" gorm:"column:slip_released;not null;default:false"`
+	// RefundCheckPending: a refund was asked for when cancelling, but the
+	// slip was never approved, so none was recorded - a manager checks the
+	// bank account, then refunds (RefundPayment) or closes it as nothing
+	// received (DismissRefundCheck). Listed in the slip-review tab until then.
+	RefundCheckPending bool `json:"refund_check_pending" db:"refund_check_pending" gorm:"column:refund_check_pending;not null;default:false"`
 	// SlipUploads counts slips sent for this payment (replacements
 	// included): every one is a file kept on disk, so they are capped.
 	SlipUploads int `json:"-" db:"slip_uploads" gorm:"column:slip_uploads;not null;default:0"`

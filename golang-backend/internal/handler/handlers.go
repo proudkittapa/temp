@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"arena-backend/internal/model"
@@ -220,13 +219,6 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		}
 	}
 
-	// Only image extensions are kept: /uploads is served statically, so an
-	// uploaded .html/.svg would otherwise be served back as active content.
-	ext, ok := allowedSlipExt[strings.ToLower(strings.TrimPrefix(filepath.Ext(file.Filename), "."))]
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "slip must be a JPG, PNG or WEBP image"})
-		return
-	}
 	if file.Size > maxSlipBytes {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "slip image must be 5 MB or smaller"})
 		return
@@ -239,7 +231,10 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "could not read the slip image"})
 		return
 	}
-	if err := checkSlipImage(src, ext); err != nil {
+	// Stored as the image type its content is (only JPG, PNG or WEBP), so
+	// an .html/.svg can never be served back as active content.
+	ext, err := slipImageExt(src)
+	if err != nil {
 		src.Close()
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
 		return

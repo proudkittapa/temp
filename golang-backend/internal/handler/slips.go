@@ -86,40 +86,43 @@ func (s *SlipSigner) Serve(c *gin.Context) {
 	c.File(filepath.Join(slipDir, name))
 }
 
-// slipMIME is the content type each allowed slip extension must really have.
-var slipMIME = map[string]string{"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+// slipExtByMIME: the slip formats taken, by the content type found in the
+// file, and the extension the stored file gets.
+var slipExtByMIME = map[string]string{"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 // maxSlipPixels bounds width×height: a small file can declare a huge image
 // that freezes the staff screen decoding it. A phone screenshot is ~3 MP.
 const maxSlipPixels = 40_000_000
 
-// checkSlipImage makes sure an upload is the image its extension says, by
-// its content - not just its name - so other bytes can't pose as a slip.
-// JPEG and PNG dimensions are checked too (Go's standard library has no
-// WebP decoder; WebP is checked by its signature only).
-func checkSlipImage(r io.ReadSeeker, ext string) error {
+// slipImageExt returns the extension for an uploaded slip, decided by its
+// content - never by its name, so other bytes can't pose as a slip, and a
+// real image with a wrong or missing name (a JPEG saved as .png by a chat
+// app) is still taken. JPEG and PNG dimensions are checked too (Go's
+// standard library has no WebP decoder; WebP is checked by its signature).
+func slipImageExt(r io.ReadSeeker) (string, error) {
 	head := make([]byte, 512)
 	n, err := io.ReadFull(r, head)
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return errBadSlipImage
+		return "", errBadSlipImage
 	}
-	if http.DetectContentType(head[:n]) != slipMIME[ext] {
-		return errBadSlipImage
+	ext, ok := slipExtByMIME[http.DetectContentType(head[:n])]
+	if !ok {
+		return "", errBadSlipImage
 	}
 	if ext == "webp" {
-		return nil
+		return ext, nil
 	}
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return errBadSlipImage
+		return "", errBadSlipImage
 	}
 	cfg, _, err := image.DecodeConfig(r)
 	if err != nil {
-		return errBadSlipImage
+		return "", errBadSlipImage
 	}
 	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > maxSlipPixels {
-		return errSlipTooLarge
+		return "", errSlipTooLarge
 	}
-	return nil
+	return ext, nil
 }
 
 var (

@@ -20,23 +20,26 @@ func TestCheckSlipImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := []struct {
-		name string
-		data []byte
-		ext  string
-		want error
+		name    string
+		data    []byte
+		wantExt string
+		wantErr error
 	}{
 		{"real png", pngBuf.Bytes(), "png", nil},
 		{"real jpeg", jpgBuf.Bytes(), "jpg", nil},
-		{"png named jpg", pngBuf.Bytes(), "jpg", errBadSlipImage},
-		{"html named jpg", []byte("<html><script>alert(1)</script></html>"), "jpg", errBadSlipImage},
-		{"svg named png", []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), "png", errBadSlipImage},
-		{"empty", nil, "png", errBadSlipImage},
-		{"huge declared png", pngHeader(20000, 20000), "png", errSlipTooLarge},
+		// The name doesn't matter, only the content: a chat app's JPEG
+		// saved as .png is still a JPEG slip.
+		{"html", []byte("<html><script>alert(1)</script></html>"), "", errBadSlipImage},
+		{"svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), "", errBadSlipImage},
+		{"pdf", []byte("%PDF-1.7\n"), "", errBadSlipImage},
+		{"empty", nil, "", errBadSlipImage},
+		{"huge declared png", pngHeader(20000, 20000), "", errSlipTooLarge},
 		{"webp signature", append([]byte("RIFF\x00\x00\x00\x00WEBPVP8 "), make([]byte, 20)...), "webp", nil},
 	}
 	for _, tc := range cases {
-		if got := checkSlipImage(bytes.NewReader(tc.data), tc.ext); got != tc.want {
-			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		ext, err := slipImageExt(bytes.NewReader(tc.data))
+		if ext != tc.wantExt || err != tc.wantErr {
+			t.Errorf("%s: got %q, %v; want %q, %v", tc.name, ext, err, tc.wantExt, tc.wantErr)
 		}
 	}
 }

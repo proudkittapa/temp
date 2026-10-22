@@ -16,8 +16,6 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-var allowedSlipExt = map[string]string{"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}
-
 const maxSlipBytes = 5 << 20
 
 // Messages for errors that aren't the client's to read in detail.
@@ -261,10 +259,18 @@ func (h *ArenaHandler) MyBookings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": list})
 }
 
-// GET /api/v1/staff/payments?status=SLIP_UPLOADED - the slip review queue.
+// GET /api/v1/staff/payments?status=SLIP_UPLOADED - the slip review queue;
+// ?status=REFUND_CHECK - refunds waiting for a bank check (RefundCheckPending).
 func (h *ArenaHandler) ListPaymentsForReview(c *gin.Context) {
 	status := model.PaymentStatus(c.DefaultQuery("status", string(model.PaymentSlipUploaded)))
-	list, err := h.bookingService.ListPaymentsForReview(c.Request.Context(), status)
+	var list []service.PaymentReview
+	var err error
+	if status == "REFUND_CHECK" {
+		// Not a status: refunds waiting for a bank check (any status).
+		list, err = h.bookingService.ListRefundChecks(c.Request.Context())
+	} else {
+		list, err = h.bookingService.ListPaymentsForReview(c.Request.Context(), status)
+	}
 	if err != nil {
 		respondError(c, err)
 		return

@@ -985,9 +985,21 @@ type PaymentReview struct {
 // payments, root bookings, group rows and users in four batched queries
 // rather than several per payment.
 func (s *BookingService) ListPaymentsForReview(ctx context.Context, status model.PaymentStatus) ([]PaymentReview, error) {
+	return s.paymentReviews(ctx, s.db.WithContext(ctx).Where("status = ?", status))
+}
+
+// ListRefundChecks lists payments whose refund waits for a manager to
+// check the bank account (Payment.RefundCheckPending), oldest first.
+func (s *BookingService) ListRefundChecks(ctx context.Context) ([]PaymentReview, error) {
+	return s.paymentReviews(ctx, s.db.WithContext(ctx).Where("refund_check_pending"))
+}
+
+// paymentReviews loads the payments matching where with their booking
+// group and customer, for the slip-review tab.
+func (s *BookingService) paymentReviews(ctx context.Context, where *gorm.DB) ([]PaymentReview, error) {
 	db := s.db.WithContext(ctx)
 	var payments []model.Payment
-	if err := db.Where("status = ?", status).
+	if err := where.
 		Order("slip_uploaded_at NULLS LAST, created_at").
 		Limit(200).
 		Find(&payments).Error; err != nil {

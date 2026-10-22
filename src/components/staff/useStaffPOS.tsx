@@ -130,6 +130,8 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   // on and off with whichever load finished last.
   const [gridError, setGridError] = useState<string | null>(null);
   const [reviewQueue, setReviewQueue] = useState<api.PaymentForReview[]>([]);
+  // Refunds waiting for a bank check (managers, slip tab).
+  const [refundChecks, setRefundChecks] = useState<api.PaymentForReview[]>([]);
   // The slip version (upload time) each card first showed staff. Approve and
   // reject send this, not the latest reloaded one: the queue refreshes every
   // 15 s, and a slip the customer replaced while staff were checking the old
@@ -179,17 +181,19 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
       api.listPaymentsForReview(),
       api.currentShift(),
       onDay ? api.daySummary(today) : skip,
+      tab === 'slips' && can(staffUser, 'cancel_refund') ? api.listRefundChecks() : skip,
       tab === 'fb' || tab === 'rentals' ? api.listProducts() : skip,
       onDay ? api.listOrders(today) : skip,
       tab === 'rentals' ? api.activeRentals() : skip,
       onDay ? (isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[])) : skip,
       onDay ? api.listBookingsByDate(today, 'staff') : skip
     ])
-      .then(([queue, openShift, summary, prods, dayOrders, rentals, history, todays]) => {
+      .then(([queue, openShift, summary, checks, prods, dayOrders, rentals, history, todays]) => {
         if (!isCurrent()) return;
         setReviewQueue(queue);
         setShift(openShift);
         if (summary) setDaySummary(summary);
+        if (checks) setRefundChecks(checks);
         if (prods) setProducts(prods);
         if (dayOrders) setOrders(dayOrders);
         if (rentals) setActiveRentalOrders(rentals);
@@ -498,6 +502,7 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     gridError,
     setGridError,
     reviewQueue,
+    refundChecks,
     setReviewQueue,
     seenSlip,
     setSeenSlip,

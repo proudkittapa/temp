@@ -55,6 +55,25 @@ func (h *ArenaHandler) RefundPayment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.slips.SignPayment(*p)})
 }
 
+// POST /api/v1/admin/payments/:id/no-refund - manager: a refund waiting for
+// a bank check is closed because no money from this customer arrived.
+func (h *ArenaHandler) DismissRefundCheck(c *gin.Context) {
+	var in struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		badBody(c, err)
+		return
+	}
+	actorID, actorName := actor(c)
+	p, err := h.bookingService.DismissRefundCheck(c.Request.Context(), c.Param("id"), in.Reason, actorID, actorName)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.slips.SignPayment(*p)})
+}
+
 // POST /api/v1/admin/payments/:id/mark-cash - manager/admin: the customer
 // paid this booking in cash at the counter.
 func (h *ArenaHandler) MarkPaidInCash(c *gin.Context) {

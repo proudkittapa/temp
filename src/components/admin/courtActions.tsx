@@ -140,7 +140,7 @@ export function useCourtActions(deps: AdminPanelCore) {
               }
               onAddAuditLog('COURT_CLOSED_BOOKINGS_CANCELLED', 'Court', id, null, { cancelled: r.upcoming.length - failed, refunded });
               onRefreshAll();
-              notify(`ยกเลิก ${r.upcoming.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}${needCheck ? `\n⚠️ ${needCheck} รายการส่งสลิปที่ยังไม่ได้อนุมัติ จึงยังไม่บันทึกคืนเงิน — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าตรวจสลิป` : ''}`);
+              notify(`ยกเลิก ${r.upcoming.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}${needCheck ? `\n⚠️ ${needCheck} รายการส่งสลิปที่ยังไม่ได้อนุมัติ จึงยังไม่บันทึกคืนเงิน — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าเคาน์เตอร์ แท็บ "อนุมัติ Slip โอน" → รอตรวจยอดก่อนคืนเงิน` : ''}`);
             })();
           }
         })
@@ -212,7 +212,7 @@ export function useCourtActions(deps: AdminPanelCore) {
               }
               onAddAuditLog('DAY_OFF_BOOKINGS_CANCELLED', 'DayOff', dayOff.id, null, { cancelled: active.length - failed, refunded });
               onRefreshAll();
-              notify(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}${needCheck ? `\n⚠️ ${needCheck} รายการส่งสลิปที่ยังไม่ได้อนุมัติ จึงยังไม่บันทึกคืนเงิน — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าตรวจสลิป` : ''}`);
+              notify(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}${needCheck ? `\n⚠️ ${needCheck} รายการส่งสลิปที่ยังไม่ได้อนุมัติ จึงยังไม่บันทึกคืนเงิน — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าเคาน์เตอร์ แท็บ "อนุมัติ Slip โอน" → รอตรวจยอดก่อนคืนเงิน` : ''}`);
             })();
           }
         })

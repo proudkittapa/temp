@@ -18,6 +18,49 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Fix regressions from the security fixes
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("find if we created any bug when we fixed the security part" -> "yes" to fixing them)
+- **Commit(s):** this commit (on `main`, parent `5f6ee7e`)
+- **Changed:** a review of 5f6ee7e found four problems (all else in it
+  works - see Verified); fixed:
+  - **Refund dead end:** `payments.refund_check_pending` set by
+    `CancelBookings` when a refund was asked for a slip nobody approved
+    (cleared by any refund, `applyRefund`); `ListRefundChecks` +
+    `GET /staff/payments?status=REFUND_CHECK`; `DismissRefundCheck` +
+    `POST /admin/payments/:id/no-refund` (reason required, audit
+    `REFUND_NOT_NEEDED`). Staff screen: the slip tab loads and lists them
+    for managers (`#refund-checks`, "ไม่มีเงินเข้า (ไม่ต้องคืน)" / "เงินเข้าจริง
+    — คืนเงิน"); the cancel/closure messages point there.
+    `paymentReviews` shared by both lists.
+  - **Slip type by content:** `slipImageExt` replaces `checkSlipImage` +
+    the name check; `allowedSlipExt` removed; test updated (pdf case
+    added).
+  - **Thai texts** for the 13 new server messages (`errorText.ts`, test).
+  - **CORS docs** for the cross-origin dev setup (README, `.env.example`).
+  - `SECURITY_REVIEW.md` gets a "Follow-up: regressions" table;
+    golang-backend/README the new endpoints.
+- **Verified:** `go vet`, `go test ./...`, `tsc`, `vitest` 61/61.
+  - Review of 5f6ee7e live (before these fixes): role limits with a
+    custom staff-manager role, refund rules, blind count, self-approval,
+    5-slip cap, release-mode refusals, make-admin --yes, backup
+    permissions; hardened Docker stack (read-only backend, fixed Caddy
+    IP, CSP): 4.4 MB slip upload, QR, charts, slip images, Excel - no CSP
+    violations, no page errors.
+  - After: JPEG named .png -> stored .jpg; PNG named .jpg -> .png; JPEG
+    without extension -> .jpg; HTML/PDF refused. Refund checks: two
+    cancellations listed, "no money" closes one (again -> refused, empty
+    reason -> refused, audit row), refund with bank check closes the
+    other (REFUNDED 153); a partial cancellation is listed while its slip
+    stays in the queue. Playwright: manager closes a card in the slip tab
+    (Thai notice, card gone); a customer's non-image slip shows the Thai
+    message; the :3001 cross-origin setup works with CORS_ALLOWED_ORIGINS.
+- **Not done / follow-ups:** the browser-only demo mode still records
+  refunds of unapproved slips without a bank check (the rules should match
+  in both modes - owner decision to keep that mode).
+
+---
+
 ## 2026-10-22 — Security review and fixes
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner

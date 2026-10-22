@@ -111,7 +111,11 @@ otherwise the backend picks a random one per run and everyone is logged out
 when it restarts.
 
 `VITE_API_BASE_URL` overrides the API location (default `/api/v1`, which
-Vite proxies to `localhost:8080`).
+Vite proxies to `localhost:8080`). If you point it at another address (e.g.
+`http://localhost:8080/api/v1`), the browser treats that as another site:
+also set `CORS_ALLOWED_ORIGINS` in `golang-backend/.env` to the page's
+address (e.g. `http://localhost:3000`) - the backend sends no CORS headers
+by default and the browser blocks every request.
 
 ### Type-check
 ```bash

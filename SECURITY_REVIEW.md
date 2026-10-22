@@ -35,6 +35,15 @@ Nothing High was found.
 | 19 | Low | Stale `bun.lock` pinned xlsx 0.18.5 (known CVEs). | Deleted; `package-lock.json` (0.20.3) is the only lockfile. |
 | 20 | Low | DEPLOY.md: no SSH hardening or automatic updates; Docker ports bypass ufw. | Steps added (key-only SSH, unattended-upgrades, never publish db/backend ports). |
 
+## Follow-up: regressions found in the fixes (fixed 2026-10-22)
+
+| # | Problem caused by the fixes above | Fix |
+|---|---|---|
+| R1 | (from #2) A refund asked for an unapproved slip was not recorded, and the payment then left the slip queue (REJECTED) - no screen could refund it later, though the message said to. | The request is kept: `payments.refund_check_pending`; the slip tab lists these ("รอตรวจยอดในบัญชีก่อนคืนเงิน", `GET /staff/payments?status=REFUND_CHECK`) with "refund" (asks for the bank check) and "no money arrived" (`POST /admin/payments/:id/no-refund`, reason, audit `REFUND_NOT_NEEDED`). Also covers a partial cancellation whose slip stays in the queue. |
+| R2 | (from #10) A real image whose name didn't match its content (a chat app's JPEG saved as `.png`, a file with no extension) was refused - the customer could not send the slip. | The type is decided by the content only (JPEG/PNG/WEBP) and the stored file gets that extension; the name is ignored. HTML/SVG/PDF are still refused. |
+| R3 | 11 of the new server messages appeared in English on the Thai screens; three became a generic "no permission". | Thai texts for all of them in `errorText.ts` (tested). |
+| R4 | (from #14) The documented dev setup with `VITE_API_BASE_URL=http://localhost:8080/api/v1` stopped working (no CORS headers by default). | README and `.env.example`: set `CORS_ALLOWED_ORIGINS` to the page's address in that setup. |
+
 ## Not fixed — need a decision or a bigger change (listed in TODO.md)
 
 | Sev | Finding | Options |

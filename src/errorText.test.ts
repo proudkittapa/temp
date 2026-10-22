@@ -72,4 +72,23 @@ describe('thaiErrorText', () => {
     expect(thaiErrorText('something new happened')).toBe('something new happened');
     expect(thaiErrorText('ไม่พบสินค้านี้')).toBe('ไม่พบสินค้านี้');
   });
+
+  it('translates the messages added by the 2026-10-22 security fixes', () => {
+    const th = (m: string) => thaiErrorText(m);
+    expect(th("not allowed: you can't approve the payment for your own booking")).toBe('อนุมัติการชำระเงินของการจองตัวเองไม่ได้ — ให้พนักงานคนอื่นหรือผู้จัดการอนุมัติ');
+    expect(th('not allowed: role "ผู้บริหาร (Admin)" has permissions you don\'t have (manage_roles)')).toBe('ให้บทบาท "ผู้บริหาร (Admin)" ไม่ได้ — บทบาทนี้มีสิทธิ์ที่คุณไม่มี');
+    expect(th("not allowed: this account has permissions you don't have (view_reports)")).toBe('แก้บัญชีนี้ไม่ได้ — บัญชีนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)');
+    expect(th('invalid state for this action: this slip was never approved - check that the transfer is in the bank account, then confirm the refund')).toBe('สลิปนี้ยังไม่เคยได้รับอนุมัติ — ตรวจในบัญชีธนาคารว่าเงินเข้าจริงก่อน แล้วยืนยันการคืนเงิน');
+    expect(th('invalid state for this action: this payment has no refund waiting for a check')).toBe('รายการนี้ไม่มีการคืนเงินที่รอตรวจแล้ว (รีเฟรชหน้าจอ)');
+    expect(th("invalid booking request: the count doesn't match - count again, or add a note explaining the difference")).toBe('ยอดเงินที่นับไม่ตรง — นับใหม่ หรือใส่หมายเหตุอธิบายส่วนต่าง');
+    expect(th('invalid booking request: reason is too long (at most 500 characters)')).toBe('เหตุผลยาวเกินไป (ไม่เกิน 500 ตัวอักษร)');
+    expect(th('invalid booking request: notes is too long (at most 500 characters)')).toBe('หมายเหตุยาวเกินไป (ไม่เกิน 500 ตัวอักษร)');
+    expect(th('invalid state for this action: this booking already has 5 slips - please contact staff')).toBe('การจองนี้ส่งสลิปมาแล้ว 5 ครั้ง — กรุณาติดต่อพนักงาน');
+    expect(th('invalid state for this action: too many slips sent today - please contact staff')).toBe('วันนี้ส่งสลิปหลายครั้งเกินไป — กรุณาติดต่อพนักงาน');
+    expect(th('slip must be a real JPG, PNG or WEBP image')).toBe('ไฟล์นี้ไม่ใช่รูปสลิป — กรุณาส่งรูปภาพ JPG, PNG หรือ WEBP');
+    expect(th('slip image dimensions are too large')).toBe('รูปสลิปใหญ่เกินไป — กรุณาใช้ภาพหน้าจอสลิป');
+    expect(th('invalid request body: wrong type for amount')).toBe('ข้อมูลที่ส่งไม่ถูกต้อง (amount) — กรุณารีเฟรชหน้าแล้วลองใหม่');
+    expect(th('invalid request body: reason is missing or invalid')).toBe('ข้อมูลที่ส่งไม่ถูกต้อง (reason) — กรุณารีเฟรชหน้าแล้วลองใหม่');
+    expect(th('invalid request body')).toBe('ข้อมูลที่ส่งไม่ถูกต้อง — กรุณารีเฟรชหน้าแล้วลองใหม่');
+  });
 });

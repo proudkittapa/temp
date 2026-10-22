@@ -597,7 +597,7 @@ export async function searchMembers(q: string): Promise<MemberMatch[]> {
   return rows.map(r => ({ id: r.id, name: r.name, phone: r.phone, memberType: r.member_type as MemberType, points: r.points }));
 }
 
-export async function listPaymentsForReview(status: PaymentStatus = PaymentStatus.SLIP_UPLOADED): Promise<PaymentForReview[]> {
+export async function listPaymentsForReview(status: PaymentStatus | 'REFUND_CHECK' = PaymentStatus.SLIP_UPLOADED): Promise<PaymentForReview[]> {
   const rows = await request<{ payment: ApiPayment; bookings: ApiBooking[]; user_name: string; user_phone: string }[]>(
     `/staff/payments?status=${status}`,
     { session: 'staff' }
@@ -605,6 +605,20 @@ export async function listPaymentsForReview(status: PaymentStatus = PaymentStatu
   return rows.map(r => ({
     payment: toPayment(r.payment),
     bookings: r.bookings.map(b => toBooking(b, { name: r.user_name, phone: r.user_phone }))
+  }));
+}
+
+// Managers: refunds asked for when cancelling but not recorded, because the
+// slip was never approved - waiting for someone to check the bank account.
+export async function listRefundChecks(): Promise<PaymentForReview[]> {
+  return listPaymentsForReview('REFUND_CHECK');
+}
+
+// Managers: close a refund waiting for a bank check - no money from this
+// customer arrived, so there is nothing to refund.
+export async function dismissRefundCheck(paymentId: string, reason: string): Promise<Payment> {
+  return toPayment(await request<ApiPayment>(`/admin/payments/${encodeURIComponent(paymentId)}/no-refund`, {
+    method: 'POST', session: 'staff', body: { reason }
   }));
 }
 

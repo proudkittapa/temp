@@ -230,6 +230,7 @@ func applyRefund(tx *gorm.DB, p *model.Payment, amount float64, reason, actorID 
 	total := RoundBaht(p.RefundAmount + amount)
 	updates := map[string]interface{}{
 		"refund_amount": total, "refunded_at": now, "refunded_by": actorID, "refund_reason": reason, "updated_at": now,
+		"refund_check_pending": false,
 	}
 	if total >= p.Amount {
 		updates["status"] = model.PaymentRefunded
@@ -430,6 +431,13 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 				st = model.PaymentRefunded
 			}
 			if err := tx.Model(p).Updates(map[string]interface{}{"status": st, "refund_reason": reason, "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		// Remember the refund that couldn't be recorded, so it isn't lost
+		// once the payment leaves the slip queue.
+		if res.RefundNeedsCheck {
+			if err := tx.Model(p).Update("refund_check_pending", true).Error; err != nil {
 				return err
 			}
 		}
@@ -778,6 +786,47 @@ func (s *BookingService) UndoNoShow(ctx context.Context, bookingID, actorID, act
 type UndoNoShowResult struct {
 	Booking        model.Booking `json:"booking"`
 	PointsRestored int           `json:"points_restored"`
+}
+
+// DismissRefundCheck closes a refund waiting for a bank check when the
+// manager found no money from this customer in the account - nothing to
+// refund. Audit-logged with the reason.
+func (s *BookingService) DismissRefundCheck(ctx context.Context, paymentID, reason, actorID, actorName string) (*model.Payment, error) {
+	reason = strings.TrimSpace(reason)
+	if err := checkText("reason", reason); err != nil {
+		return nil, err
+	}
+	if reason == "" {
+		return nil, fmt.Errorf("%w: a reason is required", ErrInvalidBooking)
+	}
+	var p model.Payment
+	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "id = ?", paymentID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if !p.RefundCheckPending {
+			return fmt.Errorf("%w: this payment has no refund waiting for a check", ErrInvalidState)
+		}
+		now := s.now()
+		if err := tx.Model(&p).Updates(map[string]interface{}{"refund_check_pending": false, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		p.RefundCheckPending = false
+		return tx.Create(&model.AuditLog{
+			ID: ids.New("log"), UserID: actorID, UserName: actorName,
+			Action: "REFUND_NOT_NEEDED", TargetType: "Payment", TargetID: p.ID,
+			BeforeState: model.AuditJSON(map[string]any{"refund_check_pending": true}),
+			AfterState:  model.AuditJSON(map[string]any{"refund_check_pending": false}),
+			Reason:      &reason, CreatedAt: now,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
 }
 
 // CompleteFinishedBookings marks confirmed hours whose end has passed

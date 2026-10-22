@@ -338,6 +338,7 @@ func main() {
 		// Cancellations, refunds and cash recorded by a manager (FR-6.3)
 		api.POST("/admin/bookings/:id/cancel", can(model.PermCancelRefund), arenaHandler.CancelBooking)
 		api.POST("/admin/payments/:id/refund", can(model.PermCancelRefund), arenaHandler.RefundPayment)
+		api.POST("/admin/payments/:id/no-refund", can(model.PermCancelRefund), arenaHandler.DismissRefundCheck)
 		api.POST("/admin/payments/:id/mark-cash", can(model.PermCancelRefund), arenaHandler.MarkPaidInCash)
 		api.POST("/admin/bookings/:id/mark-cash", can(model.PermCancelRefund), arenaHandler.MarkBookingPaidInCash)
 

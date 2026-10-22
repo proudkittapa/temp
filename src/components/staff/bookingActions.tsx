@@ -63,7 +63,7 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
           onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { ...res, reason });
           closeBookingDetail();
           onRefreshAll();
-          notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}${res.cancelledVouchers.length ? `\nยกเลิกคูปองที่แลกด้วยแต้มนี้: ${res.cancelledVouchers.join(', ')}` : ''}${res.pointsShort ? `\n⚠️ ลูกค้าใช้แต้ม ${res.pointsShort} แต้มแลกของรางวัลที่รับไปแล้ว หักคืนไม่ได้` : ''}${res.refundNeedsCheck ? '\n⚠️ ยังไม่บันทึกคืนเงิน: สลิปยังไม่ได้อนุมัติ — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าตรวจสลิป' : ''}`);
+          notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}${res.cancelledVouchers.length ? `\nยกเลิกคูปองที่แลกด้วยแต้มนี้: ${res.cancelledVouchers.join(', ')}` : ''}${res.pointsShort ? `\n⚠️ ลูกค้าใช้แต้ม ${res.pointsShort} แต้มแลกของรางวัลที่รับไปแล้ว หักคืนไม่ได้` : ''}${res.refundNeedsCheck ? '\n⚠️ ยังไม่บันทึกคืนเงิน: สลิปยังไม่ได้อนุมัติ — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าเคาน์เตอร์ แท็บ "อนุมัติ Slip โอน" → รอตรวจยอดก่อนคืนเงิน' : ''}`);
         })
         .catch(err => notify(`ยกเลิกไม่สำเร็จ: ${err.message}`));
     }

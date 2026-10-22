@@ -329,6 +329,12 @@ curl -X POST http://localhost:8080/api/v1/admin/bookings/<booking_id>/cancel \
 # Refund a payment no booking stands for (e.g. a late payment whose slot was taken)
 curl -X POST http://localhost:8080/api/v1/admin/payments/<payment_id>/refund \
   -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" -d '{"reason": "..."}'
+# (a slip that was never approved also needs "bank_checked": true - the manager saw the money arrive)
+# Refunds asked for when cancelling but not recorded (slip never approved) - the slip tab lists them:
+curl "http://localhost:8080/api/v1/staff/payments?status=REFUND_CHECK" -H "Authorization: Bearer <Manager_Token>"
+# ...and one of them closed because no money arrived:
+curl -X POST http://localhost:8080/api/v1/admin/payments/<payment_id>/no-refund \
+  -H "Authorization: Bearer <Manager_Token>" -H "Content-Type: application/json" -d '{"reason": "..."}'
 # The customer paid an unpaid booking in cash at the counter
 curl -X POST http://localhost:8080/api/v1/admin/bookings/<booking_id>/mark-cash -H "Authorization: Bearer <Manager_Token>"
 # Any staff: the customer didn't come for this (started) hour - takes back its point

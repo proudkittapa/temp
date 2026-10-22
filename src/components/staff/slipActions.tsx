@@ -201,6 +201,20 @@ export function useSlipActions(deps: StaffPOSCore) {
 
   // Manager/admin refund of a payment with no booking standing for it -
   // e.g. a late payment whose slot was taken meanwhile.
+  // Manager: the bank account shows no transfer from this customer, so a
+  // refund that was waiting for that check is closed with nothing refunded.
+  const handleDismissRefundCheck = async (pay: Payment) => {
+    const reason = await askText('ตรวจแล้วไม่พบเงินโอนเข้าบัญชีจากลูกค้ารายนี้ — เหตุผล (จำเป็น):', { title: 'ไม่ต้องคืนเงิน', okLabel: 'บันทึก ไม่ต้องคืน' });
+    if (!reason) return;
+    return api.dismissRefundCheck(pay.id, reason)
+      .then(() => {
+        onAddAuditLog('REFUND_NOT_NEEDED', 'Payment', pay.id, null, { reason });
+        onRefreshAll();
+        notify('บันทึกแล้ว: ไม่มีเงินเข้า ไม่ต้องคืน');
+      })
+      .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+  };
+
   const handleRefundPayment = async (pay: Payment) => {
     const reason = await askText(`เหตุผลการคืนเงิน ${formatBaht(pay.amount - (pay.refundAmount || 0))} บาท (จำเป็น):`, { title: '💸 คืนเงิน', okLabel: 'บันทึกคืนเงิน' });
     if (!reason) return;
@@ -237,6 +251,7 @@ export function useSlipActions(deps: StaffPOSCore) {
   return {
     handleVerifySlip,
     handleRejectSlip,
-    handleRefundPayment
+    handleRefundPayment,
+    handleDismissRefundCheck
   };
 }

@@ -9,11 +9,13 @@ export default function SlipsTab() {
     canManageBookings,
     courts,
     guarded,
+    handleDismissRefundCheck,
     handleRefundPayment,
     handleRejectSlip,
     handleStaffLogout,
     handleVerifySlip,
     pendingSlipPayments,
+    refundChecks,
     rejectId,
     rejectReason,
     seenSlip,
@@ -145,6 +147,38 @@ export default function SlipsTab() {
               </div>
             )}
           </div>
+
+          {/* Refunds asked for when cancelling, not recorded because the slip
+              was never approved: check the bank account, then refund or
+              close them. */}
+          {api.USE_BACKEND && canManageBookings && refundChecks.length > 0 && (
+            <div id="refund-checks" className="space-y-2 pt-2">
+              <span className="text-xs font-bold text-amber-800 block">💸 รอตรวจยอดในบัญชีก่อนคืนเงิน ({refundChecks.length} รายการ):</span>
+              {refundChecks.map(({ payment: pay, bookings: group }) => {
+                const first = group[0];
+                return (
+                  <div key={pay.id} className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs space-y-2">
+                    <div className="flex justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] bg-[#1e293b] text-white px-2 py-0.5 rounded font-mono font-bold">{first?.bookingCode ?? pay.bookingId}</span>
+                        <p className="text-[10px] text-slate-600 mt-1">{first?.userName} · {first?.userPhone} · {first?.date} (ยกเลิกแล้ว)</p>
+                      </div>
+                      {/* What the customer sent; the server refunds only what no
+                          booked hour still pays for. */}
+                      <p className="text-right text-[10px] text-slate-600">ยอดที่ลูกค้าโอน<br /><span className="font-extrabold text-amber-800 text-xs">{formatBaht(pay.amount)} บาท</span></p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {pay.slipUrl && <a href={pay.slipUrl} target="_blank" rel="noreferrer" className="mr-auto underline text-sky-800 font-bold">ดูสลิป</a>}
+                      <button type="button" disabled={busy} onClick={guarded(() => handleDismissRefundCheck(pay))}
+                        className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 py-1.5 px-3 rounded font-bold">ไม่มีเงินเข้า (ไม่ต้องคืน)</button>
+                      <button type="button" disabled={busy} onClick={guarded(() => handleRefundPayment(pay))}
+                        className="bg-sky-600 hover:bg-sky-500 text-white py-1.5 px-3 rounded font-bold">💸 เงินเข้าจริง — คืนเงิน</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Reject / Slip Reject dialogue drawer simulation */}
