@@ -18,6 +18,19 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Decision recorded: keep the browser-only demo mode
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, decision by traning.mbt@gmail.com ("keep it for now")
+- **Commit(s):** this commit (on `main`, parent `c2b1669`)
+- **Changed:** TODO 11 (structure): the owner keeps `npm run dev` (data in
+  the browser) for now. Consequence: rules stay in both Go and
+  TypeScript, and changes must be made and tested in both modes. Step 5
+  of the code-quality plan (rules only on the server) is on hold until
+  the Docker demo (8b) can replace this mode.
+- **Verified:** docs only.
+
+---
+
 ## 2026-10-22 — Frontend: load only what the open screen shows
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 4 of the code-quality plan)
