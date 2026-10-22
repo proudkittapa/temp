@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { UserRole, AuditLog, AddAuditLog } from './types';
 import { initializeState, StorageService, formatDateTime } from './mockData';
 import CustomerPanel from './components/CustomerPanel';
-import StaffPOS from './components/StaffPOS';
-import AdminPanel from './components/AdminPanel';
+// The counter and settings screens load on demand: customers' phones don't
+// download them (nor the charts and Excel code they use).
+const StaffPOS = lazy(() => import('./components/StaffPOS'));
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
 import { DialogHost } from './components/Dialog';
 import { Shield, Sparkles, User, Users, Briefcase, Clock } from 'lucide-react';
 import * as api from './api';
@@ -231,6 +233,7 @@ export default function App() {
           />
         )}
 
+        <Suspense fallback={<p id="panel-loading" className="text-center text-sm text-slate-400 py-16">กำลังโหลด...</p>}>
         {/* Render Staff POS View */}
         {(currentRole === UserRole.STAFF || currentRole === UserRole.MANAGER) && (
           <StaffPOS
@@ -249,6 +252,7 @@ export default function App() {
             onRefreshAll={triggerCompleteRefresh}
           />
         )}
+        </Suspense>
 
       </main>
 

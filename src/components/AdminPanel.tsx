@@ -4,7 +4,9 @@ import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import RolesTab from './RolesTab';
 import { Settings } from 'lucide-react';
 import { useAdminPanel, AdminPanelContext, AdminPanelProps, ADMIN_TABS } from './admin/useAdminPanel';
-import DashboardTab from './admin/DashboardTab';
+import { lazy, Suspense } from 'react';
+// The dashboard's chart library loads only when the dashboard is opened.
+const DashboardTab = lazy(() => import('./admin/DashboardTab'));
 import PricingTab from './admin/PricingTab';
 import CourtsTab from './admin/CourtsTab';
 import ProductsTab from './admin/ProductsTab';
@@ -101,7 +103,9 @@ export default function AdminPanel(props: AdminPanelProps) {
       <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm min-h-[400px]">
         
         {/* Sub Module 1: Main Dashboard (Recharts Visuals) */}
-        {activeAdminTab === 'dashboard' && adminTabAllowed('dashboard') && <DashboardTab />}
+        {activeAdminTab === 'dashboard' && adminTabAllowed('dashboard') && (
+          <Suspense fallback={<p className="text-center text-sm text-slate-400 py-16">กำลังโหลดแดชบอร์ด...</p>}><DashboardTab /></Suspense>
+        )}
 
         {/* Sub Module 2: Pricing Engine configurations */}
         {activeAdminTab === 'pricing' && adminTabAllowed('pricing') && <PricingTab />}

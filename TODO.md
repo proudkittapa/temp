@@ -148,7 +148,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] Retry protection: every app write (not sign-in or slip upload) sends an `Idempotency-Key` reused while the same action is retried; the server (`handler/idempotency.go`, table `idempotency_keys`, pruned after 24 h) replays the first success, answers 409 while it is still running, releases the key on failure. Done 2026-10-21.
 - [x] Live refresh: staff screens reload every 15 s while visible (header shows "อัปเดตอัตโนมัติ hh:mm:ss"), customer screens every 30 s (10 s on the payment screen), and at once when the user comes back to the tab/app; the payment screen follows the server (approved / rejected / refunded / expired). Hidden tabs don't poll. Done 2026-10-21 (`src/useLiveTick.ts`). Admin screens don't poll.
 - [x] Walk-in grid while loading another date: now shows "กำลังโหลด…", greyed and not clickable, and booking is refused until that date's data is in (it used to show every slot free). Done 2026-10-21.
-- [ ] **Customers download the staff/admin app** (one 436 KB gzip bundle, ~70% xlsx + recharts): lazy-load StaffPOS/AdminPanel, `await import('xlsx')` in the Excel handlers, charts in a lazy component.
+- [x] **Customers download the staff/admin app** (done 2026-10-22): StaffPOS, AdminPanel and the dashboard tab (charts) are lazy, xlsx is imported when a file is made/read. Customer page: 448 KB -> 122 KB gzip; staff +31 KB, admin +31 KB, charts 125 KB, xlsx 143 KB on demand.
 - [x] `index.html`: `lang="th"`, real title and description. Done 2026-10-21.
 - [x] Demo users/passwords are no longer in a `VITE_DATA_SOURCE=api` build (checked: no demo email or password in `dist`). Done 2026-10-21.
 

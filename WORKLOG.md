@@ -18,6 +18,30 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Frontend: load the staff/admin code only when needed
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 4 of the code-quality plan)
+- **Commit(s):** this commit (on `main`, parent `5aa11e4`)
+- **Changed:**
+  - `App.tsx`: `StaffPOS` and `AdminPanel` via `React.lazy` + `Suspense`
+    ("กำลังโหลด...").
+  - `AdminPanel.tsx`: the dashboard tab (recharts) is lazy too.
+  - `admin/productActions.tsx`: `await import('xlsx')` in the template and
+    Excel-import handlers (template shows an error if it can't load).
+  - Production build (API mode), gzip: one 448 KB file for everyone ->
+    customer page 122 KB; StaffPOS 31 KB, AdminPanel 31 KB, dashboard
+    charts 125 KB, xlsx 143 KB loaded on demand. No >500 KB warning.
+- **Verified:** `tsc`, `vitest` 60/60, both builds. Playwright on the
+  production build (`vite preview`, API proxy): customer page requests
+  only `index`; staff sign-in loads `StaffPOS` (6 tabs shown); admin loads
+  `AdminPanel` + `DashboardTab` (chart legend shown); Excel template
+  download loads `xlsx` and saves product_upload_template.xlsx; no page
+  errors.
+- **Notes:** the cloud test box has xlsx 0.18.5 locally (CDN blocked), so
+  the xlsx chunk size is approximate; the repo still uses 0.20.3.
+
+---
+
 ## 2026-10-22 — Backend speed-ups, part 2: checkout, sign-in check, booking, shifts
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 3 of the code-quality plan)

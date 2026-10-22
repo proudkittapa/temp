@@ -1,5 +1,4 @@
 import React from 'react';
-import * as XLSX from 'xlsx';
 import { Product, ProductCat } from '../../types';
 import { StorageService, formatBaht } from '../../mockData';
 import * as api from '../../api';
@@ -134,7 +133,7 @@ export function useProductActions(deps: AdminPanelCore) {
     onRefreshAll();
   };
 
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
     const wsData = [
       {
         "ชื่อสินค้า": "ลูกแบดมินตัน RSL Silver",
@@ -170,6 +169,14 @@ export function useProductActions(deps: AdminPanelCore) {
       }
     ];
 
+    // The Excel library (~400 KB) loads only when a file is made or read.
+    let XLSX: typeof import('xlsx');
+    try {
+      XLSX = await import('xlsx');
+    } catch {
+      notify('โหลดส่วนสร้างไฟล์ Excel ไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่');
+      return;
+    }
     const ws = XLSX.utils.json_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "รายชื่ออาหารและเครื่องกีฬา");
@@ -185,6 +192,7 @@ export function useProductActions(deps: AdminPanelCore) {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
+        const XLSX = await import('xlsx');
         const wb = XLSX.read(evt.target?.result as ArrayBuffer, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
