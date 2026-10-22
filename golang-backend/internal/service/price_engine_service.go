@@ -48,15 +48,12 @@ type SlotQuoter struct {
 	rules           map[model.CourtType][]model.PricingRule
 }
 
-// NewSlotQuoter prepares a quoter for one date and member tier.
-func (s *PriceEngineService) NewSlotQuoter(ctx context.Context, date string, memberType model.MemberType) (*SlotQuoter, error) {
+// NewSlotQuoter prepares a quoter for one date and member tier, with the
+// pricing settings the caller already loaded (half-court rate).
+func (s *PriceEngineService) NewSlotQuoter(ctx context.Context, date string, memberType model.MemberType, cfg *model.PricingConfig) (*SlotQuoter, error) {
 	t, err := time.Parse("2006-01-02", date)
 	if err != nil {
 		return nil, fmt.Errorf("invalid date format: %w", err)
-	}
-	cfg, err := s.courtRepo.GetPricingConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load half-court rate: %w", err)
 	}
 	discount, err := s.membershipService.CalculateDiscount(ctx, memberType)
 	if err != nil {

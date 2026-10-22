@@ -28,7 +28,7 @@ const (
 // just means "anonymous", so public routes keep working for a client whose
 // session lapsed. RequireRole then decides per route, and reports a lapsed
 // session as such.
-func Authenticate(auth *service.AuthService, users *service.UserService, roles *service.RoleService) gin.HandlerFunc {
+func Authenticate(auth *service.AuthService, roles *service.RoleService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if header == "" {
@@ -47,7 +47,9 @@ func Authenticate(auth *service.AuthService, users *service.UserService, roles *
 			c.Next()
 			return
 		}
-		u, err := users.GetUserProfile(c.Request.Context(), claims.UserID)
+		// The account and its role's permissions, read fresh (one query) on
+		// every request, so a suspension or a role edit applies at once.
+		u, perms, err := roles.SessionUser(c.Request.Context(), claims.UserID)
 		if err != nil {
 			// A database hiccup: carry on as anonymous so public pages
 			// (courts, pricing, availability) still load, and let
@@ -59,14 +61,6 @@ func Authenticate(auth *service.AuthService, users *service.UserService, roles *
 		}
 		if u == nil || !u.IsActive {
 			c.Set(ctxAuthError, "account is suspended or no longer exists")
-			c.Next()
-			return
-		}
-		// Permissions come from the user's role row on every request, so a
-		// role edit (or a new role for this user) applies at once.
-		perms, err := roles.Permissions(c.Request.Context(), string(u.Role))
-		if err != nil {
-			c.Set(ctxAuthUnavailable, true)
 			c.Next()
 			return
 		}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -53,17 +54,53 @@ func (s *RoleService) Permissions(ctx context.Context, roleID string) ([]model.P
 	var r model.Role
 	err := s.db.WithContext(ctx).First(&r, "id = ?", roleID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		for _, b := range model.BuiltinRoles {
-			if b.ID == roleID {
-				return b.Permissions, nil
-			}
-		}
-		return nil, nil
+		return builtinPermissions(roleID), nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	return r.Permissions, nil
+}
+
+// builtinPermissions is the built-in role's permissions, for a role with no
+// row (nil for an unknown role).
+func builtinPermissions(roleID string) []model.Permission {
+	for _, b := range model.BuiltinRoles {
+		if b.ID == roleID {
+			return b.Permissions
+		}
+	}
+	return nil
+}
+
+// SessionUser loads a signed-in user and their role's permissions in one
+// query - every authenticated request does this (nothing is cached, so a
+// suspension or a role edit applies to the very next request). nil user if
+// the account doesn't exist.
+func (s *RoleService) SessionUser(ctx context.Context, userID string) (*model.User, []model.Permission, error) {
+	var row struct {
+		model.User `gorm:"embedded"`
+		RoleFound  bool    `gorm:"column:role_found"`
+		RolePerms  *string `gorm:"column:role_perms"`
+	}
+	res := s.db.WithContext(ctx).Raw("SELECT u.*, r.id IS NOT NULL AS role_found, r.permissions AS role_perms "+
+		"FROM users u LEFT JOIN roles r ON r.id = u.role WHERE u.id = ?", userID).Scan(&row)
+	if res.Error != nil {
+		return nil, nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil, nil
+	}
+	if !row.RoleFound {
+		return &row.User, builtinPermissions(string(row.User.Role)), nil
+	}
+	var perms []model.Permission
+	if row.RolePerms != nil && *row.RolePerms != "" {
+		if err := json.Unmarshal([]byte(*row.RolePerms), &perms); err != nil {
+			return nil, nil, fmt.Errorf("role %s permissions: %w", row.User.Role, err)
+		}
+	}
+	return &row.User, perms, nil
 }
 
 // RoleWithCount is a role plus how many accounts have it.

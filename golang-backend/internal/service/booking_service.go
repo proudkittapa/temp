@@ -291,10 +291,16 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		return nil, fmt.Errorf("%w: unknown user", ErrInvalidBooking)
 	}
 
+	// The pricing settings, read once for the whole booking (window,
+	// opening hours, half-court rate).
+	cfg, err := s.courtRepo.GetPricingConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// Online bookings open MaxAdvanceDays ahead (configurable by admins);
 	// staff at the counter may book further out, e.g. for tournaments.
 	if input.WalkIn == nil {
-		if err := s.checkBookingWindow(ctx, input.Date); err != nil {
+		if err := s.checkBookingWindow(cfg, input.Date); err != nil {
 			return nil, err
 		}
 	}
@@ -310,7 +316,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 	// Everything that doesn't need locks - courts, closures, prices - is
 	// loaded once, before the transaction, so it isn't repeated per slot and
 	// doesn't run on a second pool connection while row locks are held.
-	planned, err := s.planSlots(ctx, input, memberType)
+	planned, err := s.planSlots(ctx, input, memberType, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +551,7 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 
 // planSlots validates and prices every requested slot without taking locks,
 // and returns them in lock order (see repository.LockKey).
-func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput, memberType model.MemberType) ([]plannedSlot, error) {
+func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput, memberType model.MemberType, cfg *model.PricingConfig) ([]plannedSlot, error) {
 	courtIDs := make([]string, 0, len(input.Slots))
 	for _, sl := range input.Slots {
 		courtIDs = append(courtIDs, sl.CourtID)
@@ -562,11 +568,7 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 	if err != nil {
 		return nil, err
 	}
-	quoter, err := s.priceEngine.NewSlotQuoter(ctx, input.Date, memberType)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := s.courtRepo.GetPricingConfig(ctx)
+	quoter, err := s.priceEngine.NewSlotQuoter(ctx, input.Date, memberType, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -752,11 +754,7 @@ func checkOpenHour(cfg *model.PricingConfig, start string, hour int) error {
 
 // checkBookingWindow refuses an online booking further ahead than the
 // configured PricingConfig.MaxAdvanceDays (Bangkok calendar days).
-func (s *BookingService) checkBookingWindow(ctx context.Context, date string) error {
-	cfg, err := s.courtRepo.GetPricingConfig(ctx)
-	if err != nil {
-		return err
-	}
+func (s *BookingService) checkBookingWindow(cfg *model.PricingConfig, date string) error {
 	day, err := time.ParseInLocation("2006-01-02", date, Bangkok)
 	if err != nil {
 		return fmt.Errorf("%w: date must be YYYY-MM-DD", ErrInvalidBooking)

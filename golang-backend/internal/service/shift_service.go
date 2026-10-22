@@ -69,6 +69,12 @@ func cashBetween(db *gorm.DB, from, to time.Time) (float64, float64, float64, er
 }
 
 func (s *ShiftService) view(db *gorm.DB, sh model.Shift) (*ShiftView, error) {
+	// A closed shift with its figures frozen at close needs no queries (the
+	// shift history used to recount every shift: 3 queries each).
+	if sh.ClosedAt != nil && sh.ExpectedCash != nil && sh.CashBookingsAtClose != nil && sh.CashOrdersAtClose != nil && sh.CashDepositsAtClose != nil {
+		return &ShiftView{Shift: sh, CashBookings: *sh.CashBookingsAtClose, CashOrders: *sh.CashOrdersAtClose,
+			CashDeposits: *sh.CashDepositsAtClose, Expected: *sh.ExpectedCash}, nil
+	}
 	to := s.now()
 	if sh.ClosedAt != nil {
 		to = *sh.ClosedAt

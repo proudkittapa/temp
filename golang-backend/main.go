@@ -272,7 +272,7 @@ func main() {
 	// bearer token; RequireRole gates each route that needs a login.
 	// Idempotency: a retried write (Idempotency-Key header) is answered from
 	// the first attempt instead of running twice.
-	api := router.Group("/api/v1", handler.LimitBody(), handler.Authenticate(authService, userService, roleService), handler.Idempotency(db))
+	api := router.Group("/api/v1", handler.LimitBody(), handler.Authenticate(authService, roleService), handler.Idempotency(db))
 	// Each route checks a permission (model/permissions.go); roles are
 	// permission sets the admin edits. can(a, b) = any one of them.
 	loggedIn := handler.RequireLogin()

@@ -424,9 +424,6 @@ func (s *POSService) replayCheckout(ctx context.Context, key string) (*CheckoutR
 	return &CheckoutResult{Order: views[0], PointsEarned: int(points), Replayed: true}, nil
 }
 
-// lineLockKey orders product/variant row locks the same way in every
-// checkout, so two carts holding the same items in a different order can't
-// deadlock.
 // coverPointsWithRewards gets u (locked by the caller) up to need points
 // before points are taken back: if the customer already spent them, their
 // unused rewards are cancelled, newest first, and those rewards' points
@@ -472,6 +469,8 @@ func itemLockKey(l model.OrderItem) string {
 	return lineLockKey(POSOrderItemInput{ProductID: l.ProductID, VariantID: l.VariantID})
 }
 
+// lineLockKey orders product/variant row locks the same way everywhere
+// (returns, voids): a product, then its size.
 func lineLockKey(in POSOrderItemInput) string {
 	if in.VariantID != nil {
 		return in.ProductID + "|" + *in.VariantID
@@ -497,31 +496,51 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 				return err
 			}
 		}
-		// Take every stock row lock up front, in a fixed order; the lines
-		// are then processed in the cart's order (re-locking is a no-op).
-		sorted := append([]POSOrderItemInput(nil), input.Items...)
-		sort.Slice(sorted, func(i, j int) bool { return lineLockKey(sorted[i]) < lineLockKey(sorted[j]) })
-		for _, in := range sorted {
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", in.ProductID).Find(&[]model.Product{}).Error; err != nil {
-				return err
-			}
-			if in.VariantID != nil && *in.VariantID != "" {
-				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id = ?", *in.VariantID).Find(&[]model.ProductVariant{}).Error; err != nil {
-					return err
-				}
+		// The whole cart in a few statements instead of 4-7 round trips per
+		// line under the locks: lock every product, then every size of
+		// those products, each in id order (a size always after its
+		// product, as everywhere else - no deadlock with returns or voids);
+		// check the lines in the cart's order; then one stock update per
+		// table and one insert for the lines.
+		productIDs := make([]string, 0, len(input.Items))
+		seenProduct := map[string]bool{}
+		for _, in := range input.Items {
+			if !seenProduct[in.ProductID] {
+				seenProduct[in.ProductID] = true
+				productIDs = append(productIDs, in.ProductID)
 			}
 		}
+		var products []model.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", productIDs).Order("id").Find(&products).Error; err != nil {
+			return err
+		}
+		var variants []model.ProductVariant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("product_id IN ?", productIDs).Order("id").Find(&variants).Error; err != nil {
+			return err
+		}
+		productByID := make(map[string]*model.Product, len(products))
+		for i := range products {
+			productByID[products[i].ID] = &products[i]
+		}
+		variantByID := make(map[string]*model.ProductVariant, len(variants))
+		hasSizes := map[string]bool{}
+		for i := range variants {
+			variantByID[variants[i].ID] = &variants[i]
+			hasSizes[variants[i].ProductID] = true
+		}
+
 		now := s.now()
 		orderID := ids.New("ord")
 		total, deposit := 0.0, 0.0
 		items := make([]OrderItemView, 0, len(input.Items))
+		lines := make([]model.OrderItem, 0, len(input.Items))
+		// Stock still left as earlier lines of this cart take from it (the
+		// same product can be on two lines).
+		productTake, variantTake := map[string]int{}, map[string]int{}
 		for _, in := range input.Items {
-			var p model.Product
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&p, "id = ?", in.ProductID).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return fmt.Errorf("%w: product %s does not exist", ErrInvalidBooking, in.ProductID)
-				}
-				return err
+			p, ok := productByID[in.ProductID]
+			if !ok {
+				return fmt.Errorf("%w: product %s does not exist", ErrInvalidBooking, in.ProductID)
 			}
 			if !p.IsActive {
 				return fmt.Errorf("%w: %s is not on sale", ErrInvalidBooking, p.Name)
@@ -534,48 +553,46 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 				}
 				return fmt.Errorf("%w: %s is for sale, not rental", ErrInvalidBooking, p.Name)
 			}
-			var variants []model.ProductVariant
-			if err := tx.Where("product_id = ?", p.ID).Find(&variants).Error; err != nil {
-				return err
-			}
 			category, isRental := p.Category, p.IsRental
 			line := model.OrderItem{ID: ids.New("itm"), OrderID: orderID, ProductID: p.ID, Qty: in.Qty, UnitPrice: p.Price, Notes: in.Notes,
 				Category: &category, IsRental: &isRental}
-			if len(variants) > 0 {
+			if hasSizes[p.ID] {
 				if in.VariantID == nil || *in.VariantID == "" {
 					return fmt.Errorf("%w: choose the size of %s", ErrInvalidBooking, p.Name)
 				}
-				var v model.ProductVariant
-				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&v, "id = ? AND product_id = ?", *in.VariantID, p.ID).Error; err != nil {
-					if errors.Is(err, gorm.ErrRecordNotFound) {
-						return fmt.Errorf("%w: unknown size for %s", ErrInvalidBooking, p.Name)
-					}
-					return err
+				v, ok := variantByID[*in.VariantID]
+				if !ok || v.ProductID != p.ID {
+					return fmt.Errorf("%w: unknown size for %s", ErrInvalidBooking, p.Name)
 				}
-				if v.Stock < in.Qty {
-					return fmt.Errorf("%w: %s size %s: only %d left", ErrOutOfStock, p.Name, v.Label, v.Stock)
+				if left := v.Stock - variantTake[v.ID]; left < in.Qty {
+					return fmt.Errorf("%w: %s size %s: only %d left", ErrOutOfStock, p.Name, v.Label, left)
 				}
-				if err := tx.Model(&v).Update("stock", v.Stock-in.Qty).Error; err != nil {
-					return err
-				}
+				variantTake[v.ID] += in.Qty
 				line.VariantID, line.ShoeSize, line.ShoeGender = &v.ID, &v.Label, v.Gender
 			} else if in.VariantID != nil && *in.VariantID != "" {
 				return fmt.Errorf("%w: %s has no sizes", ErrInvalidBooking, p.Name)
 			}
-			if p.Stock < in.Qty {
-				return fmt.Errorf("%w: %s: only %d in stock", ErrOutOfStock, p.Name, p.Stock)
+			if left := p.Stock - productTake[p.ID]; left < in.Qty {
+				return fmt.Errorf("%w: %s: only %d in stock", ErrOutOfStock, p.Name, left)
 			}
-			if err := tx.Model(&p).Update("stock", p.Stock-in.Qty).Error; err != nil {
-				return err
-			}
-			if err := tx.Create(&line).Error; err != nil {
-				return err
-			}
+			productTake[p.ID] += in.Qty
+			lines = append(lines, line)
 			total = RoundBaht(total + p.Price*float64(in.Qty))
 			if p.IsRental {
 				deposit = RoundBaht(deposit + p.Deposit*float64(in.Qty))
 			}
 			items = append(items, OrderItemView{OrderItem: line, ProductName: p.Name})
+		}
+		if err := takeStock(tx, "products", productTake); err != nil {
+			return err
+		}
+		if err := takeStock(tx, "product_variants", variantTake); err != nil {
+			return err
+		}
+		if len(lines) > 0 {
+			if err := tx.Create(&lines).Error; err != nil {
+				return err
+			}
 		}
 
 		code, err := uniqueOrderCode(tx, now.In(Bangkok).Format("2006-01-02"))
@@ -627,10 +644,32 @@ func (s *POSService) checkoutTx(ctx context.Context, input CheckoutInput, custom
 	return result, nil
 }
 
-// views loads the lines (with product names) of the given orders.
+// takeStock lowers stock by take[id] for each row of table, in one
+// statement (the rows are already locked; the stock >= 0 CHECK is the
+// backstop).
+func takeStock(tx *gorm.DB, table string, take map[string]int) error {
+	if len(take) == 0 {
+		return nil
+	}
+	idList := make([]string, 0, len(take))
+	for id := range take {
+		idList = append(idList, id)
+	}
+	sort.Strings(idList)
+	values := make([]string, len(idList))
+	args := make([]any, 0, 2*len(idList))
+	for i, id := range idList {
+		values[i] = "(?, ?::int)"
+		args = append(args, id, take[id])
+	}
+	return tx.Exec("UPDATE "+table+" AS t SET stock = t.stock - v.qty FROM (VALUES "+strings.Join(values, ", ")+
+		") AS v(id, qty) WHERE t.id = v.id", args...).Error
+}
+
 // inBatch is the most ids sent in one IN list.
 const inBatch = 1000
 
+// views loads the lines (with product names) of the given orders.
 func (s *POSService) views(db *gorm.DB, orders []model.Order) ([]OrderView, error) {
 	idList := make([]string, len(orders))
 	for i, o := range orders {

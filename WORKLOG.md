@@ -18,6 +18,47 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Backend speed-ups, part 2: checkout, sign-in check, booking, shifts
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 3 of the code-quality plan)
+- **Commit(s):** this commit (on `main`, parent `5eaaf39`)
+- **Changed:**
+  - `POSService.checkoutTx`: the cart in a fixed number of statements -
+    lock all its products (id order), then all their sizes (id order; a
+    size always after its product, as in returns/voids), check the lines
+    in cart order in memory (quantities of the same product/size on
+    several lines add up), one stock `UPDATE ... FROM (VALUES ...)` per
+    table (`takeStock`), one batch insert of the lines. Was 4-7 round
+    trips per line while holding the locks. Error texts unchanged.
+  - Authentication: `RoleService.SessionUser` reads the user and the
+    role's permissions in one LEFT JOIN (built-in fallback for a role with
+    no row, as before); `Authenticate(auth, roles)` no longer takes the
+    user service. Not cached on purpose.
+  - `CreateBooking` loads the pricing config once and passes it to
+    `checkBookingWindow`, `planSlots` and `NewSlotQuoter` (was 3 loads).
+  - `ShiftService.view`: a closed shift with all its figures frozen at
+    close returns without recounting.
+  - Two misplaced doc comments in pos.go put back on their functions.
+- **Verified:** `go vet`, `go test ./...` (middleware test updated for the
+  new signature).
+  - Checkout, live: same product on two lines (stock -5), two lines
+    exceeding stock (refused, "only 4 in stock", nothing changed), two
+    shoe sizes, size sold out, missing size, size of another product,
+    unknown product, rental in a sale, deposit by PromptPay (refused),
+    deposit rental in cash (deposit 400) - all as before. 8 parallel
+    checkouts for 5 items: 5 OK, 3 out of stock, stock 0.
+  - Sign-in check: old and new binaries side by side - `/auth/me`
+    identical for admin, manager, staff, customer, a custom role, a role
+    with no row, a suspended account, a bad token; four permission-gated
+    endpoints give the same 200/403 for 4 role cases.
+  - Booking: window (40 days -> refused), 05:00 refused, student half
+    court 212.5, walk-in 40 days ahead allowed.
+  - `/admin/shifts`: identical JSON old vs new (10 shifts, 9 closed).
+- **Not done / follow-ups:** audit rows store full snapshots and are never
+  pruned (needs a retention decision); frontend refetching (step 4).
+
+---
+
 ## 2026-10-22 — Backend speed-ups, part 1: dashboard, user list, audit log
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 3 of the code-quality plan)
