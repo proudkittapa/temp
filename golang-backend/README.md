@@ -88,6 +88,20 @@ go vet ./...         # static checks
 go test ./... -v     # runs internal/model and internal/service tests
 ```
 
+**Race tests on a real PostgreSQL** (`concurrency_test.go`): the same
+actions sent at the same moment - several customers booking one hour, full
+court vs its halves, approve vs cancel, slip vs expiry, double-click redeem,
+the last items in stock, cancel vs spending the points, void vs closing the
+shift - must leave the data as if they ran one after the other. They need an
+empty database of their own whose name ends in `_test` (they drop and
+recreate its schema) and are skipped without one:
+```bash
+createdb arena_test
+TEST_DATABASE_URL='postgres://USER:PASSWORD@localhost:5432/arena_test?sslmode=disable' \
+  go test -run Concurrency -count=1 -v .
+# CONCURRENCY_ROUNDS=50 repeats each race 50 times (default 15)
+```
+
 ### 5. Set Environment Variables
 Without a `.env`, the server uses `.env.example`, whose values match step
 2's Homebrew setup (that file is the only place the local database password

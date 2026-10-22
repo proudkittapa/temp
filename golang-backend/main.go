@@ -145,44 +145,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Critical error opening the setup connection: %v\n", err)
 	}
-	err = setupDB.AutoMigrate(
-		&model.IdempotencyKey{},
-		&model.User{},
-		&model.Role{},
-		&model.Court{},
-		&model.PricingRule{},
-		&model.PricingConfig{},
-		&model.MemberDiscount{},
-		&model.DayOff{},
-		&model.Booking{},
-		&model.Payment{},
-		&model.Product{},
-		&model.ProductVariant{},
-		&model.Order{},
-		&model.OrderItem{},
-		&model.AuditLog{},
-		&model.PointsLedgerEntry{},
-		&model.RewardCatalogItem{},
-		&model.Voucher{},
-		&model.Shift{},
-		&model.LoginFailure{},
-		&model.Refund{},
-		&model.AppMigration{},
-	)
-	if err != nil {
+	if err := setupSchema(setupDB); err != nil {
 		log.Fatalf("Database initial migration failed: %v\n", err)
 	}
-	log.Println("Database schemas verified and migrated successfully!")
-	ensureUserUniqueIndexes(setupDB)
-	runDataMigrations(setupDB) // before ensureIndexes: the slip index needs slip_released filled in
-	ensureIndexes(setupDB)
-	ensureConstraints(setupDB)
-	warnDuplicatePhones(setupDB)
-
-	// 1c. Seed the config rows the pricing engine needs to not error on a
-	// fresh database - AutoMigrate only creates schema, not data. FirstOrCreate
-	// makes this idempotent, so it's safe to run on every startup.
-	seedDefaults(setupDB)
 	if sqlSetup, err := setupDB.DB(); err == nil {
 		sqlSetup.Close()
 	}
@@ -1044,6 +1009,52 @@ func warnDuplicatePhones(db *gorm.DB) {
 		log.Printf("WARNING: %d phone number(s) belong to more than one account (%s); merge them so walk-in points go to the right account.\n",
 			len(phones), strings.Join(phones, ", "))
 	}
+}
+
+// setupSchema brings the database to the current schema: tables
+// (AutoMigrate), data migrations, indexes, constraints and the default rows
+// the pricing engine needs. Every step is idempotent, so it runs on every
+// start; the concurrency tests build their database with it too.
+func setupSchema(setupDB *gorm.DB) error {
+	err := setupDB.AutoMigrate(
+		&model.IdempotencyKey{},
+		&model.User{},
+		&model.Role{},
+		&model.Court{},
+		&model.PricingRule{},
+		&model.PricingConfig{},
+		&model.MemberDiscount{},
+		&model.DayOff{},
+		&model.Booking{},
+		&model.Payment{},
+		&model.Product{},
+		&model.ProductVariant{},
+		&model.Order{},
+		&model.OrderItem{},
+		&model.AuditLog{},
+		&model.PointsLedgerEntry{},
+		&model.RewardCatalogItem{},
+		&model.Voucher{},
+		&model.Shift{},
+		&model.LoginFailure{},
+		&model.Refund{},
+		&model.AppMigration{},
+	)
+	if err != nil {
+		return err
+	}
+	log.Println("Database schemas verified and migrated successfully!")
+	ensureUserUniqueIndexes(setupDB)
+	runDataMigrations(setupDB) // before ensureIndexes: the slip index needs slip_released filled in
+	ensureIndexes(setupDB)
+	ensureConstraints(setupDB)
+	warnDuplicatePhones(setupDB)
+
+	// Seed the config rows the pricing engine needs to not error on a fresh
+	// database - AutoMigrate only creates schema, not data. FirstOrCreate
+	// makes this idempotent, so it's safe to run on every startup.
+	seedDefaults(setupDB)
+	return nil
 }
 
 // openSetupDB opens a connection for schema work (migrations, index

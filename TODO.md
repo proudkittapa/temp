@@ -19,8 +19,8 @@
    follows DEPLOY.md; then `TESTING_CHECKLIST.md` on the real address,
    test HTTPS, set up the nightly backup cron and an off-server copy.
 4. **Before real customers** (section 11 "Go-live"): phone numbers stored
-   in one form so lookups use an index; money columns as numeric;
-   concurrency tests on a real Postgres (section 7).
+   in one form so lookups use an index; money columns as numeric.
+   (Concurrency tests on a real Postgres: done 2026-10-22.)
 5. **Then:** LINE login and notifications (1-2), forgot password by SMS
    (4), VAT tax invoices (5).
 
@@ -40,8 +40,8 @@ Cheap and blocking first, then what changes what customers/staff see
    invoice (section 5); the owner still has to type in the real details.
 3. ~~**Basketball courts A, B, C, each full or half**~~ - done 2026-10-21
    (section 10).
-4. **Safety checks** - section 7: automated concurrency tests (the
-   double-booking backstop and automatic retry are done).
+4. ~~**Safety checks**~~ - done 2026-10-22: automated concurrency tests on a
+   real Postgres (`golang-backend/concurrency_test.go`).
 5. ~~**One login, screens by permission, admin-defined roles**~~ - done 2026-10-21 (section 9).
    Before launch so staff learn the final sign-in once (if launch can't
    wait, do it right after; today's separate sign-ins work).
@@ -58,7 +58,7 @@ Cheap and blocking first, then what changes what customers/staff see
 11. ~~**No-show: re-sell the court at half price**~~ - done 2026-10-21 (section 12).
 12. **Remaining improvements** - section 7 and section 11 (refund split, year
     picker, Excel preview, rental deposit, live refresh, retry protection,
-    indexes are done; left: concurrency tests, phone lookups, smaller customer
+    indexes and concurrency tests are done; left: phone lookups, smaller customer
     download, kept deposits in reports).
 
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
@@ -116,7 +116,7 @@ Each needs a yes/no from the owner before it is built.
 ## 7. Smaller improvements found in the 2026-10-21 code review (not done)
 - [x] Day summary: refunds split by method (cash / transfer) and only refunds of approved payments counted; refunds of never-approved slips shown apart. Done 2026-10-21.
 - [x] Automatic retry of deadlock/serialization errors: every transaction runs through `repository.RetryTx` (3 attempts). Done 2026-10-21.
-- [ ] Backend concurrency tests on a real Postgres (verify vs cancel, expiry vs slip upload, void vs shift close) - only a manual parallel-booking check was done.
+- [x] Backend concurrency tests on a real Postgres (`golang-backend/concurrency_test.go`, run with `TEST_DATABASE_URL`): same-hour bookings, overlapping blocks, full court vs halves, approve vs cancel, slip vs expiry, redeem twice, checkout of the last items, cancel vs redeem, void vs shift close - each repeated with random arrival order, checking one winner, stock, points = ledger, cash at close. No bug found (5 runs of 50 rounds each). Done 2026-10-22.
 - [x] Database backstop against double booking: partial unique index `idx_bookings_live_slot` on (court_id, date, start_time) for non-cancelled rows; a hit returns 409 "slot already booked". Done 2026-10-21.
 - [x] Receipts show who took the money and when (payment verified_by/verified_at for bookings, the seller for counter sales), plus the print time. Done 2026-10-21.
 - [x] Reports year picker: next year down to 5 years back. Done 2026-10-21.

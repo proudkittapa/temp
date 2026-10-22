@@ -18,6 +18,44 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Concurrency tests on a real PostgreSQL
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1": group 1 of the next steps, item 1)
+- **Commit(s):** this commit (on `main`, parent `797bf2e`)
+- **Changed:**
+  - `golang-backend/main.go`: the schema setup (AutoMigrate list, data
+    migrations, indexes, constraints, default rows) moved unchanged into
+    `setupSchema(setupDB)`, so the tests build the database exactly as the
+    server does. Nothing else in startup changed.
+  - `golang-backend/concurrency_test.go` (new): 9 race tests, skipped
+    unless `TEST_DATABASE_URL` is set; refuses a database whose name doesn't
+    end in `_test` (it drops the schema). Each race repeats
+    `CONCURRENCY_ROUNDS` times (default 15) on fresh slots/users, with a
+    random 0-2 ms start delay so both orders of arrival happen:
+    6 customers on one hour (1 wins); overlapping 2-hour blocks (1 wins);
+    full court vs both halves (full alone or both halves); approve vs
+    cancel with refund (refunded in full, or rejected + refund check
+    pending; never a standing hour or leftover points); slip vs hold expiry
+    (on time and held, or late and released); 5x redeem (1 voucher, 40 of
+    100 points left); 7 buyers for 3 items (3 sold, stock 0); cancel vs
+    spending the booking's points (0 points, no active voucher); void vs
+    shift close (cash counted at close = what the shift's sales add up to
+    afterwards). After each: points = sum of ledger, none negative.
+  - Docs: `golang-backend/README.md` (how to run), `TODO.md` (items ticked).
+- **Verified:** `go vet ./...`, `go test ./...` (race tests skip without the
+  variable). With `TEST_DATABASE_URL` on a local Postgres 16: 5 runs x 50
+  rounds, all pass (the last 2 with the random delay: approve-vs-cancel
+  ended 79 refunded / 21 cancelled-first, slip-vs-expiry 73 on time / 27
+  late, so both orders were tested). Check that the tests catch a bug: with
+  the user row lock removed from `Redeem`, the redeem test fails (restored
+  after). No bug found in the app code.
+- **Not done / follow-ups:** not covered: closures vs bookings, rental
+  return vs void, MarkPaidInCash vs shift close (TODO section 11 lock-order
+  note). Next in group 1: phone numbers stored in one form, then the small
+  security items, then money as numeric.
+
+---
+
 ## 2026-10-22 — Fix regressions from the security fixes
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("find if we created any bug when we fixed the security part" -> "yes" to fixing them)
