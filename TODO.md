@@ -100,26 +100,21 @@ Each needs a yes/no from the owner before it is built.
 ## 8. Deploy (production)
 
 ### 8a. Quick demo for testers (free, from the owner's Mac) - before 8b if needed
-- [ ] Add `allowedHosts: ['.trycloudflare.com']` to `server` in `vite.config.ts` (Vite blocks unknown host names: "Blocked request. This host is not allowed").
+- [x] (done 2026-10-22) Add `allowedHosts: ['.trycloudflare.com']` to `server` in `vite.config.ts` (Vite blocks unknown host names: "Blocked request. This host is not allowed").
 - [ ] Run `npm run dev:api` and `cloudflared tunnel --url http://localhost:3000` (`brew install cloudflared`), send the printed `https://...trycloudflare.com` address. From China the tunnel may need the VPN on.
 - Limits: works only while the Mac is on; the address changes on every restart; demo accounts (password `123456`) and the ⚡ demo login buttons are open to anyone with the link - test data only.
 
 ### 8b. Real server
 - [ ] **Host:** a small Linux VPS in Singapore (DigitalOcean / Vultr / AWS Lightsail, about US$6-12/month) + optionally a domain (about US$10-15/year). A VPS rather than Render/Railway because slip images are saved on the server's disk (`golang-backend/uploads/`), which their cheaper plans wipe on restart, and Postgres there is a separate paid service.
-- [ ] **Deployment files in the repo** (not written yet):
-  - `docker-compose.yml`: Postgres (data in a volume), the Go backend (`uploads/` in a volume), Caddy. The backend already waits for Postgres on start and shuts down cleanly on SIGTERM (see `.env.example`), so no wait-for script is needed; use `GET /readyz` as the backend's healthcheck and give it `stop_grace_period: 35s` (Docker's default of 10 s is shorter than `SHUTDOWN_TIMEOUT_SECONDS`).
-  - `golang-backend/Dockerfile`: builds the whole package (`go build .`, not `main.go` alone - see WORKLOG 2026-10-21).
-  - Frontend build: `VITE_DATA_SOURCE=api npm run build` → `dist/` (demo login buttons are left out of production builds).
-  - `Caddyfile`: serve `dist/`, send `/api/*` to the backend on port 8080, automatic HTTPS for the domain.
-  - `DEPLOY.md`: step-by-step for a fresh server (install Docker, copy `.env`, `docker compose up -d`, update, backup, restore).
+- [x] **Deployment files in the repo** (done 2026-10-22, tested with Docker in the cloud session): `deploy/docker-compose.yml` (Postgres 16 with a volume, the backend with an uploads volume, health check on `/readyz`, 35 s stop grace, Caddy), `golang-backend/Dockerfile` (whole package, static binary, non-root), `deploy/web.Dockerfile` (`VITE_DATA_SOURCE=api` build served by Caddy), `deploy/Caddyfile` (site + `/api` + `/healthz` `/readyz`, automatic HTTPS for `SITE_ADDRESS`), `deploy/backup.sh` (DB dump + slip images, 30 days), `DEPLOY.md` (fresh server to running, first admin via `make-admin`, backups/restore, updates).
 - [ ] **Production settings** in `golang-backend/.env` on the server only (never in the repo or chat):
   - `GIN_MODE=release`; a long random `JWT_SECRET` (`openssl rand -hex 32`; the server refuses to start without it in release mode);
   - `DATABASE_URL` with a strong Postgres password;
   - `PROMPTPAY_ID` = the shop's real PromptPay number (the default `0105561008012` is only an example - payments would go to the wrong account);
   - `TRUSTED_PROXIES=` Caddy's address (otherwise every customer looks like one IP to the login limit); `CORS_ALLOWED_ORIGINS=` the site's address;
   - `SEED_DEMO_USERS=false`; court counts (`BASKETBALL_COURT_COUNT` etc.) if not the defaults.
-- [ ] **First start:** create the real admin account (and staff accounts with their roles); no demo accounts; type the business details in Admin → Pricing → ข้อมูลร้าน (section 0).
-- [ ] **Backups:** daily Postgres dump + copy of `uploads/` off the server (e.g. to object storage), kept ~30 days; test a restore once before launch.
+- [ ] **First start** (how-to in DEPLOY.md section 5; `arena-backend make-admin <phone>` exists): create the real admin account (and staff accounts with their roles); no demo accounts; type the business details in Admin → Pricing → ข้อมูลร้าน (section 0).
+- [ ] **Backups** (`deploy/backup.sh` + cron in DEPLOY.md; restore tested): daily Postgres dump + copy of `uploads/` off the server (e.g. to object storage), kept ~30 days; test a restore once before launch.
 - [ ] **Running it:** the backend restarts by itself after a crash or reboot (`restart: unless-stopped`); simple uptime check (e.g. UptimeRobot, free) that alerts the owner; how to update = `git pull` + rebuild + restart, written in `DEPLOY.md`.
 - [ ] After deploy: run `TESTING_CHECKLIST.md` against the real address (step 7), and use this address for the LINE callback/webhook (section 1-2 prerequisites).
 

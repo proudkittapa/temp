@@ -17,6 +17,9 @@ change did and what is still open - add an entry there before pushing to `main`.
 
 ---
 
+
+**Deploying to a server:** see [DEPLOY.md](DEPLOY.md) (Docker: PostgreSQL + Go backend + Caddy with automatic HTTPS, backups, first admin).
+
 ## Frontend
 
 ### Prerequisites

@@ -29,6 +29,9 @@ export default defineConfig(({mode}) => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       port: 3000,
       host: '0.0.0.0',
+      // A temporary `cloudflared tunnel` address for showing the app from a
+      // laptop (DEPLOY.md section 9); Vite refuses unknown host names.
+      allowedHosts: ['.trycloudflare.com'],
       proxy: {
         '/api': {
           target: 'http://localhost:8080',

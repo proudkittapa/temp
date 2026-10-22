@@ -1,0 +1,8 @@
+# Never in an image: secrets, local data, build output.
+.env
+.env.*
+!.env.example
+uploads/
+*.log
+arena-backend
+*.exe

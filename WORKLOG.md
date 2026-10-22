@@ -18,6 +18,69 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Deployment files (Docker + Caddy) and DEPLOY.md
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (TODO 8b)
+- **Commit(s):** this commit (on `main`, parent `e9ee714`)
+- **Changed:**
+  - `deploy/docker-compose.yml` (project `arena`): `db` postgres:16-alpine
+    (volume `pgdata`, pg_isready health check, 60 s stop grace),
+    `backend` (built from `golang-backend/`, env from `golang-backend/.env`
+    plus DATABASE_URL / GIN_MODE=release / SEED_DEMO_USERS=false /
+    TRUSTED_PROXIES set by compose, volume `uploads`, `/readyz` health
+    check, 35 s stop grace), `web` (Caddy on 80/443, volumes for
+    certificates). Fixed subnet 172.28.0.0/24 for the trusted proxy.
+    Settings in `deploy/.env` (`SITE_ADDRESS`, `POSTGRES_PASSWORD`) - kept
+    apart from the root `.env` that Vite reads; example in
+    `deploy/.env.example`.
+  - `golang-backend/Dockerfile` (+ `.dockerignore`: no .env/uploads in
+    images): golang:1.25-alpine build of the whole package, static binary
+    on alpine:3.22, non-root user, `/app/uploads` volume.
+  - `deploy/web.Dockerfile` (+ root `.dockerignore`): node:22-alpine
+    `VITE_DATA_SOURCE=api npm run build`, served by caddy:2-alpine.
+  - `deploy/Caddyfile`: `/api/*`, `/healthz`, `/readyz` -> backend; the
+    app with an index.html fallback; zstd/gzip; built assets cached for a
+    year, the page no-cache; nosniff / DENY framing / referrer policy;
+    no Server header. `SITE_ADDRESS` = domain (automatic HTTPS) or `:80`.
+  - `deploy/backup.sh`: pg_dump (custom format) + tar of the slip images
+    into `deploy/backups/`, 30 days kept (`backups/` git-ignored).
+  - `arena-backend make-admin <phone>` (main.go): gives a registered
+    account the admin role, audit-logged - the first admin of a new
+    installation (no demo accounts in production).
+  - `DEPLOY.md`: server, Docker install, settings, start, first admin,
+    backups + cron + restore, updates, day-to-day commands, uptime check,
+    the laptop tunnel demo. README links it; TODO 8a/8b updated.
+  - `vite.config.ts`: `allowedHosts: ['.trycloudflare.com']` (TODO 8a).
+- **Verified:** in the cloud session with Docker 29 (Docker Hub rate limit
+  -> mirror.gcr.io as the test machine's registry mirror; the build ran in
+  a scratch copy with two sandbox-only patches - the sandbox proxy's CA
+  for `go mod download`/`npm ci`, and xlsx 0.18.5 from npm because
+  cdn.sheetjs.com is blocked here; the committed files are unpatched):
+  - both images build; `docker compose up` on an empty database: tables,
+    migrations, 16 indexes (pg_trgm OK), backend healthy, web up.
+  - through Caddy: page (no-cache, gzip, security headers, no Server
+    header), hashed asset (immutable, zstd), unknown path -> index.html,
+    `/readyz` `/healthz`, API.
+  - register owner -> `make-admin` -> admin dashboard; demo account
+    rejected; customer booking + slip upload, signed slip image served
+    through Caddy, file in the uploads volume.
+  - backend sees the client address from Caddy, a forged
+    X-Forwarded-For is ignored.
+  - `docker compose stop backend`: "Stopped cleanly."; `down` + `up`:
+    admin and slip still there.
+  - `backup.sh` -> dump + tgz; restore as documented (pg_restore --clean,
+    tar over the uploads folder): an account created after the backup is
+    gone, owner login works.
+  - Playwright on http://localhost: customer sign-in on a phone-sized
+    screen (no demo buttons), staff slip queue shows the slip image; no
+    page errors.
+- **Not done / follow-ups:** a real server and domain (owner), HTTPS was
+  not exercised here (needs a public domain); copying backups off the
+  server is described, not automated; a restore step that deleted the
+  uploads folder first was dropped from DEPLOY.md (extract over it).
+
+---
+
 ## 2026-10-22 — Decision recorded: keep the browser-only demo mode
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, decision by traning.mbt@gmail.com ("keep it for now")

@@ -1,0 +1,39 @@
+# The website and the API on one address. SITE_ADDRESS (deploy/.env) is the
+# domain - Caddy then gets and renews the HTTPS certificate by itself - or
+# :80 for plain HTTP while testing by IP address.
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	# The Go backend: the API (slip images included) and its health checks
+	# (for an uptime monitor: /readyz = up and the database answers).
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+	handle /healthz {
+		reverse_proxy backend:8080
+	}
+	handle /readyz {
+		reverse_proxy backend:8080
+	}
+
+	# The built React app. Unknown paths get index.html (the screens use
+	# #/staff, #/admin, so this is only a safety net).
+	handle {
+		root * /srv
+		# Built file names change with every build: cache them for good;
+		# the page itself is re-checked so a new build shows at once.
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		@page not path /assets/*
+		header @page Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		-Server
+	}
+}

@@ -22,6 +22,7 @@ import (
 
 	"arena-backend/internal/handler"
 	"arena-backend/internal/model"
+	"arena-backend/internal/pkg/ids"
 	"arena-backend/internal/repository"
 	"arena-backend/internal/service"
 	"github.com/gin-gonic/gin"
@@ -119,6 +120,14 @@ func main() {
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	log.Println("GORM Database connection established successfully!")
+
+	// `arena-backend make-admin <phone>` gives an existing account the admin
+	// role and exits - how a new installation gets its first admin (register
+	// on the site first). In Docker:
+	//   docker compose exec backend /app/arena-backend make-admin 0812345678
+	if len(os.Args) == 3 && os.Args[1] == "make-admin" {
+		os.Exit(makeAdmin(ctx, db, os.Args[2]))
+	}
 
 	// 1b. GORM AutoMigrate to guarantee database schema is 100% complete!
 	log.Println("Running GORM AutoMigrate for all system schemas...")
@@ -1093,4 +1102,40 @@ func ensureConstraints(db *gorm.DB) {
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open ON shifts ((true)) WHERE closed_at IS NULL").Error; err != nil {
 		log.Printf("WARNING: could not enforce one open shift (more than one is open?): %v\n", err)
 	}
+}
+
+// makeAdmin sets the role of the account with this phone number to ADMIN
+// (audit-logged as done by the command line) and returns the exit code.
+func makeAdmin(ctx context.Context, db *gorm.DB, phone string) int {
+	u, err := repository.NewUserRepository(db).GetByPhone(ctx, phone)
+	if err != nil {
+		log.Printf("make-admin: %v\n", err)
+		return 1
+	}
+	if u == nil {
+		log.Printf("make-admin: no account with phone %s - register it on the site first.\n", phone)
+		return 1
+	}
+	if u.Role == model.RoleAdmin {
+		log.Printf("make-admin: %s (%s) is already an admin.\n", u.Name, u.Phone)
+		return 0
+	}
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.User{}).Where("id = ?", u.ID).Update("role", model.RoleAdmin).Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.AuditLog{
+			ID: ids.New("log"), UserID: "cli", UserName: "make-admin (server command line)",
+			Action: "USER_ROLE_CHANGED", TargetType: "User", TargetID: u.ID,
+			BeforeState: model.AuditJSON(map[string]any{"role": u.Role}),
+			AfterState:  model.AuditJSON(map[string]any{"role": model.RoleAdmin}),
+			CreatedAt:   time.Now(),
+		}).Error
+	})
+	if err != nil {
+		log.Printf("make-admin: %v\n", err)
+		return 1
+	}
+	log.Printf("make-admin: %s (%s) is now an admin.\n", u.Name, u.Phone)
+	return 0
 }

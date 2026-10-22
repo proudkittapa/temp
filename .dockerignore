@@ -1,0 +1,11 @@
+# Build context of deploy/web.Dockerfile (the repository root).
+node_modules
+dist
+build
+coverage
+.git
+golang-backend
+backups
+*.log
+.env
+.env.*
