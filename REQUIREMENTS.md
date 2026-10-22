@@ -61,8 +61,8 @@ The **Sports Complex Management System** is a mission-critical management platfo
 │           ├── CustomerPanel.tsx  # Customer portal: Bookings, PromptPay checkout, Loyalty rewards
 │           ├── StaffPOS.tsx       # Counter POS: Walk-in bookings, slip verification, F&B & rental desk
 │           ├── AdminPanel.tsx     # Executive portal: Heatmaps, pricing engine, day-off manager, audit log
-│           ├── customer/ staff/ admin/  # each panel's state+handlers hook (use*.tsx, with its
-│           │                            # typed context) and one file per tab / section
+│           ├── customer/ staff/ admin/  # per panel: use<Panel>.tsx (core state + typed context),
+│           │                            # one *Actions/*Data hook per area, one file per tab
 │           └── Dialog, MemberPhoneInput, RolesTab, DemoLogins  # shared pieces
 ```
 
@@ -76,7 +76,7 @@ The **Sports Complex Management System** is a mission-critical management platfo
 | `src/components/CustomerPanel.tsx` | Customer-facing WebApp: multi-sport court filtering, visual schedule calendar, basketball half-court logic, multi-slot shopping cart, PromptPay QR payment with slip upload simulation, loyalty points rewards redemption with voucher generation, and LINE OA push simulation. |
 | `src/components/StaffPOS.tsx` | Front-desk operations: real-time bank transfer slip verification queue, walk-in reservations, F&B retail checkout, sports gear rentals (badminton rackets and sized shoes 36–45 with gender), and shift cash register open/close reconciliation. |
 | `src/components/AdminPanel.tsx` | Executive management: 24-hour facility utilization heatmaps, pricing rules configuration, court maintenance and Day-Off scheduler (full-day or hour-range blocking), financial revenue charts, anti-fraud audit log viewer, and Excel export. |
-| `src/components/{customer,staff,admin}/` | Since 2026-10-22 each panel is split: `use<Panel>.tsx` holds its state and handlers and provides them through a typed React context; each tab (staff: Walk-in, Slips, Shop, Rentals, Vouchers, Day total; admin: Dashboard, Pricing, Courts, Products, Users, Member discounts, Reports, Audit log; customer: Account, the three booking steps, My bookings, LINE simulator) is its own component reading that context. The `*.tsx` panel files above keep only the login screen, header, tab bar and shared dialogs. |
+| `src/components/{customer,staff,admin}/` | Since 2026-10-22 each panel is split: `use<Panel>.tsx` holds its state, effects and data loading (the core) and merges the handlers of one hook per area (e.g. `staff/slipActions.tsx`, `admin/pricingActions.tsx`, `customer/bookingFlow.tsx`), each receiving what it uses from the core and earlier areas through a typed `deps` parameter; the result is provided through a typed React context; each tab (staff: Walk-in, Slips, Shop, Rentals, Vouchers, Day total; admin: Dashboard, Pricing, Courts, Products, Users, Member discounts, Reports, Audit log; customer: Account, the three booking steps, My bookings, LINE simulator) is its own component reading that context. The `*.tsx` panel files above keep only the login screen, header, tab bar and shared dialogs. |
 | `BACKEND_PLAN.md` | Full transition blueprint detailing production Go microservices, PostgreSQL relational schemas, pgxpool connection handling, Redis slot lock mutexes, and JWT authentication. |
 
 ---

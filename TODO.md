@@ -182,7 +182,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] Pricing/availability/drawer rules exist in Go and TypeScript - server returns the availability matrix (status, price, reason) and error codes instead of English text matched by ~130 regexes.
 - [ ] Two data modes (110 `USE_BACKEND` branches) - one DataSource interface, or drop browser-only mode for a Docker demo.
 - [x] Split StaffPOS / AdminPanel / CustomerPanel by tab (done 2026-10-22): panels 131-414 lines, one file per tab (35-491 lines) under `components/{staff,admin,customer}/`, state and handlers in `use<Panel>.tsx` behind a typed context.
-- [ ] Next: the three `use<Panel>.tsx` hooks are still 1.2-1.9k lines - split them by area (e.g. staff: walk-in, slips, shop/rentals, shift) into smaller hooks.
+- [x] The three `use<Panel>.tsx` hooks split by area (done 2026-10-22): each keeps a core (state, effects, data loading; 400-570 lines) and calls one hook per area (staff: session, shift, slips, booking actions, vouchers, walk-in, shop, rentals, day report; admin: session, dashboard data, pricing, courts, users, products, reports; customer: account, slot picker, booking flow, rewards).
 - [x] Slip upload: type check and downscale to ≤1600 px JPEG when not JPG/PNG/WebP or over 1.5 MB (`src/slipImage.ts`); CSV formula guard covers leading spaces/tab/CR and leaves numbers alone. Done 2026-10-21.
 - [ ] Small: token in localStorage + no CSP; 7-9 px text; unused deps (`@google/genai`, `express`, `dotenv`, `motion`); cash refunds don't reduce the drawer (section 0).
 

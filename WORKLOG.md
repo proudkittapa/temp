@@ -18,6 +18,43 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Panel hooks split by area
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("split them by area first")
+- **Commit(s):** this commit (on `main`, parent `213abb3`)
+- **Changed:** code moved, not rewritten. Each `use<Panel>.tsx` (staff
+  1,909 lines, admin 1,723, customer 1,217) now has:
+  - `use<Panel>Core`: state, refs, effects, data loading and small shared
+    helpers (571 / 427 / 399 lines with the composition below);
+  - one hook per area, each in its own file, receiving what it uses from
+    the core and from earlier areas through one typed `deps` parameter:
+    - staff/: sessionActions, shiftActions, slipActions, bookingActions,
+      voucherActions, walkinActions, shopActions, rentalActions, dayReport
+    - admin/: sessionActions, dashboardData, pricingActions, courtActions,
+      userActions, productActions, reportActions
+    - customer/: accountActions, slotPicker, bookingFlow, rewardActions
+  - `use<Panel>` calls the core, then the areas in dependency order, and
+    returns them merged - same shape as before, so the tabs and the
+    context are unchanged.
+  - Module-level helpers of the staff/admin/customer hook files moved to
+    `<dir>/shared.tsx` (re-exported), so area files don't import the hook
+    file (no import cycles).
+  - Done with a one-off TypeScript-AST script that also checks the core
+    never uses an area's names and that areas have no dependency cycles.
+    It refused one assignment (admin `emptyBusiness`/`businessFrom` feed
+    the core's state) - those stayed in the core.
+  - TODO and the REQUIREMENTS.md file map updated.
+- **Verified:** `npm run lint` 0 errors, `vitest` 60/60, `vite build` both
+  modes. Playwright (API backend), no page errors: all staff and admin
+  tabs open; customer login -> pick -> confirm -> QR -> slip
+  (SLIP_UPLOADED); slip replaced -> warning -> approve (CONFIRMED/VERIFIED);
+  undo no-show (point back); walk-in cash booking ("สำเร็จแล้ว! ยอด 200
+  บาท", booking in DB); shop checkout (order in DB).
+- **Not done / follow-ups:** rentals and shift close were not clicked
+  through (moved verbatim, type-checked).
+
+---
+
 ## 2026-10-22 — Split the three big panels by tab
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 2 of the code-quality plan)
