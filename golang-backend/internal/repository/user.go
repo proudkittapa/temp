@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"arena-backend/internal/model"
@@ -126,32 +128,97 @@ func NormalizePhone(p string) string {
 	return d
 }
 
-// canonicalPhoneSQL is NormalizePhone in SQL, applied to users.phone, so
-// accounts stored before phones were normalized (with dashes, or as
-// +66...) still match.
+// canonicalPhoneSQL is NormalizePhone in SQL, applied to users.phone. Only
+// NormalizeStoredPhones and the fallback for old-format phones use it: it
+// can't use an index, so it reads every user row.
 const canonicalPhoneSQL = `(CASE
 	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^66[0-9]{8,9}$' THEN '0' || substr(regexp_replace(phone, '[^0-9]', '', 'g'), 3)
 	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^0066[0-9]{8,9}$' THEN '0' || substr(regexp_replace(phone, '[^0-9]', '', 'g'), 5)
 	ELSE regexp_replace(phone, '[^0-9]', '', 'g') END)`
 
+// phonesNormalized is true once startup found every stored phone in
+// canonical form (see NormalizeStoredPhones): lookups are then a plain
+// indexed "phone = ?". Until then - or while some account keeps an
+// old-format number because another account already has it - they also
+// compare canonicalPhoneSQL, so those accounts are still found.
+var phonesNormalized atomic.Bool
+
+// phoneMatch is the WHERE condition for "users.phone is this canonical
+// number".
+func phoneMatch(db *gorm.DB, phone string) *gorm.DB {
+	if phonesNormalized.Load() {
+		return db.Where("phone = ?", phone)
+	}
+	return db.Where("(phone = ? OR "+canonicalPhoneSQL+" = ?)", phone, phone)
+}
+
+// NormalizeStoredPhones rewrites phones stored before sign-up normalized
+// them ("081-555-0000", "+66815550000") to canonical form, so lookups can
+// use the index. When several accounts have the same number, the one
+// already in canonical form - otherwise the oldest - gets it; the others
+// keep theirs and are returned (canonical number -> account ids) to be
+// merged by hand. Runs at every start: it is cheap, and an account left
+// over is normalized as soon as the conflict is gone.
+func NormalizeStoredPhones(ctx context.Context, db *gorm.DB) (fixed int64, leftover map[string][]string, err error) {
+	res := db.WithContext(ctx).Exec(`UPDATE users u SET phone = c.p
+		FROM (SELECT id, p, row_number() OVER (PARTITION BY p ORDER BY (phone = p) DESC, created_at, id) AS rn
+		      FROM (SELECT id, phone, created_at, ` + canonicalPhoneSQL + ` AS p FROM users WHERE phone <> '') x) c
+		WHERE u.id = c.id AND c.rn = 1 AND u.phone <> c.p
+		  AND NOT EXISTS (SELECT 1 FROM users o WHERE o.phone = c.p AND o.id <> u.id)`)
+	if res.Error != nil {
+		return 0, nil, res.Error
+	}
+	var rows []struct{ P, ID string }
+	if err := db.WithContext(ctx).Model(&model.User{}).Select("id, " + canonicalPhoneSQL + " AS p").
+		Where("phone <> '' AND phone <> " + canonicalPhoneSQL).Order("p, created_at, id").Scan(&rows).Error; err != nil {
+		return res.RowsAffected, nil, err
+	}
+	leftover = map[string][]string{}
+	for _, r := range rows {
+		leftover[r.P] = append(leftover[r.P], r.ID)
+	}
+	phonesNormalized.Store(len(rows) == 0)
+	return res.RowsAffected, leftover, nil
+}
+
 // FindByIdentity returns every user whose email is identity (ignoring
 // case: "John@Gmail.com" is john@gmail.com) or - when identity has no "@" -
 // whose phone is the same number, oldest first.
-// Usually that is zero or one user, but before phones were normalized the
-// same number could be registered twice (e.g. "081-555-0000" and
-// "0815550000"), so callers must not assume a single match.
+// Usually that is zero or one user, but an account left with an old-format
+// copy of another's number (see NormalizeStoredPhones) matches too, so
+// callers must not assume a single match.
 func (r *UserRepository) FindByIdentity(ctx context.Context, identity string) ([]model.User, error) {
 	identity = strings.TrimSpace(identity)
-	q := r.db.WithContext(ctx).Where("lower(email) = lower(?)", identity)
-	if !strings.Contains(identity, "@") {
-		if phone := NormalizePhone(identity); phone != "" {
-			q = q.Or(canonicalPhoneSQL+" = ?", phone)
-		}
-	}
+	db := r.db.WithContext(ctx)
+	// Two queries, each on its own index (an OR of the two can't use them
+	// together once the phone side needs the old-format fallback).
 	var users []model.User
-	if err := q.Order("created_at, id").Find(&users).Error; err != nil {
+	if err := db.Where("lower(email) = lower(?)", identity).Find(&users).Error; err != nil {
 		return nil, fmt.Errorf("failed to retrieve user by email/phone check: %w", err)
 	}
+	if !strings.Contains(identity, "@") {
+		if phone := NormalizePhone(identity); phone != "" {
+			var byPhone []model.User
+			if err := phoneMatch(db, phone).Find(&byPhone).Error; err != nil {
+				return nil, fmt.Errorf("failed to retrieve user by email/phone check: %w", err)
+			}
+			seen := map[string]bool{}
+			for _, u := range users {
+				seen[u.ID] = true
+			}
+			for _, u := range byPhone {
+				if !seen[u.ID] {
+					users = append(users, u)
+				}
+			}
+		}
+	}
+	sort.Slice(users, func(i, j int) bool {
+		if !users[i].CreatedAt.Equal(users[j].CreatedAt) {
+			return users[i].CreatedAt.Before(users[j].CreatedAt)
+		}
+		return users[i].ID < users[j].ID
+	})
 	return users, nil
 }
 
@@ -163,26 +230,13 @@ func (r *UserRepository) GetByPhone(ctx context.Context, phone string) (*model.U
 		return nil, nil
 	}
 	var u model.User
-	if err := r.db.WithContext(ctx).Where(canonicalPhoneSQL+" = ?", phone).Order("created_at, id").First(&u).Error; err != nil {
+	if err := phoneMatch(r.db.WithContext(ctx), phone).Order("created_at, id").First(&u).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to retrieve user by phone: %w", err)
 	}
 	return &u, nil
-}
-
-// DuplicatePhones returns canonical phone numbers that more than one
-// account uses - left over from before phones were normalized. Such
-// accounts should be merged by hand; until then login tries each one.
-func (r *UserRepository) DuplicatePhones(ctx context.Context) ([]string, error) {
-	var phones []string
-	err := r.db.WithContext(ctx).Model(&model.User{}).
-		Select(canonicalPhoneSQL+" AS p").
-		Where("phone <> ''").
-		Group("p").Having("count(*) > 1").
-		Pluck("p", &phones).Error
-	return phones, err
 }
 
 // AddPointsEntry applies a signed point delta to a user atomically within an

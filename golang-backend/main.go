@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -995,19 +996,29 @@ func ensureIndexes(db *gorm.DB) {
 	}
 }
 
-// warnDuplicatePhones lists phone numbers held by more than one account -
-// possible from before phones were stored in one canonical form. Login
-// still works for each (it tries every match), but walk-in points go to
-// the oldest, so these should be merged by hand.
-func warnDuplicatePhones(db *gorm.DB) {
-	phones, err := repository.NewUserRepository(db).DuplicatePhones(context.Background())
+// normalizePhones stores every phone in canonical form so lookups use the
+// index (repository.NormalizeStoredPhones). Accounts whose number another
+// account already has keep their old format and are listed by id: login
+// still works for each (it tries every match), but walk-in points go to the
+// oldest, so they should be merged by hand.
+func normalizePhones(db *gorm.DB) {
+	fixed, leftover, err := repository.NormalizeStoredPhones(context.Background(), db)
 	if err != nil {
-		log.Printf("WARNING: could not check for duplicate phone numbers: %v\n", err)
+		log.Printf("WARNING: could not normalize stored phone numbers (lookups stay on the slow path): %v\n", err)
 		return
 	}
-	if len(phones) > 0 {
-		log.Printf("WARNING: %d phone number(s) belong to more than one account (%s); merge them so walk-in points go to the right account.\n",
-			len(phones), strings.Join(phones, ", "))
+	if fixed > 0 {
+		log.Printf("Phone numbers: %d stored in canonical form.\n", fixed)
+	}
+	if len(leftover) > 0 {
+		var ids []string
+		for _, accounts := range leftover {
+			ids = append(ids, accounts...)
+		}
+		sort.Strings(ids)
+		log.Printf("WARNING: %d account(s) have the same phone number as an older account and kept their old format (%s); "+
+			"merge them so walk-in points go to the right account. Until then phone lookups read every user row.\n",
+			len(ids), strings.Join(ids, ", "))
 	}
 }
 
@@ -1048,7 +1059,7 @@ func setupSchema(setupDB *gorm.DB) error {
 	runDataMigrations(setupDB) // before ensureIndexes: the slip index needs slip_released filled in
 	ensureIndexes(setupDB)
 	ensureConstraints(setupDB)
-	warnDuplicatePhones(setupDB)
+	normalizePhones(setupDB)
 
 	// Seed the config rows the pricing engine needs to not error on a fresh
 	// database - AutoMigrate only creates schema, not data. FirstOrCreate

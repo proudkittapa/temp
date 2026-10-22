@@ -18,6 +18,40 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Phone numbers stored in one form, indexed lookups
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1", item 2)
+- **Commit(s):** this commit (on `main`, parent `f78d02f`)
+- **Changed:**
+  - `internal/repository/user.go`: `NormalizeStoredPhones` rewrites phones
+    stored before sign-up normalized them to canonical form (one UPDATE;
+    per number the account already canonical, else the oldest, gets it;
+    the others keep their format and are returned). `phoneMatch`: plain
+    `phone = ?` once no old-format phone is left, otherwise also the old
+    regex, so leftover accounts are still found (the default until startup
+    has checked, e.g. for `make-admin`). `FindByIdentity` is two indexed
+    queries (email, phone) merged oldest first; `GetByPhone` uses
+    `phoneMatch`. `DuplicatePhones` removed.
+  - `main.go`: `warnDuplicatePhones` -> `normalizePhones` (in
+    `setupSchema`, every start): logs how many were fixed and the ids (not
+    the numbers) of accounts to merge by hand.
+  - `phones_db_test.go` (new, needs `TEST_DATABASE_URL`): formats, two
+    kinds of duplicates, lookups while duplicates are left, and the next run
+    after a manual merge.
+  - `TODO.md` updated.
+- **Verified:** `go vet ./...`, `go test ./...`; with `TEST_DATABASE_URL`
+  the new test and the 9 race tests pass. EXPLAIN with 50,000 users: phone
+  lookup is an index scan, 0.03 ms (old regex: seq scan, 31 ms); email uses
+  `idx_users_email_lower`. Live on the dev database: registered an account,
+  changed its phone in SQL to "+66 81-770-2859", restarted -> log "Phone
+  numbers: 1 stored in canonical form", stored `0817702859`, login with
+  `0817702859` -> 200.
+- **Not done / follow-ups:** accounts left with a duplicate number are not
+  merged automatically (bookings, points and passwords differ - a person
+  decides). The member search (`phone LIKE`) already used the prefix index.
+
+---
+
 ## 2026-10-22 — Concurrency tests on a real PostgreSQL
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1": group 1 of the next steps, item 1)

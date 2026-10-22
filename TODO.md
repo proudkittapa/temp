@@ -18,9 +18,9 @@
 3. **Go live** (section 8b, `DEPLOY.md`): owner rents the server + domain,
    follows DEPLOY.md; then `TESTING_CHECKLIST.md` on the real address,
    test HTTPS, set up the nightly backup cron and an off-server copy.
-4. **Before real customers** (section 11 "Go-live"): phone numbers stored
-   in one form so lookups use an index; money columns as numeric.
-   (Concurrency tests on a real Postgres: done 2026-10-22.)
+4. **Before real customers** (section 11 "Go-live"): money columns as
+   numeric. (Concurrency tests and phone numbers in one form: done
+   2026-10-22.)
 5. **Then:** LINE login and notifications (1-2), forgot password by SMS
    (4), VAT tax invoices (5).
 
@@ -47,8 +47,8 @@ Cheap and blocking first, then what changes what customers/staff see
    wait, do it right after; today's separate sign-ins work).
 6. **Deploy to a real server with HTTPS** - section 8 (8a: free tunnel from
    the Mac for testers now; 8b: VPS + Docker + Caddy for customers).
-   **Before real customers (8b): section 11 "Go-live" items left** - phone
-   lookups, smaller customer download, demo users out of the bundle.
+   **Before real customers (8b): section 11 "Go-live" items left** - money
+   columns as numeric.
 7. **Test on real phones** - section 6 and section 3 (real phones, inside the
    LINE app); scan the PromptPay QR with two Thai banking apps.
 8. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
@@ -58,7 +58,7 @@ Cheap and blocking first, then what changes what customers/staff see
 11. ~~**No-show: re-sell the court at half price**~~ - done 2026-10-21 (section 12).
 12. **Remaining improvements** - section 7 and section 11 (refund split, year
     picker, Excel preview, rental deposit, live refresh, retry protection,
-    indexes and concurrency tests are done; left: phone lookups, smaller customer
+    indexes, concurrency tests and phone lookups are done; left: smaller customer
     download, kept deposits in reports).
 
 ## 0. Owner decisions pending (found in the 2026-10-20/21 reviews)
@@ -166,7 +166,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 
 ### Go-live (do before real customers - not needed while the data is fake)
 - [x] **Database indexes** - done 2026-10-21 (`golang-backend/perf_indexes.go`): 16 indexes (order items, my bookings, slip queue, expiry/finished jobs, vouchers, open rentals, audit by type, users by role, phone prefix, closures by date, shifts, and pg_trgm search on member names and the audit log). Built CONCURRENTLY in the background after startup, so they work on an empty database and on one full of data without blocking writes; an index left unfinished by an interrupted build is rebuilt on the next start.
-- [ ] **Phone lookups use a regex over every user row** (`repository/user.go` canonicalPhoneSQL: login, register, walk-in, checkout): normalise all stored phones once (merge duplicates), then compare `phone = ?`; split login's email-OR-phone into two indexed queries.
+- [x] **Phone lookups** (done 2026-10-22): every start stores old-format phones ("081-555-0000", "+66...") in canonical form (`repository.NormalizeStoredPhones`, from `setupSchema`); lookups (login, register, walk-in, checkout, make-admin) are then `phone = ?` on the index (50k users: 0.03 ms instead of 31 ms), login's email and phone are two indexed queries. An account whose number an older account already has keeps its old format and is logged by id to be merged by hand; while any is left, lookups also use the old regex so it is still found.
 - [x] Retry protection: every app write (not sign-in or slip upload) sends an `Idempotency-Key` reused while the same action is retried; the server (`handler/idempotency.go`, table `idempotency_keys`, pruned after 24 h) replays the first success, answers 409 while it is still running, releases the key on failure. Done 2026-10-21.
 - [x] Live refresh: staff screens reload every 15 s while visible (header shows "อัปเดตอัตโนมัติ hh:mm:ss"), customer screens every 30 s (10 s on the payment screen), and at once when the user comes back to the tab/app; the payment screen follows the server (approved / rejected / refunded / expired). Hidden tabs don't poll. Done 2026-10-21 (`src/useLiveTick.ts`). Admin screens don't poll.
 - [x] Walk-in grid while loading another date: now shows "กำลังโหลด…", greyed and not clickable, and booking is refused until that date's data is in (it used to show every slot free). Done 2026-10-21.
