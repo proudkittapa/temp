@@ -1027,6 +1027,9 @@ func normalizePhones(db *gorm.DB) {
 // the pricing engine needs. Every step is idempotent, so it runs on every
 // start; the concurrency tests build their database with it too.
 func setupSchema(setupDB *gorm.DB) error {
+	if err := convertMoneyColumns(setupDB); err != nil {
+		return err
+	}
 	err := setupDB.AutoMigrate(
 		&model.IdempotencyKey{},
 		&model.User{},

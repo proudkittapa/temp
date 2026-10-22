@@ -18,6 +18,42 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Money columns numeric(12,2)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1", item 4)
+- **Commit(s):** this commit (on `main`, parent `b119af2`)
+- **Found first:** the amount columns were not `double precision` but
+  GORM's default for `float64`, `numeric` without a scale - already exact
+  in the database, just with any number of decimals. (Checked on the dev
+  databases arena_fresh, arena_db, arena_review.)
+- **Changed:**
+  - `golang-backend/money_columns.go` (new): `moneyColumns` (20 columns in
+    8 tables) and `convertMoneyColumns`, run first in `setupSchema`: for each
+    table, columns not yet numeric(12,2) (unscaled numeric or double
+    precision) get one `ALTER TABLE ... ALTER COLUMN ... TYPE numeric(12,2)
+    USING round(...::numeric, 2)` (one rewrite per table), under the
+    migration advisory lock; values below a satang are counted in the log
+    first; a failure stops the start with the table named.
+  - `internal/model/models.go`: `type:numeric(12,2)` on those 20 fields, so
+    a new database is created that way and AutoMigrate finds what it
+    expects. Percentages and court shares stay as they were. Go types are
+    unchanged (`float64` + `RoundBaht`); reads come back exact at 2 decimals.
+- **Verified:** `go vet ./...`, `go test ./...`; with `TEST_DATABASE_URL`
+  (fresh schema, created as numeric(12,2)) all DB/race tests pass. On a copy
+  of arena_fresh: 8 tables converted, sums of every money column identical
+  before/after; a second start rewrote nothing (same relfilenodes) and a
+  third, with DDL logging on, issued no column ALTER. Then arena_fresh
+  itself: API sale of 3 x 12.35 -> order 37.05, unit price 12.35 (numeric),
+  shift expected cash +37.05 exactly; Playwright counter: cash walk-in 280
+  (payment 280.00 VERIFIED) and a product sale saved; no page errors.
+- **Not done / follow-ups:** Go still does money arithmetic in `float64`
+  (rounded to the satang at each step). `shopspring/decimal` would make that
+  exact too but changes every amount in the services and the JSON (strings
+  by default) - left for an owner decision. The `+ 0.005` tolerance in the
+  two CHECK constraints is now unnecessary but harmless.
+
+---
+
 ## 2026-10-22 — Small security items: closure override, opening float, demo refund check
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1", item 3)

@@ -18,9 +18,9 @@
 3. **Go live** (section 8b, `DEPLOY.md`): owner rents the server + domain,
    follows DEPLOY.md; then `TESTING_CHECKLIST.md` on the real address,
    test HTTPS, set up the nightly backup cron and an off-server copy.
-4. **Before real customers** (section 11 "Go-live"): money columns as
-   numeric. (Concurrency tests and phone numbers in one form: done
-   2026-10-22.)
+4. ~~**Before real customers**~~ (section 11 "Go-live"): done 2026-10-22 -
+   concurrency tests, phone numbers in one form, money columns
+   numeric(12,2).
 5. **Then:** LINE login and notifications (1-2), forgot password by SMS
    (4), VAT tax invoices (5).
 
@@ -47,8 +47,7 @@ Cheap and blocking first, then what changes what customers/staff see
    wait, do it right after; today's separate sign-ins work).
 6. **Deploy to a real server with HTTPS** - section 8 (8a: free tunnel from
    the Mac for testers now; 8b: VPS + Docker + Caddy for customers).
-   **Before real customers (8b): section 11 "Go-live" items left** - money
-   columns as numeric.
+   Section 11 "Go-live" items: all done (2026-10-22).
 7. **Test on real phones** - section 6 and section 3 (real phones, inside the
    LINE app); scan the PromptPay QR with two Thai banking apps.
 8. **LINE**: prerequisites, then LINE Login (section 1), then LINE OA
@@ -187,7 +186,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] `SaveSlip` takes the customer's lock first (as CreateBookings); the expiry job closes orphan payments (booking rows gone) instead of re-picking them forever. Done 2026-10-21.
 - [x] `LockCourtGroupTx` re-reads the court's group inside the transaction and re-checks it on the locked row (retries if regrouped meanwhile). Done 2026-10-21.
 - [x] Database backstops: CHECK constraints (points, stock, variant stock ≥ 0; refund within the payment; deposit settled within what was taken) and a unique "one open shift" index (`ensureConstraints`, main.go); a violation answers 409. Done 2026-10-21.
-- [ ] Money columns `numeric(12,2)` instead of float (amounts are rounded to the satang in code today).
+- [x] Money columns `numeric(12,2)` (done 2026-10-22, `golang-backend/money_columns.go`): the 20 amount columns (bookings, payments, refunds, orders, order items, products, pricing rules, shifts) are converted at start, one ALTER per table under the migration lock, values rounded to the satang (they already were; any that weren't are counted in the log). They had been GORM's `numeric` without a scale (exact, but any number of decimals). Go keeps `float64` rounded with `RoundBaht`; switching Go to `shopspring/decimal` would remove that last float step but touches every amount in the services - not done.
 
 - [ ] Kept rental deposits (`orders.deposit_kept`) are not in any income report or CSV, and the staff day ledger's expected cash leaves out deposits still held (the shift count includes them) - decide whether kept deposits are income, then add them.
 

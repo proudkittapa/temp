@@ -200,7 +200,7 @@ type PricingRule struct {
 	DayType      string    `json:"day_type" db:"day_type" gorm:"column:day_type"` // "WEEKDAY" or "WEEKEND"
 	StartHour    int       `json:"start_hour" db:"start_hour" gorm:"column:start_hour"`
 	EndHour      int       `json:"end_hour" db:"end_hour" gorm:"column:end_hour"`
-	PricePerHour float64   `json:"price_per_hour" db:"price_per_hour" gorm:"column:price_per_hour"`
+	PricePerHour float64   `json:"price_per_hour" db:"price_per_hour" gorm:"column:price_per_hour;type:numeric(12,2)"`
 	PriceType    string    `json:"price_type" db:"price_type" gorm:"column:price_type"` // e.g. "NORMAL", "PEAK", "STUDENT"
 	Label        string    `json:"label" db:"label" gorm:"column:label"`
 	IsActive     bool      `json:"is_active" db:"is_active" gorm:"column:is_active"`
@@ -278,7 +278,7 @@ type Booking struct {
 	// which duplicated what CourtID + Court.MutexGroupID already encode.
 	IsHalfCourt        bool          `json:"is_half_court" db:"is_half_court" gorm:"column:is_half_court"`
 	PriceType          string        `json:"price_type" db:"price_type" gorm:"column:price_type"`
-	TotalAmount        float64       `json:"total_amount" db:"total_amount" gorm:"column:total_amount"`
+	TotalAmount        float64       `json:"total_amount" db:"total_amount" gorm:"column:total_amount;type:numeric(12,2)"`
 	Status             BookingStatus `json:"status" db:"status" gorm:"column:status"`
 	IsEventBlock       bool          `json:"is_event_block" db:"is_event_block" gorm:"column:is_event_block"`
 	EventName          *string       `json:"event_name,omitempty" db:"event_name" gorm:"column:event_name"`
@@ -303,7 +303,7 @@ const WalkInUserID = "walk-in"
 type Payment struct {
 	ID             string        `json:"id" db:"id" gorm:"primaryKey;column:id"`
 	BookingID      string        `json:"booking_id" db:"booking_id" gorm:"column:booking_id"`
-	Amount         float64       `json:"amount" db:"amount" gorm:"column:amount"`
+	Amount         float64       `json:"amount" db:"amount" gorm:"column:amount;type:numeric(12,2)"`
 	Method         PaymentMethod `json:"method" db:"method" gorm:"column:method"`
 	Status         PaymentStatus `json:"status" db:"status" gorm:"column:status"`
 	SlipURL        *string       `json:"slip_url,omitempty" db:"slip_url" gorm:"column:slip_url"`
@@ -329,7 +329,7 @@ type Payment struct {
 	ExpiredAt *time.Time `json:"expired_at,omitempty" db:"expired_at" gorm:"column:expired_at"`
 	// Money returned so far (a refund can cover part of a group, e.g. one
 	// cancelled hour). Status becomes REFUNDED once it covers Amount.
-	RefundAmount float64    `json:"refund_amount" db:"refund_amount" gorm:"column:refund_amount;default:0"`
+	RefundAmount float64    `json:"refund_amount" db:"refund_amount" gorm:"column:refund_amount;type:numeric(12,2);default:0"`
 	VerifiedAt   *time.Time `json:"verified_at,omitempty" db:"verified_at" gorm:"column:verified_at"`
 	VerifiedBy   *string    `json:"verified_by,omitempty" db:"verified_by" gorm:"column:verified_by"`
 	RefundedAt   *time.Time `json:"refunded_at,omitempty" db:"refunded_at" gorm:"column:refunded_at"`
@@ -346,7 +346,7 @@ type Payment struct {
 type Refund struct {
 	ID         string    `json:"id" db:"id" gorm:"primaryKey;column:id"`
 	PaymentID  string    `json:"payment_id" db:"payment_id" gorm:"column:payment_id;index"`
-	Amount     float64   `json:"amount" db:"amount" gorm:"column:amount"`
+	Amount     float64   `json:"amount" db:"amount" gorm:"column:amount;type:numeric(12,2)"`
 	Reason     string    `json:"reason" db:"reason" gorm:"column:reason"`
 	RefundedBy string    `json:"refunded_by" db:"refunded_by" gorm:"column:refunded_by"`
 	RefundedAt time.Time `json:"refunded_at" db:"refunded_at" gorm:"column:refunded_at;index"`
@@ -364,11 +364,11 @@ type Product struct {
 	Name        string     `json:"name" db:"name" gorm:"column:name"`
 	Category    ProductCat `json:"category" db:"category" gorm:"column:category"`
 	SubCategory *string    `json:"sub_category,omitempty" db:"sub_category" gorm:"column:sub_category"`
-	Price       float64    `json:"price" db:"price" gorm:"column:price"`
+	Price       float64    `json:"price" db:"price" gorm:"column:price;type:numeric(12,2)"`
 	IsRental    bool       `json:"is_rental" db:"is_rental" gorm:"column:is_rental"`
 	// Deposit is taken in cash per unit rented and given back on return
 	// (rental products only; 0 = none).
-	Deposit float64 `json:"deposit" db:"deposit" gorm:"column:deposit;not null;default:0"`
+	Deposit float64 `json:"deposit" db:"deposit" gorm:"column:deposit;type:numeric(12,2);not null;default:0"`
 	// Authoritative stock ONLY for products with no rows in product_variants.
 	// A variant-tracked product (e.g. sized rentals) must decrement the
 	// matching ProductVariant row instead - checking/decrementing this
@@ -398,8 +398,8 @@ type Order struct {
 	CourtID       *string       `json:"court_id,omitempty" db:"court_id" gorm:"column:court_id"`
 	Type          OrderType     `json:"type" db:"type" gorm:"column:type"`
 	Status        OrderStatus   `json:"status" db:"status" gorm:"column:status"`
-	TotalAmount   float64       `json:"total_amount" db:"total_amount" gorm:"column:total_amount"`
-	PaidAmount    float64       `json:"paid_amount" db:"paid_amount" gorm:"column:paid_amount"`
+	TotalAmount   float64       `json:"total_amount" db:"total_amount" gorm:"column:total_amount;type:numeric(12,2)"`
+	PaidAmount    float64       `json:"paid_amount" db:"paid_amount" gorm:"column:paid_amount;type:numeric(12,2)"`
 	PaymentMethod PaymentMethod `json:"payment_method" db:"payment_method" gorm:"column:payment_method"`
 	CreatedBy     string        `json:"created_by" db:"created_by" gorm:"column:created_by"`
 	CreatedAt     time.Time     `json:"created_at" db:"created_at" gorm:"column:created_at"`
@@ -414,9 +414,9 @@ type Order struct {
 	// settled when the last item comes back (or on void): given back
 	// (DepositReturned) and/or kept for damage or loss (DepositKept, with
 	// DepositNote). The drawer's expected cash follows both.
-	DepositAmount    float64    `json:"deposit_amount" db:"deposit_amount" gorm:"column:deposit_amount;not null;default:0"`
-	DepositReturned  float64    `json:"deposit_returned" db:"deposit_returned" gorm:"column:deposit_returned;not null;default:0"`
-	DepositKept      float64    `json:"deposit_kept" db:"deposit_kept" gorm:"column:deposit_kept;not null;default:0"`
+	DepositAmount    float64    `json:"deposit_amount" db:"deposit_amount" gorm:"column:deposit_amount;type:numeric(12,2);not null;default:0"`
+	DepositReturned  float64    `json:"deposit_returned" db:"deposit_returned" gorm:"column:deposit_returned;type:numeric(12,2);not null;default:0"`
+	DepositKept      float64    `json:"deposit_kept" db:"deposit_kept" gorm:"column:deposit_kept;type:numeric(12,2);not null;default:0"`
 	DepositNote      *string    `json:"deposit_note,omitempty" db:"deposit_note" gorm:"column:deposit_note"`
 	DepositSettledAt *time.Time `json:"deposit_settled_at,omitempty" db:"deposit_settled_at" gorm:"column:deposit_settled_at;index"`
 }
@@ -428,7 +428,7 @@ type OrderItem struct {
 	ProductID  string     `json:"product_id" db:"product_id" gorm:"column:product_id"`
 	VariantID  *string    `json:"variant_id,omitempty" db:"variant_id" gorm:"column:variant_id"` // set when ProductID has variants
 	Qty        int        `json:"qty" db:"qty" gorm:"column:qty"`
-	UnitPrice  float64    `json:"unit_price" db:"unit_price" gorm:"column:unit_price"`
+	UnitPrice  float64    `json:"unit_price" db:"unit_price" gorm:"column:unit_price;type:numeric(12,2)"`
 	ReturnedAt *time.Time `json:"returned_at,omitempty" db:"returned_at" gorm:"column:returned_at"` // filled when customer returns rental goods
 	ShoeSize   *string    `json:"shoe_size,omitempty" db:"shoe_size" gorm:"column:shoe_size"`       // display copy of the variant label at time of sale
 	ShoeGender *string    `json:"shoe_gender,omitempty" db:"shoe_gender" gorm:"column:shoe_gender"` // display copy of the variant gender at time of sale
@@ -575,18 +575,18 @@ type Shift struct {
 	StaffID      string    `json:"staff_id" db:"staff_id" gorm:"column:staff_id"`
 	StaffName    string    `json:"staff_name" db:"staff_name" gorm:"column:staff_name"`
 	OpenedAt     time.Time `json:"opened_at" db:"opened_at" gorm:"column:opened_at"`
-	OpeningFloat float64   `json:"opening_float" db:"opening_float" gorm:"column:opening_float"`
+	OpeningFloat float64   `json:"opening_float" db:"opening_float" gorm:"column:opening_float;type:numeric(12,2)"`
 	// OpeningNote explains a float other than the last shift's count.
 	OpeningNote  *string    `json:"opening_note,omitempty" db:"opening_note" gorm:"column:opening_note"`
 	ClosedAt     *time.Time `json:"closed_at,omitempty" db:"closed_at" gorm:"column:closed_at"`
-	CountedCash  *float64   `json:"counted_cash,omitempty" db:"counted_cash" gorm:"column:counted_cash"`
-	ExpectedCash *float64   `json:"expected_cash,omitempty" db:"expected_cash" gorm:"column:expected_cash"`
-	VarianceCash *float64   `json:"variance_cash,omitempty" db:"variance_cash" gorm:"column:variance_cash"`
+	CountedCash  *float64   `json:"counted_cash,omitempty" db:"counted_cash" gorm:"column:counted_cash;type:numeric(12,2)"`
+	ExpectedCash *float64   `json:"expected_cash,omitempty" db:"expected_cash" gorm:"column:expected_cash;type:numeric(12,2)"`
+	VarianceCash *float64   `json:"variance_cash,omitempty" db:"variance_cash" gorm:"column:variance_cash;type:numeric(12,2)"`
 	Notes        *string    `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
 	// The cash taken during the shift, frozen at close (with ExpectedCash).
-	CashBookingsAtClose *float64 `json:"-" db:"cash_bookings_at_close" gorm:"column:cash_bookings_at_close"`
-	CashOrdersAtClose   *float64 `json:"-" db:"cash_orders_at_close" gorm:"column:cash_orders_at_close"`
-	CashDepositsAtClose *float64 `json:"-" db:"cash_deposits_at_close" gorm:"column:cash_deposits_at_close"`
+	CashBookingsAtClose *float64 `json:"-" db:"cash_bookings_at_close" gorm:"column:cash_bookings_at_close;type:numeric(12,2)"`
+	CashOrdersAtClose   *float64 `json:"-" db:"cash_orders_at_close" gorm:"column:cash_orders_at_close;type:numeric(12,2)"`
+	CashDepositsAtClose *float64 `json:"-" db:"cash_deposits_at_close" gorm:"column:cash_deposits_at_close;type:numeric(12,2)"`
 	// Who counted the drawer at the end (may differ from who opened it).
 	ClosedByID   *string `json:"closed_by_id,omitempty" db:"closed_by_id" gorm:"column:closed_by_id"`
 	ClosedByName *string `json:"closed_by_name,omitempty" db:"closed_by_name" gorm:"column:closed_by_name"`
