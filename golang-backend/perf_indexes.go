@@ -40,6 +40,7 @@ var perfIndexes = []perfIndex{
 	{"idx_vouchers_booking", "vouchers", "(booking_id) WHERE booking_id IS NOT NULL", false},
 	{"idx_orders_open_rentals", "orders", "(created_at) WHERE status = 'PREPARING'", false},
 	{"idx_audit_logs_target_created", "audit_logs", "(target_type, created_at DESC)", false},
+	{"idx_audit_logs_user_created", "audit_logs", "(user_id, created_at)", false}, // per-customer slip upload limit
 	{"idx_users_role_created", "users", "(role, created_at DESC)", false},
 	{"idx_users_phone_prefix", "users", "(phone text_pattern_ops)", false}, // member search: phone starts with
 	{"idx_day_offs_date", "day_offs", "(date)", false},

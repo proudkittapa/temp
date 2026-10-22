@@ -1,7 +1,7 @@
 import { Booking, BookingStatus, Payment, PaymentStatus } from '../../types';
 import { StorageService, bookingGroupOf, formatBaht, roundBaht, isPaidBooking } from '../../mockData';
 import * as api from '../../api';
-import { notify, askText } from '../Dialog';
+import { notify, askText, ask } from '../Dialog';
 import type { StaffPOSCore } from './useStaffPOS';
 
 
@@ -205,7 +205,11 @@ export function useSlipActions(deps: StaffPOSCore) {
     const reason = await askText(`เหตุผลการคืนเงิน ${formatBaht(pay.amount - (pay.refundAmount || 0))} บาท (จำเป็น):`, { title: '💸 คืนเงิน', okLabel: 'บันทึกคืนเงิน' });
     if (!reason) return;
     if (api.USE_BACKEND) {
-      return api.refundPayment(pay.id, reason)
+      // A slip nobody approved proves nothing: the manager confirms the
+      // transfer is really in the bank account (the server requires it).
+      const bankChecked = pay.status !== PaymentStatus.VERIFIED;
+      if (bankChecked && !(await ask('สลิปนี้ยังไม่เคยได้รับอนุมัติ — ตรวจในบัญชีธนาคารแล้วว่าเงินโอนเข้ามาจริง?', { title: '💸 ยืนยันยอดเงินเข้า', okLabel: 'ตรวจแล้ว เงินเข้าจริง', cancelLabel: 'ยังไม่ได้ตรวจ' }))) return;
+      return api.refundPayment(pay.id, reason, undefined, bankChecked)
         .then(p => {
           onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: p.refundAmount, reason });
           onRefreshAll();

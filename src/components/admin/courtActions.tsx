@@ -126,20 +126,21 @@ export function useCourtActions(deps: AdminPanelCore) {
             const list = r.upcoming.map(b => `- ${b.date} ${b.startTime}–${b.endTime} ${b.userName} (${b.bookingCode})${b.status === BookingStatus.PENDING_PAYMENT ? ' ยังไม่ชำระ' : ''}`).join('\n');
             if (!(await ask(`ปิด "${r.court.name}" แล้ว แต่ยังมีการจอง ${r.upcoming.length} รายการ:\n${list}\n\nยกเลิกทั้งหมดเลยไหม? รายการที่ชำระแล้ว (หรือส่งสลิปแล้ว) จะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { title: 'การจองบนสนามที่ปิด', okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้ ติดต่อลูกค้าเอง', danger: true }))) return;
             return (async () => {
-              let refunded = 0, failed = 0;
+              let refunded = 0, failed = 0, needCheck = 0;
               for (const b of r.upcoming) {
                 try {
                   // refund=true: the server records a refund only of money it received
-                  // (paid hours, or a slip still waiting), and ignores it otherwise.
+                  // (approved payments); a slip nobody approved comes back as refundNeedsCheck.
                   const res = await api.cancelBooking(b.id, `ปิดสนาม ${r.court.name}`, true, [b.id], 'admin');
                   refunded += res.refundAmount;
+                  if (res.refundNeedsCheck) needCheck++;
                 } catch {
                   failed++;
                 }
               }
               onAddAuditLog('COURT_CLOSED_BOOKINGS_CANCELLED', 'Court', id, null, { cancelled: r.upcoming.length - failed, refunded });
               onRefreshAll();
-              notify(`ยกเลิก ${r.upcoming.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
+              notify(`ยกเลิก ${r.upcoming.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}${needCheck ? `\n⚠️ ${needCheck} รายการส่งสลิปที่ยังไม่ได้อนุมัติ จึงยังไม่บันทึกคืนเงิน — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าตรวจสลิป` : ''}`);
             })();
           }
         })
@@ -197,20 +198,21 @@ export function useCourtActions(deps: AdminPanelCore) {
           const active = affectedBookings.filter(b => b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PENDING_PAYMENT);
           if (active.length > 0 && await ask(`ยกเลิกการจองที่ได้รับผลกระทบ ${active.length} รายการเลยไหม?\nรายการที่ชำระแล้ว (หรือส่งสลิปแล้ว) จะถูกบันทึกว่าคืนเงิน (โอนคืนลูกค้าเอง)`, { okLabel: 'ยกเลิกทั้งหมด', cancelLabel: 'เก็บไว้', danger: true })) {
             return (async () => {
-              let refunded = 0, failed = 0;
+              let refunded = 0, failed = 0, needCheck = 0;
               for (const b of active) {
                 try {
                   // refund=true: the server records a refund only of money it received
-                  // (paid hours, or a slip still waiting), and ignores it otherwise.
+                  // (approved payments); a slip nobody approved comes back as refundNeedsCheck.
                   const res = await api.cancelBooking(b.id, `ปิดสนาม: ${dayOff.reason}`, true, [b.id], 'admin');
                   refunded += res.refundAmount;
+                  if (res.refundNeedsCheck) needCheck++;
                 } catch {
                   failed++;
                 }
               }
               onAddAuditLog('DAY_OFF_BOOKINGS_CANCELLED', 'DayOff', dayOff.id, null, { cancelled: active.length - failed, refunded });
               onRefreshAll();
-              notify(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}`);
+              notify(`ยกเลิก ${active.length - failed} รายการแล้ว${refunded ? ` · ต้องโอนคืนลูกค้ารวม ${formatBaht(refunded)} บาท` : ''}${failed ? ` · ไม่สำเร็จ ${failed} รายการ` : ''}${needCheck ? `\n⚠️ ${needCheck} รายการส่งสลิปที่ยังไม่ได้อนุมัติ จึงยังไม่บันทึกคืนเงิน — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าตรวจสลิป` : ''}`);
             })();
           }
         })

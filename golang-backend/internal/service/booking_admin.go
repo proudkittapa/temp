@@ -276,6 +276,10 @@ type CancelResult struct {
 	PointsReversed  int     `json:"points_reversed"`
 	PaymentStatus   string  `json:"payment_status"`
 	RemainingActive int     `json:"remaining_active"`
+	// RefundNeedsCheck: a refund was asked for a slip nobody has verified,
+	// so none was recorded - check the bank account, then refund the
+	// payment (RefundPayment with bank_checked).
+	RefundNeedsCheck bool `json:"refund_needs_check,omitempty"`
 	// Rewards cancelled because their points came from these hours, and
 	// points that couldn't be taken back (spent on a reward handed over).
 	CancelledVouchers []string `json:"cancelled_vouchers,omitempty"`
@@ -288,8 +292,17 @@ type CancelResult struct {
 // A reason is required and audit-logged. With refund=true the price of the
 // cancelled paid hours is recorded as refunded. Points earned for cancelled
 // confirmed hours are taken back.
-func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, onlyIDs []string, reason string, wantRefund bool, actorID, actorName string) (*CancelResult, error) {
+//
+// bankChecked: the manager confirmed the money is in the bank account. A
+// slip staff haven't approved yet proves nothing (any image uploads), so
+// its refund is recorded only with that confirmation; without it the hours
+// are cancelled and RefundNeedsCheck tells the caller to check and refund
+// later (RefundPayment).
+func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, onlyIDs []string, reason string, wantRefund, bankChecked bool, actorID, actorName string) (*CancelResult, error) {
 	reason = strings.TrimSpace(reason)
+	if err := checkText("reason", reason); err != nil {
+		return nil, err
+	}
 	if reason == "" {
 		return nil, fmt.Errorf("%w: a cancellation reason is required", ErrInvalidBooking)
 	}
@@ -334,7 +347,10 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 		}
 		// refund = "refund what was received for these hours": nothing to do
 		// when no money arrived (an unpaid hold), so callers can always ask.
-		moneyIn := p.Status == model.PaymentVerified || p.Status == model.PaymentSlipUploaded
+		moneyIn := p.Status == model.PaymentVerified || (p.Status == model.PaymentSlipUploaded && bankChecked)
+		if refund && p.Status == model.PaymentSlipUploaded && !bankChecked {
+			res.RefundNeedsCheck = true
+		}
 		if !moneyIn {
 			refund = false
 		}
@@ -443,8 +459,16 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 // booking stands for it - typically a late payment whose slot was taken
 // meanwhile. Hours still booked must be cancelled first (CancelBookings
 // with refund does both at once). amount nil = everything not yet refunded.
-func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, amount *float64, reason, actorID, actorName string) (*model.Payment, error) {
+//
+// Only an approved (VERIFIED) payment proves the money arrived; for any
+// other (a slip still waiting, rejected or sent after expiry) the manager
+// must confirm with bankChecked that the transfer is in the bank account -
+// otherwise a fake slip turns into a real refund.
+func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, amount *float64, reason string, bankChecked bool, actorID, actorName string) (*model.Payment, error) {
 	reason = strings.TrimSpace(reason)
+	if err := checkText("reason", reason); err != nil {
+		return nil, err
+	}
 	if reason == "" {
 		return nil, fmt.Errorf("%w: a refund reason is required", ErrInvalidBooking)
 	}
@@ -456,6 +480,9 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 		}
 		if !moneyReceived(p) {
 			return fmt.Errorf("%w: payment is %s - no money was received to refund", ErrInvalidState, p.Status)
+		}
+		if p.Status != model.PaymentVerified && !bankChecked {
+			return fmt.Errorf("%w: this slip was never approved - check that the transfer is in the bank account, then confirm the refund", ErrInvalidState)
 		}
 		group, root, err := s.bookingGroup(tx, p.BookingID)
 		if err != nil {

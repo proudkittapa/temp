@@ -7,6 +7,11 @@
 	# The Go backend: the API (slip images included) and its health checks
 	# (for an uptime monitor: /readyz = up and the database answers).
 	handle /api/* {
+		# Biggest request: a 5 MB slip image plus the form around it. The
+		# backend checks the exact limits; this stops huge uploads early.
+		request_body {
+			max_size 6MB
+		}
 		reverse_proxy backend:8080
 	}
 	handle /healthz {
@@ -30,7 +35,14 @@
 		file_server
 	}
 
+	# Browser safety rules. The CSP lets the page load only its own files and
+	# talk only to this address (the React build has no inline scripts and
+	# uses no outside fonts/images). HSTS: once a browser has seen the site
+	# over HTTPS it never uses plain HTTP for it again (ignored over :80).
 	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 		X-Frame-Options DENY

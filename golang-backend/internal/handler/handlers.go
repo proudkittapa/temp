@@ -52,7 +52,7 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 
@@ -95,7 +95,7 @@ func (h *ArenaHandler) Login(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 
@@ -163,7 +163,7 @@ func (h *ArenaHandler) CreateBooking(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 
@@ -239,6 +239,16 @@ func (h *ArenaHandler) UploadSlip(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "could not read the slip image"})
 		return
 	}
+	if err := checkSlipImage(src, ext); err != nil {
+		src.Close()
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		return
+	}
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		src.Close()
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "could not read the slip image"})
+		return
+	}
 	hasher := sha256.New()
 	_, err = io.Copy(hasher, src)
 	src.Close()
@@ -294,7 +304,7 @@ func (h *ArenaHandler) ModifyPoints(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 
@@ -350,7 +360,7 @@ func (h *ArenaHandler) SetMemberType(c *gin.Context) {
 		MemberType model.MemberType `json:"member_type" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -368,11 +378,11 @@ func (h *ArenaHandler) SetUserRole(c *gin.Context) {
 		Role model.UserRole `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
-	u, err := h.userService.SetRole(c.Request.Context(), c.Param("id"), input.Role, actorID, actorName)
+	u, err := h.userService.SetRole(c.Request.Context(), c.Param("id"), input.Role, actorID, actorName, currentPermissions(c))
 	if err != nil {
 		respondError(c, err)
 		return
@@ -388,11 +398,11 @@ func (h *ArenaHandler) SetUserActive(c *gin.Context) {
 		IsActive *bool `json:"is_active" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
-	u, err := h.userService.SetActive(c.Request.Context(), c.Param("id"), *input.IsActive, actorID, actorName)
+	u, err := h.userService.SetActive(c.Request.Context(), c.Param("id"), *input.IsActive, actorID, actorName, currentPermissions(c))
 	if err != nil {
 		respondError(c, err)
 		return

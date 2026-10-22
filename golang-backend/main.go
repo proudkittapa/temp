@@ -88,6 +88,7 @@ func main() {
 	if !loadEnv(".env") && loadEnv(".env.example") {
 		log.Println("[EnvLoader] No .env file - using the local-development defaults from .env.example. Copy it to .env to change them.")
 	}
+	checkReleaseSettings()
 
 	// Ctrl+C / `kill` / `docker stop` (SIGINT, SIGTERM) cancel ctx: while
 	// waiting for the database the server just exits; once running it shuts
@@ -121,12 +122,18 @@ func main() {
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	log.Println("GORM Database connection established successfully!")
 
-	// `arena-backend make-admin <phone>` gives an existing account the admin
-	// role and exits - how a new installation gets its first admin (register
-	// on the site first). In Docker:
+	// `arena-backend make-admin <phone>` shows the account with that phone;
+	// `make-admin <phone> --yes` then gives it the admin role and exits -
+	// how a new installation gets its first admin (register on the site
+	// first). Phones aren't verified at sign-up, so the owner checks the
+	// account is really theirs before confirming. In Docker:
 	//   docker compose exec backend /app/arena-backend make-admin 0812345678
-	if len(os.Args) == 3 && os.Args[1] == "make-admin" {
-		os.Exit(makeAdmin(ctx, db, os.Args[2]))
+	if len(os.Args) >= 3 && os.Args[1] == "make-admin" {
+		confirmed := len(os.Args) == 4 && os.Args[3] == "--yes"
+		if len(os.Args) > 4 || (len(os.Args) == 4 && !confirmed) {
+			log.Fatalln("usage: make-admin <phone> [--yes]")
+		}
+		os.Exit(makeAdmin(ctx, db, os.Args[2], confirmed))
 	}
 
 	// 1b. GORM AutoMigrate to guarantee database schema is 100% complete!
@@ -225,7 +232,11 @@ func main() {
 	arenaHandler := handler.NewArenaHandler(authService, userService, membershipService, bookingService, slipSigner)
 
 	// 3. Launch Gin Web Engine Router
-	router := gin.Default()
+	// gin.Default() minus its logger, which writes each URL with its query
+	// string: signed slip links (valid for an hour or two) and member
+	// searches by phone would end up in the logs.
+	router := gin.New()
+	router.Use(gin.LoggerWithFormatter(logWithoutQuery), gin.Recovery())
 	// Uploads (slips, max ~5 MB) spill to a temp file beyond 1 MB instead of
 	// being held in memory.
 	router.MaxMultipartMemory = 1 << 20
@@ -251,31 +262,32 @@ func main() {
 	// sends no Access-Control-Allow-Credentials (combined with
 	// Allow-Origin "*" that was invalid, and browsers rejected it).
 	// CORS_ALLOWED_ORIGINS (comma-separated, e.g. https://book.example.com)
-	// restricts cross-site callers; unset allows any origin.
+	// lets a frontend on another site call the API. Unset = no CORS headers:
+	// the app's own frontend is same-origin (Caddy in production, the Vite
+	// proxy in development), and "*" would let any site script the public
+	// endpoints (sign-up, login attempts) from its visitors' browsers.
 	allowedOrigins := map[string]bool{}
 	for _, o := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
 		if o = strings.TrimSpace(o); o != "" {
 			allowedOrigins[o] = true
 		}
 	}
-	router.Use(func(c *gin.Context) {
-		if len(allowedOrigins) == 0 {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		} else {
+	if len(allowedOrigins) > 0 {
+		router.Use(func(c *gin.Context) {
 			c.Writer.Header().Add("Vary", "Origin")
 			if origin := c.GetHeader("Origin"); allowedOrigins[origin] {
 				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 			}
-		}
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control, X-Requested-With, Idempotency-Key")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control, X-Requested-With, Idempotency-Key")
+			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-		c.Next()
-	})
+			if c.Request.Method == "OPTIONS" {
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
+			c.Next()
+		})
+	}
 
 	// 4. API Endpoints Map layout. Authenticate only parses an optional
 	// bearer token; RequireRole gates each route that needs a login.
@@ -723,6 +735,35 @@ func seedDefaults(db *gorm.DB) {
 	}
 }
 
+// checkReleaseSettings stops a production server (GIN_MODE=release) that
+// would run with development settings: demo accounts with a published
+// password, or customers' QR payments going to the example PromptPay ID.
+func checkReleaseSettings() {
+	if gin.Mode() != gin.ReleaseMode {
+		if os.Getenv("PROMPTPAY_ID") == "" {
+			log.Printf("WARNING: PROMPTPAY_ID is not set - QR codes pay the example ID %s (fine for development only).\n", service.DefaultPromptPayID)
+		}
+		return
+	}
+	if os.Getenv("SEED_DEMO_USERS") == "true" {
+		log.Fatalln("SEED_DEMO_USERS=true is for development only: it creates admin/staff accounts with the published password 123456. Remove it.")
+	}
+	if id := strings.TrimSpace(os.Getenv("PROMPTPAY_ID")); id == "" || id == service.DefaultPromptPayID {
+		log.Fatalln("PROMPTPAY_ID must be set to the shop's own PromptPay number (phone or 13-digit tax ID) when GIN_MODE=release - " +
+			"otherwise customers' QR payments go to the example ID.")
+	}
+}
+
+// logWithoutQuery is Gin's request log line without the query string.
+func logWithoutQuery(p gin.LogFormatterParams) string {
+	path := p.Path
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n%s",
+		p.TimeStamp.Format("2006/01/02 - 15:04:05"), p.StatusCode, p.Latency, p.ClientIP, p.Method, path, p.ErrorMessage)
+}
+
 // publishedJWTSecret is the example secret committed in .env.example and
 // (formerly) hard-coded here. Anyone can read it, so a server using it would
 // accept forged ADMIN tokens.
@@ -736,6 +777,9 @@ func resolveJWTSecret() []byte {
 	secret := os.Getenv("JWT_SECRET")
 	if secret != "" && secret != publishedJWTSecret {
 		if len(secret) < 32 {
+			if gin.Mode() == gin.ReleaseMode {
+				log.Fatalln("JWT_SECRET is shorter than 32 characters - a short secret can be guessed and every token forged. Use e.g. `openssl rand -hex 32`.")
+			}
 			log.Println("WARNING: JWT_SECRET is shorter than 32 characters; use e.g. `openssl rand -hex 32`.")
 		}
 		return []byte(secret)
@@ -1106,7 +1150,7 @@ func ensureConstraints(db *gorm.DB) {
 
 // makeAdmin sets the role of the account with this phone number to ADMIN
 // (audit-logged as done by the command line) and returns the exit code.
-func makeAdmin(ctx context.Context, db *gorm.DB, phone string) int {
+func makeAdmin(ctx context.Context, db *gorm.DB, phone string, confirmed bool) int {
 	u, err := repository.NewUserRepository(db).GetByPhone(ctx, phone)
 	if err != nil {
 		log.Printf("make-admin: %v\n", err)
@@ -1118,6 +1162,16 @@ func makeAdmin(ctx context.Context, db *gorm.DB, phone string) int {
 	}
 	if u.Role == model.RoleAdmin {
 		log.Printf("make-admin: %s (%s) is already an admin.\n", u.Name, u.Phone)
+		return 0
+	}
+	if !confirmed {
+		email := "-"
+		if u.Email != nil {
+			email = *u.Email
+		}
+		log.Printf("make-admin: found %q, phone %s, email %s, role %s, registered %s (Bangkok time).\n",
+			u.Name, u.Phone, email, u.Role, u.CreatedAt.In(service.Bangkok).Format("2006-01-02 15:04"))
+		log.Printf("make-admin: if this is your account, run again with --yes: make-admin %s --yes\n", phone)
 		return 0
 	}
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

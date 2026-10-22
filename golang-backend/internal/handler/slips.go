@@ -4,6 +4,11 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"image"
+	_ "image/jpeg" // registers JPEG for image.DecodeConfig
+	_ "image/png"  // registers PNG for image.DecodeConfig
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -80,3 +85,44 @@ func (s *SlipSigner) Serve(c *gin.Context) {
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.File(filepath.Join(slipDir, name))
 }
+
+// slipMIME is the content type each allowed slip extension must really have.
+var slipMIME = map[string]string{"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+
+// maxSlipPixels bounds width×height: a small file can declare a huge image
+// that freezes the staff screen decoding it. A phone screenshot is ~3 MP.
+const maxSlipPixels = 40_000_000
+
+// checkSlipImage makes sure an upload is the image its extension says, by
+// its content - not just its name - so other bytes can't pose as a slip.
+// JPEG and PNG dimensions are checked too (Go's standard library has no
+// WebP decoder; WebP is checked by its signature only).
+func checkSlipImage(r io.ReadSeeker, ext string) error {
+	head := make([]byte, 512)
+	n, err := io.ReadFull(r, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return errBadSlipImage
+	}
+	if http.DetectContentType(head[:n]) != slipMIME[ext] {
+		return errBadSlipImage
+	}
+	if ext == "webp" {
+		return nil
+	}
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return errBadSlipImage
+	}
+	cfg, _, err := image.DecodeConfig(r)
+	if err != nil {
+		return errBadSlipImage
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > maxSlipPixels {
+		return errSlipTooLarge
+	}
+	return nil
+}
+
+var (
+	errBadSlipImage = errors.New("slip must be a real JPG, PNG or WEBP image")
+	errSlipTooLarge = errors.New("slip image dimensions are too large")
+)

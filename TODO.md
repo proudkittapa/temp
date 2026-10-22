@@ -2,34 +2,15 @@
 
 ## Next session: start here (paused 2026-10-22)
 
-1. **Security assessment - not done yet.** Asked for on 2026-10-22; three
-   review passes were started and stopped before reporting (no findings
-   yet). Redo them read-only, then verify each finding before fixing:
-   - **Sign-in and permissions:** JWT (algorithm, secret, expiry,
-     revocation on logout / password change / suspension), token in
-     localStorage + no CSP (XSS = account takeover), every route's
-     `can(...)` vs what the handler does, IDOR (another customer's
-     booking / payment / slip / voucher by changing an id), role
-     escalation (manager -> admin, own role/points), login throttle,
-     account enumeration, CORS / TRUSTED_PROXIES, idempotency key
-     replay across users, `make-admin`.
-   - **Untrusted input and files:** raw SQL built with `+`/Sprintf, slip
-     upload (type check by content, size, path, served content-type,
-     signed-URL HMAC/expiry), body limits and number ranges, XSS sinks in
-     React (receipt printing, `href`/`src` from data), CSV/Excel formula
-     injection in exports, error messages leaking internals, PromptPay
-     payload (amount/payee from the server only).
-   - **Money logic:** prices only from the server, confirming without
-     paying, slip reuse, points/vouchers double-spend under concurrency,
-     refunds above the payment or twice, drawer/shift manipulation,
-     unpaid holds blocking courts.
-   - **Deployment:** nothing but Caddy exposed (Postgres/backend ports),
-     secrets out of images, add a Content-Security-Policy header in
-     `deploy/Caddyfile`, backups hold personal data + slips (permissions,
-     off-server copy encrypted?), logs without tokens/phones.
-   Output: a findings list (severity, file:line, scenario, confirmed or
-   suspected, fix), then fixes with tests, each pushed with a WORKLOG
-   entry.
+1. ~~**Security assessment**~~ - done 2026-10-22, see `SECURITY_REVIEW.md`
+   (20 findings fixed). Still open from it, needing a decision or a bigger
+   change: **slip reuse with a re-saved copy** (staff enter the bank
+   reference + amount when approving?), **courts held by junk slips** (a
+   review deadline for waiting slips?), **phone numbers not verified** (OTP
+   via SMS/LINE), account lockout (section 0), revoking sessions
+   (token_version, with forgot-password), no cancel/refund after the hour
+   started, opening float vs last count, `override_closure` needing the
+   closures permission.
 2. **Owner decisions still open** (section 0 and below): no-show half-court
    resale price 125 (section 12); audit-log retention; kept rental
    deposits as income; cash refunds from the drawer; login lockout policy;

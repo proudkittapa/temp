@@ -4,6 +4,14 @@
 #   docker compose up -d --build
 name: arena
 
+# Shared by every service: logs rotate at 10 MB, 5 files kept (50 MB per
+# service at most), so they never fill the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   db:
     image: postgres:16-alpine
@@ -21,6 +29,11 @@ services:
       retries: 20
     stop_grace_period: 60s # time to finish writing to disk
     networks: [internal]
+    logging: *logging
+    security_opt: [no-new-privileges:true]
+    # Sized for a 1-2 GB server; raise them on a bigger one.
+    mem_limit: 512m
+    pids_limit: 200
 
   backend:
     build: ../golang-backend
@@ -33,11 +46,23 @@ services:
       GIN_MODE: release
       PORT: "8080"
       SEED_DEMO_USERS: "false"
-      # Requests arrive through Caddy on this network; trust its
-      # X-Forwarded-For so the per-IP login limit sees real clients.
-      TRUSTED_PROXIES: 172.28.0.0/24
+      # Requests arrive through Caddy (the web service's fixed address
+      # below); only its X-Forwarded-For is believed, so the per-IP login
+      # limit sees real clients and nobody else can fake their address.
+      TRUSTED_PROXIES: 172.28.0.10
+      # Empty = no CORS headers: only pages from this same site can call
+      # the API from a browser. The website and /api share one address, so
+      # nothing else is needed.
+      CORS_ALLOWED_ORIGINS: ""
+      # Lets Go free memory before it reaches mem_limit below.
+      GOMEMLIMIT: 200MiB
     volumes:
       - uploads:/app/uploads
+    # The program writes only the slip images (the uploads volume) and
+    # temporary upload files (/tmp); everything else is read-only.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
     depends_on:
       db:
         condition: service_healthy
@@ -51,6 +76,10 @@ services:
     # before the database is closed (Docker's default is only 10 s).
     stop_grace_period: 35s
     networks: [internal]
+    logging: *logging
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 200
 
   web:
     build:
@@ -71,13 +100,25 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    networks: [internal]
+    networks:
+      internal:
+        # Fixed address: the backend trusts only this one (TRUSTED_PROXIES).
+        ipv4_address: 172.28.0.10
+    logging: *logging
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 100
 
+# Only Caddy (web) publishes ports. Never add `ports:` to db or backend:
+# ports published by Docker go around the ufw firewall.
 networks:
   internal:
     ipam:
       config:
         - subnet: 172.28.0.0/24
+          # Other containers get addresses from .128 up, so the fixed
+          # address of web (.10) is never taken.
+          ip_range: 172.28.0.128/25
 
 volumes:
   pgdata:

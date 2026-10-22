@@ -43,7 +43,7 @@ func (h *DayOffHandler) List(c *gin.Context) {
 func (h *DayOffHandler) Create(c *gin.Context) {
 	var input service.CreateDayOffInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)

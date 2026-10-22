@@ -178,12 +178,18 @@ func (s *ShiftService) Open(ctx context.Context, openingFloat float64, staffID, 
 }
 
 // Close records the counted cash and stores expected and variance
-// (counted - expected: positive = over, negative = short).
-func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffID, staffName string) (*ShiftView, error) {
+// (counted - expected: positive = over, negative = short). blind: the
+// closer may not see the expected cash (no view_reports), so an off count
+// is refused without saying by how much - the figure would give the
+// expected cash away to a probe with counted_cash 0.
+func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffID, staffName string, blind bool) (*ShiftView, error) {
 	if counted < 0 || counted > 10000000 {
 		return nil, fmt.Errorf("%w: counted cash must be 0 or more", ErrInvalidBooking)
 	}
 	notes = strings.TrimSpace(notes)
+	if err := checkText("notes", notes); err != nil {
+		return nil, err
+	}
 	var out *ShiftView
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", shiftLockKey).Error; err != nil {
@@ -205,6 +211,9 @@ func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffI
 		counted = RoundBaht(counted)
 		variance := RoundBaht(counted - v.Expected)
 		if variance != 0 && notes == "" {
+			if blind {
+				return fmt.Errorf("%w: the count doesn't match - count again, or add a note explaining the difference", ErrInvalidBooking)
+			}
 			return fmt.Errorf("%w: the count is %.2f THB off - add a note explaining it", ErrInvalidBooking, variance)
 		}
 		sh.CountedCash, sh.ExpectedCash, sh.VarianceCash = &counted, &v.Expected, &variance

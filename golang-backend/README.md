@@ -102,7 +102,7 @@ cat .env
 # PROMPTPAY_ID=0105561008012                      # merchant PromptPay ID for customer QR codes
 # SEED_DEMO_USERS=true   # local dev only: demo accounts, password 123456
 # TRUSTED_PROXIES=        # reverse proxy IPs whose X-Forwarded-For is believed
-# CORS_ALLOWED_ORIGINS=   # e.g. https://book.example.com; empty = any origin
+# CORS_ALLOWED_ORIGINS=   # e.g. https://book.example.com; empty = no CORS headers (same-origin only)
 ```
 **Court counts.** `BASKETBALL_COURT_COUNT` (default 3), `BADMINTON_COURT_COUNT`
 (12), `PICKLEBALL_COURT_COUNT` (3) and `MEETING_ROOM_COUNT` (1) set how many

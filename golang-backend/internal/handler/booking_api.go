@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"arena-backend/internal/repository"
 	"arena-backend/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 )
 
 var allowedSlipExt = map[string]string{"jpg": "jpg", "jpeg": "jpg", "png": "png", "webp": "webp"}
@@ -30,6 +32,22 @@ const (
 // An unrecognised error is a server fault: it is logged here and the client
 // gets a generic message (the text may hold SQL, constraint or driver
 // details).
+// badBody answers a request body that didn't parse or validate. Go's own
+// messages ("json: cannot unmarshal string into Go struct field ...") name
+// internal types, so only the offending field is passed on.
+func badBody(c *gin.Context, err error) {
+	msg := "invalid request body"
+	var typeErr *json.UnmarshalTypeError
+	var invalid validator.ValidationErrors
+	switch {
+	case errors.As(err, &typeErr) && typeErr.Field != "":
+		msg += ": wrong type for " + typeErr.Field
+	case errors.As(err, &invalid) && len(invalid) > 0:
+		msg += ": " + strings.ToLower(invalid[0].Field()) + " is missing or invalid"
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": msg})
+}
+
 func respondError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
 	if repository.IsQueryTimeout(err) {
@@ -188,7 +206,7 @@ func (h *ArenaHandler) CreateWalkInBooking(c *gin.Context) {
 		VoucherCode     string                `json:"voucher_code"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	if input.PaymentMethod != "" && input.PaymentMethod != model.PaymentCash && input.PaymentMethod != model.PaymentPromptPay && input.PaymentMethod != model.PaymentVoucher {
@@ -270,7 +288,7 @@ type reviewInput struct {
 func (h *ArenaHandler) VerifyPayment(c *gin.Context) {
 	var input reviewInput
 	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	staffID, staffName := actor(c)

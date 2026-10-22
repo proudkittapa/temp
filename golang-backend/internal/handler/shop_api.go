@@ -45,7 +45,7 @@ func (h *ShopHandler) CreateProducts(c *gin.Context) {
 		Products []service.ProductInput `json:"products"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -61,7 +61,7 @@ func (h *ShopHandler) CreateProducts(c *gin.Context) {
 func (h *ShopHandler) UpdateProduct(c *gin.Context) {
 	var in service.ProductInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -82,7 +82,7 @@ func (h *ShopHandler) AdjustStock(c *gin.Context) {
 		Reason    string  `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -99,7 +99,7 @@ func (h *ShopHandler) AdjustStock(c *gin.Context) {
 func (h *ShopHandler) Checkout(c *gin.Context) {
 	var input service.CheckoutInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	input.CreatedBy, input.CreatedByName = actor(c)
@@ -141,7 +141,7 @@ func (h *ShopHandler) ReturnRental(c *gin.Context) {
 	}
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&in); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+			badBody(c, err)
 			return
 		}
 	}
@@ -242,7 +242,7 @@ func (h *ShopHandler) VoidOrder(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -286,7 +286,7 @@ func (h *ShopHandler) OpenShift(c *gin.Context) {
 		OpeningFloat float64 `json:"opening_float"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -311,7 +311,8 @@ func (h *ShopHandler) CloseShift(c *gin.Context) {
 		return
 	}
 	actorID, actorName := actor(c)
-	sh, err := h.shifts.Close(c.Request.Context(), *in.CountedCash, in.Notes, actorID, actorName)
+	blind := !hasPermission(c, model.PermViewReports)
+	sh, err := h.shifts.Close(c.Request.Context(), *in.CountedCash, in.Notes, actorID, actorName, blind)
 	if err != nil {
 		respondError(c, err)
 		return

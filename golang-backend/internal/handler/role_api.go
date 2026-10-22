@@ -32,7 +32,7 @@ func (h *RoleHandler) List(c *gin.Context) {
 func (h *RoleHandler) Create(c *gin.Context) {
 	var in service.RoleInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -48,7 +48,7 @@ func (h *RoleHandler) Create(c *gin.Context) {
 func (h *RoleHandler) Update(c *gin.Context) {
 	var in service.RoleInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)

@@ -260,6 +260,9 @@ func (s *POSService) UpdateProduct(ctx context.Context, id string, in ProductInp
 // variant product's own stock is kept as the sum of its variants.
 func (s *POSService) AdjustStock(ctx context.Context, productID string, variantID *string, delta int, reason, actorID, actorName string) (*ProductView, error) {
 	reason = strings.TrimSpace(reason)
+	if err := checkText("reason", reason); err != nil {
+		return nil, err
+	}
 	if delta == 0 || delta < -100000 || delta > 100000 {
 		return nil, fmt.Errorf("%w: delta must be a non-zero number of units", ErrInvalidBooking)
 	}
@@ -906,6 +909,9 @@ func (s *POSService) ReturnRentalItem(ctx context.Context, itemID string, keep f
 // from today (Bangkok) - an older one belongs to a closed day's count.
 func (s *POSService) VoidOrder(ctx context.Context, orderID, reason, actorID, actorName string) (*OrderView, error) {
 	reason = strings.TrimSpace(reason)
+	if err := checkText("reason", reason); err != nil {
+		return nil, err
+	}
 	if reason == "" {
 		return nil, fmt.Errorf("%w: a reason is required to void a sale", ErrInvalidBooking)
 	}

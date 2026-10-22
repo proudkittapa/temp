@@ -55,7 +55,7 @@ func (in pricingRuleInput) toModel(id string) model.PricingRule {
 func (h *PricingHandler) SaveRule(c *gin.Context) {
 	var in pricingRuleInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -89,7 +89,7 @@ func (h *PricingHandler) UpdateMemberDiscount(c *gin.Context) {
 		IsActive        *bool    `json:"is_active" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -131,7 +131,7 @@ func (h *PricingHandler) UpdateConfig(c *gin.Context) {
 func (h *PricingHandler) UpdateBusiness(c *gin.Context) {
 	var in service.BusinessInfo
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)

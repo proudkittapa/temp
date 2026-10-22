@@ -328,6 +328,9 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 		planned[0].amount = 0
 	}
 
+	if err := checkText("notes", input.Notes); err != nil {
+		return nil, err
+	}
 	var notesVal *string
 	if input.Notes != "" {
 		notesVal = &input.Notes
@@ -1173,6 +1176,12 @@ func slipAcceptable(p *model.Payment) error {
 // it (Payment.SlipReleased) - a booking cancelled for another reason keeps
 // its slip, since the money behind it may still be refunded. Returns the
 // slip URL it replaced, if any (the file is kept as evidence).
+// Slip upload limits (see SaveSlip).
+const (
+	MaxSlipUploadsPerPayment    = 5
+	MaxSlipUploadsPerUserPerDay = 20
+)
+
 func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash, actorID string) (string, error) {
 	var previous string
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
@@ -1195,6 +1204,22 @@ func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, sli
 		if err := slipAcceptable(p); err != nil {
 			return err
 		}
+		// Replacing a wrong image is fine, but not without limit: each
+		// upload is a file kept as evidence, so a script could fill the
+		// disk. Per payment, and per customer per day across payments.
+		if p.SlipUploads >= MaxSlipUploadsPerPayment {
+			return fmt.Errorf("%w: this booking already has %d slips - please contact staff", ErrInvalidState, p.SlipUploads)
+		}
+		if owner.UserID == actorID {
+			var today int64
+			if err := tx.Model(&model.AuditLog{}).Where("user_id = ? AND action = ? AND created_at > ?",
+				actorID, "SLIP_UPLOADED", s.now().Add(-24*time.Hour)).Count(&today).Error; err != nil {
+				return err
+			}
+			if today >= MaxSlipUploadsPerUserPerDay {
+				return fmt.Errorf("%w: too many slips sent today - please contact staff", ErrInvalidState)
+			}
+		}
 		var reused int64
 		if err := tx.Model(&model.Payment{}).
 			Where("slip_hash = ? AND id <> ? AND NOT slip_released", slipHash, p.ID).
@@ -1211,6 +1236,7 @@ func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, sli
 		before := p.Status
 		if err := tx.Model(p).Updates(map[string]interface{}{
 			"status":           model.PaymentSlipUploaded,
+			"slip_uploads":     gorm.Expr("slip_uploads + 1"),
 			"slip_url":         servedURL,
 			"slip_hash":        slipHash,
 			"slip_uploaded_at": now,
@@ -1292,6 +1318,11 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 		if err != nil {
 			return err
 		}
+		// Four eyes: staff who booked online for themselves can't approve
+		// their own slip (another staff member or a manager does).
+		if root.UserID == staffID {
+			return fmt.Errorf("%w: you can't approve the payment for your own booking", ErrForbidden)
+		}
 		// Without a slip only a counter walk-in can be confirmed (staff saw
 		// the transfer arrive); an online booking needs the customer's slip
 		// - or a manager recording cash.
@@ -1345,6 +1376,9 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 // REJECTED and cancels every booking in the group so the slots free up.
 func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, seenSlipAt *time.Time, reason, staffID, staffName string) (*ReviewResult, error) {
 	reason = strings.TrimSpace(reason)
+	if err := checkText("reason", reason); err != nil {
+		return nil, err
+	}
 	if reason == "" {
 		return nil, fmt.Errorf("%w: a rejection reason is required", ErrInvalidBooking)
 	}

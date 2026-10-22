@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
@@ -36,6 +37,9 @@ const MaxManualPointsChange = 10000
 // balance.
 func (s *UserService) AdjustUserPoints(ctx context.Context, userID string, delta int, actorID, actorName, reason string) (int, error) {
 	reason = strings.TrimSpace(reason)
+	if err := checkText("reason", reason); err != nil {
+		return 0, err
+	}
 	if reason == "" {
 		return 0, fmt.Errorf("%w: a reason is required for a manual points change", ErrInvalidBooking)
 	}
@@ -125,36 +129,44 @@ func partialPhone(q string) string {
 // SetRole changes a user's role (admin only - the route enforces it), e.g.
 // to make a registered customer counter staff. Role is re-read on every
 // request, so it takes effect at once.
-func (s *UserService) SetRole(ctx context.Context, userID string, role model.UserRole, actorID, actorName string) (*model.User, error) {
+//
+// actorPerms are the caller's own permissions: nobody hands out a role with
+// rights they don't have themselves (a "manage staff" role must not be able
+// to make an account ADMIN), see updateUser for the target-side check.
+func (s *UserService) SetRole(ctx context.Context, userID string, role model.UserRole, actorID, actorName string, actorPerms []model.Permission) (*model.User, error) {
 	// Any role in the roles table: the four built-ins or one the admin made.
-	var n int64
-	if err := s.db.WithContext(ctx).Model(&model.Role{}).Where("id = ?", string(role)).Count(&n).Error; err != nil {
+	var r model.Role
+	if err := s.db.WithContext(ctx).First(&r, "id = ?", string(role)).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: unknown role %q", ErrInvalidBooking, role)
+		}
 		return nil, err
 	}
-	if n == 0 {
-		return nil, fmt.Errorf("%w: unknown role %q", ErrInvalidBooking, role)
+	if missing := missingPermissions(r.Permissions, actorPerms); len(missing) > 0 {
+		return nil, fmt.Errorf("%w: role %q has permissions you don't have (%s)", ErrForbidden, r.Name, joinPermissions(missing))
 	}
-	return s.updateUser(ctx, userID, actorID, actorName, "USER_ROLE_CHANGED", func(u *model.User) (map[string]any, any, any) {
+	return s.updateUser(ctx, userID, actorID, actorName, actorPerms, "USER_ROLE_CHANGED", func(u *model.User) (map[string]any, any, any) {
 		return map[string]any{"role": role}, map[string]any{"role": u.Role}, map[string]any{"role": role}
 	})
 }
 
 // SetActive suspends or reactivates an account (admin only). A suspended
 // user's existing sessions stop working at once (Authenticate re-reads it).
-func (s *UserService) SetActive(ctx context.Context, userID string, active bool, actorID, actorName string) (*model.User, error) {
+func (s *UserService) SetActive(ctx context.Context, userID string, active bool, actorID, actorName string, actorPerms []model.Permission) (*model.User, error) {
 	action := "USER_REACTIVATED"
 	if !active {
 		action = "USER_SUSPENDED"
 	}
-	return s.updateUser(ctx, userID, actorID, actorName, action, func(u *model.User) (map[string]any, any, any) {
+	return s.updateUser(ctx, userID, actorID, actorName, actorPerms, action, func(u *model.User) (map[string]any, any, any) {
 		return map[string]any{"is_active": active}, map[string]any{"is_active": u.IsActive}, map[string]any{"is_active": active}
 	})
 }
 
 // updateUser applies one admin change to a user with an audit log. Nobody
 // may change their own role or status - that is how the last admin locks
-// everyone out.
-func (s *UserService) updateUser(ctx context.Context, userID, actorID, actorName, action string,
+// everyone out - nor that of an account whose role has rights the caller
+// lacks (a staff manager can't suspend or demote the admin).
+func (s *UserService) updateUser(ctx context.Context, userID, actorID, actorName string, actorPerms []model.Permission, action string,
 	change func(*model.User) (updates map[string]any, before, after any)) (*model.User, error) {
 	if userID == actorID {
 		return nil, fmt.Errorf("%w: you cannot change your own role or status", ErrForbidden)
@@ -166,6 +178,13 @@ func (s *UserService) updateUser(ctx context.Context, userID, actorID, actorName
 				return ErrNotFound
 			}
 			return err
+		}
+		targetPerms, err := rolePermissionsTx(tx, string(u.Role))
+		if err != nil {
+			return err
+		}
+		if missing := missingPermissions(targetPerms, actorPerms); len(missing) > 0 {
+			return fmt.Errorf("%w: this account has permissions you don't have (%s)", ErrForbidden, joinPermissions(missing))
 		}
 		updates, before, after := change(&u)
 		now := time.Now()
@@ -189,4 +208,55 @@ func (s *UserService) updateUser(ctx context.Context, userID, actorID, actorName
 		return nil, err
 	}
 	return &u, nil
+}
+
+// rolePermissionsTx is RoleService.Permissions inside a transaction.
+func rolePermissionsTx(tx *gorm.DB, roleID string) ([]model.Permission, error) {
+	var r model.Role
+	err := tx.First(&r, "id = ?", roleID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return builtinPermissions(roleID), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r.Permissions, nil
+}
+
+// missingPermissions returns the entries of want that have lacks.
+// book_online doesn't count: anyone gets it by signing up, so it doesn't
+// make an account outrank a staff manager (who must be able to promote a
+// customer without booking rights of their own).
+func missingPermissions(want, have []model.Permission) []model.Permission {
+	held := map[model.Permission]bool{model.PermBookOnline: true}
+	for _, p := range have {
+		held[p] = true
+	}
+	var out []model.Permission
+	for _, p := range want {
+		if !held[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func joinPermissions(perms []model.Permission) string {
+	parts := make([]string, len(perms))
+	for i, p := range perms {
+		parts[i] = string(p)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// MaxTextLen bounds free text people type (notes, reasons): plenty for any
+// real explanation, but one request can't load megabytes into every list
+// and audit row.
+const MaxTextLen = 500
+
+func checkText(field, s string) error {
+	if utf8.RuneCountInString(s) > MaxTextLen {
+		return fmt.Errorf("%w: %s is too long (at most %d characters)", ErrInvalidBooking, field, MaxTextLen)
+	}
+	return nil
 }

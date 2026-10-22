@@ -42,7 +42,7 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
         { value: 'one', label: `ยกเลิกเฉพาะ ${booking.startTime}-${booking.endTime}` }
       ] : undefined,
       checkbox: groupPaid > 0 ? {
-        label: `บันทึกว่าคืนเงินค่าสนามที่${slipIn ? 'ลูกค้าโอนมาแล้ว (สลิปรอตรวจ)' : 'ชำระแล้ว'} (โอนคืนลูกค้าเอง) — ${group.length > 1 ? `ทั้งหมด ${formatBaht(groupPaid)} / ชั่วโมงนี้ ${formatBaht(hourPaid)}` : formatBaht(groupPaid)} บาท`,
+        label: `บันทึกว่าคืนเงินค่าสนามที่${slipIn ? 'ลูกค้าโอนมา — สลิปยังไม่ได้อนุมัติ: ติ๊กเมื่อตรวจแล้วว่าเงินเข้าบัญชีจริง' : 'ชำระแล้ว'} (โอนคืนลูกค้าเอง) — ${group.length > 1 ? `ทั้งหมด ${formatBaht(groupPaid)} / ชั่วโมงนี้ ${formatBaht(hourPaid)}` : formatBaht(groupPaid)} บาท`,
         defaultChecked: true
       } : undefined,
       okLabel: 'ยืนยันยกเลิก',
@@ -56,12 +56,14 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
     const refund = answer.checked && paidOf(target) > 0;
 
     if (api.USE_BACKEND) {
-      return api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id])
+      // Ticking the box for a slip still waiting is the manager's word that
+      // the transfer is in the bank account (the server requires it).
+      return api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id], 'staff', refund && slipIn)
         .then(res => {
           onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { ...res, reason });
           closeBookingDetail();
           onRefreshAll();
-          notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}${res.cancelledVouchers.length ? `\nยกเลิกคูปองที่แลกด้วยแต้มนี้: ${res.cancelledVouchers.join(', ')}` : ''}${res.pointsShort ? `\n⚠️ ลูกค้าใช้แต้ม ${res.pointsShort} แต้มแลกของรางวัลที่รับไปแล้ว หักคืนไม่ได้` : ''}`);
+          notify(`ยกเลิก ${res.cancelled} ชั่วโมงแล้ว${res.refundAmount ? ` · บันทึกคืนเงิน ${formatBaht(res.refundAmount)} บาท` : ''}${res.pointsReversed ? ` · หักแต้มคืน ${res.pointsReversed}` : ''}${res.cancelledVouchers.length ? `\nยกเลิกคูปองที่แลกด้วยแต้มนี้: ${res.cancelledVouchers.join(', ')}` : ''}${res.pointsShort ? `\n⚠️ ลูกค้าใช้แต้ม ${res.pointsShort} แต้มแลกของรางวัลที่รับไปแล้ว หักคืนไม่ได้` : ''}${res.refundNeedsCheck ? '\n⚠️ ยังไม่บันทึกคืนเงิน: สลิปยังไม่ได้อนุมัติ — ตรวจยอดในบัญชีก่อน แล้วคืนเงินที่หน้าตรวจสลิป' : ''}`);
         })
         .catch(err => notify(`ยกเลิกไม่สำเร็จ: ${err.message}`));
     }

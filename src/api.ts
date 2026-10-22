@@ -718,6 +718,8 @@ interface CancelResult {
   cancelled: number;
   refundAmount: number;
   pointsReversed: number;
+  // A refund was asked for a slip nobody approved: none was recorded.
+  refundNeedsCheck: boolean;
   cancelledVouchers: string[]; // rewards cancelled because their points came from these hours
   pointsShort: number; // points spent on a reward already handed over (not taken back)
   paymentStatus: PaymentStatus;
@@ -726,23 +728,25 @@ interface CancelResult {
 
 // Manager/admin. bookingId is any hour of the group; bookingIds limits the
 // cancellation to those hours. refund records the paid hours as refunded.
-export async function cancelBooking(bookingId: string, reason: string, refund: boolean, bookingIds?: string[], session: SessionKind = 'staff'): Promise<CancelResult> {
+// bankChecked: the manager confirmed the money is in the bank account -
+// required to refund a slip that was never approved.
+export async function cancelBooking(bookingId: string, reason: string, refund: boolean, bookingIds?: string[], session: SessionKind = 'staff', bankChecked = false): Promise<CancelResult> {
   const r = await request<{ booking_code: string; cancelled: number; refund_amount: number; points_reversed: number; payment_status: string; remaining_active: number;
-    cancelled_vouchers?: string[]; points_short?: number }>(
+    cancelled_vouchers?: string[]; points_short?: number; refund_needs_check?: boolean }>(
     `/admin/bookings/${encodeURIComponent(bookingId)}/cancel`,
-    { method: 'POST', session, body: { reason, refund, booking_ids: bookingIds } }
+    { method: 'POST', session, body: { reason, refund, booking_ids: bookingIds, bank_checked: bankChecked } }
   );
   return {
     bookingCode: r.booking_code, cancelled: r.cancelled, refundAmount: r.refund_amount,
     pointsReversed: r.points_reversed, paymentStatus: r.payment_status as PaymentStatus, remainingActive: r.remaining_active,
-    cancelledVouchers: r.cancelled_vouchers ?? [], pointsShort: r.points_short ?? 0
+    cancelledVouchers: r.cancelled_vouchers ?? [], pointsShort: r.points_short ?? 0, refundNeedsCheck: !!r.refund_needs_check
   };
 }
 
 // Manager/admin: record a refund (e.g. a late payment whose slot was taken).
-export async function refundPayment(paymentId: string, reason: string, amount?: number): Promise<Payment> {
+export async function refundPayment(paymentId: string, reason: string, amount?: number, bankChecked = false): Promise<Payment> {
   return toPayment(await request<ApiPayment>(`/admin/payments/${encodeURIComponent(paymentId)}/refund`, {
-    method: 'POST', session: 'staff', body: { reason, amount }
+    method: 'POST', session: 'staff', body: { reason, amount, bank_checked: bankChecked }
   }));
 }
 

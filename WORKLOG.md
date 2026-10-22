@@ -18,6 +18,48 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Security review and fixes
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XDLgFVCg4iMYeu1EqarqcQ, requested by the owner
+- **Commit(s):** this commit
+- **Changed:** see `SECURITY_REVIEW.md` for every finding. Fixed:
+  - Roles: `SetRole`/`SetActive` refuse a role or target account holding
+    permissions the caller lacks (book_online excepted) - "manage staff"
+    could make anyone ADMIN.
+  - Money: refunds of a payment that was never approved need
+    `bank_checked` (cancel without it records no refund and returns
+    `refund_needs_check`; UI asks the manager); staff can't approve their
+    own booking's slip; blind closers don't see the variance figure.
+  - Slips: content must match the extension, JPEG/PNG ≤ 40 MP; ≤ 5 slips
+    per payment (`payments.slip_uploads`), ≤ 20 per customer per day (new
+    index `idx_audit_logs_user_created`).
+  - Server: release mode refuses a missing/example `PROMPTPAY_ID`,
+    `SEED_DEMO_USERS=true` and a JWT secret under 32 chars; request logs
+    without query strings; no CORS headers unless `CORS_ALLOWED_ORIGINS` is
+    set; `make-admin <phone>` shows the account and needs `--yes`; bind
+    errors no longer echo Go internals; notes/reasons ≤ 500 characters.
+  - Deployment (`deploy/`, DEPLOY.md): CSP/HSTS/Permissions-Policy, body
+    limit in Caddy; Caddy at a fixed IP and the only trusted proxy; log
+    rotation, no-new-privileges, memory/pid limits, read-only backend;
+    private backups (umask 077) outside the checkout, encrypted off-server
+    copy, `.env` files in a password manager; monthly image updates; SSH
+    hardening. `.env.example` has `PROMPTPAY_ID=` empty. `bun.lock` removed.
+- **Verified:** `go vet`, `go test ./...` (new `slip_image_test.go`,
+  `role_guard_test.go`), `tsc`, vitest 60, `vite build`. End-to-end against
+  a real server + Postgres: 16/16 checks (escalation refused, HR can still
+  promote a customer, own-slip approval refused, unapproved refund needs the
+  bank check, HTML-as-JPG refused, 6th slip refused, blind close hides the
+  figure, generic bad-body message, no CORS header, long notes refused);
+  release-mode refusals and a valid release start; make-admin flow; logs
+  without query strings. Caddyfile validated with Caddy 2.10.2, compose with
+  `docker compose config`. Not run: the containers themselves (no Docker
+  daemon here) - check on first deploy that Caddy/Postgres start with
+  no-new-privileges and the read-only backend accepts slips.
+- **Not done / follow-ups:** the "Not fixed" table in SECURITY_REVIEW.md
+  (slip reuse with re-saved copies, junk-slip holds, phone verification,
+  lockout policy, session revocation, cancel after the hour started,
+  opening float, override_closure) - listed in TODO "start here".
+
 ## 2026-10-22 — Paused: security assessment started, next steps written down
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("pause for now and write down what to do next")

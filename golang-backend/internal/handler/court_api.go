@@ -30,7 +30,7 @@ func (h *CourtHandler) List(c *gin.Context) {
 func (h *CourtHandler) Create(c *gin.Context) {
 	var in service.CourtInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
@@ -48,7 +48,7 @@ func (h *CourtHandler) Create(c *gin.Context) {
 func (h *CourtHandler) Update(c *gin.Context) {
 	var in service.CourtInput
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": err.Error()})
+		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)

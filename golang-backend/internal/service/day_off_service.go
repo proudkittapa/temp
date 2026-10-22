@@ -72,6 +72,9 @@ func (s *DayOffService) Create(ctx context.Context, in CreateDayOffInput, actorI
 		return nil, fmt.Errorf("%w: cannot close a date in the past", ErrInvalidBooking)
 	}
 	in.Reason = strings.TrimSpace(in.Reason)
+	if err := checkText("reason", in.Reason); err != nil {
+		return nil, err
+	}
 	if in.Reason == "" {
 		return nil, fmt.Errorf("%w: a reason is required", ErrInvalidBooking)
 	}
