@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Paused: security assessment started, next steps written down
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("pause for now and write down what to do next")
+- **Commit(s):** this commit (on `main`, parent `5487bf5`)
+- **Changed:** TODO.md gets a "Next session: start here" block at the top:
+  the security assessment (scope per area - sign-in/permissions, input and
+  files, money logic, deployment - and the expected output), the open owner
+  decisions, going live with DEPLOY.md, the go-live code items, then LINE /
+  SMS / VAT. The browser-only demo mode decision is repeated there.
+- **Verified:** docs only. The three security review passes were stopped
+  before they reported - **no security findings exist yet**; nothing was
+  changed in code.
+- **State for the next session:** `main` builds and tests pass (last code
+  change 5487bf5, deployment files). Local test setup in the cloud box
+  (Postgres on 5433, backend on 8080, Vite on 3001, Docker daemon with
+  mirror.gcr.io) is not part of the repo.
+
+---
+
 ## 2026-10-22 — Deployment files (Docker + Caddy) and DEPLOY.md
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (TODO 8b)

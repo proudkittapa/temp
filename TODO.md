@@ -1,4 +1,50 @@
-# TODO (planned, not started)
+# TODO
+
+## Next session: start here (paused 2026-10-22)
+
+1. **Security assessment - not done yet.** Asked for on 2026-10-22; three
+   review passes were started and stopped before reporting (no findings
+   yet). Redo them read-only, then verify each finding before fixing:
+   - **Sign-in and permissions:** JWT (algorithm, secret, expiry,
+     revocation on logout / password change / suspension), token in
+     localStorage + no CSP (XSS = account takeover), every route's
+     `can(...)` vs what the handler does, IDOR (another customer's
+     booking / payment / slip / voucher by changing an id), role
+     escalation (manager -> admin, own role/points), login throttle,
+     account enumeration, CORS / TRUSTED_PROXIES, idempotency key
+     replay across users, `make-admin`.
+   - **Untrusted input and files:** raw SQL built with `+`/Sprintf, slip
+     upload (type check by content, size, path, served content-type,
+     signed-URL HMAC/expiry), body limits and number ranges, XSS sinks in
+     React (receipt printing, `href`/`src` from data), CSV/Excel formula
+     injection in exports, error messages leaking internals, PromptPay
+     payload (amount/payee from the server only).
+   - **Money logic:** prices only from the server, confirming without
+     paying, slip reuse, points/vouchers double-spend under concurrency,
+     refunds above the payment or twice, drawer/shift manipulation,
+     unpaid holds blocking courts.
+   - **Deployment:** nothing but Caddy exposed (Postgres/backend ports),
+     secrets out of images, add a Content-Security-Policy header in
+     `deploy/Caddyfile`, backups hold personal data + slips (permissions,
+     off-server copy encrypted?), logs without tokens/phones.
+   Output: a findings list (severity, file:line, scenario, confirmed or
+   suspected, fix), then fixes with tests, each pushed with a WORKLOG
+   entry.
+2. **Owner decisions still open** (section 0 and below): no-show half-court
+   resale price 125 (section 12); audit-log retention; kept rental
+   deposits as income; cash refunds from the drawer; login lockout policy;
+   real business details (typed in Admin after deploy).
+3. **Go live** (section 8b, `DEPLOY.md`): owner rents the server + domain,
+   follows DEPLOY.md; then `TESTING_CHECKLIST.md` on the real address,
+   test HTTPS, set up the nightly backup cron and an off-server copy.
+4. **Before real customers** (section 11 "Go-live"): phone numbers stored
+   in one form so lookups use an index; money columns as numeric;
+   concurrency tests on a real Postgres (section 7).
+5. **Then:** LINE login and notifications (1-2), forgot password by SMS
+   (4), VAT tax invoices (5).
+
+Kept on purpose (owner, 2026-10-22): the browser-only demo mode
+(`npm run dev`) - rules stay in Go *and* TypeScript; change and test both.
 
 ## Order of work (do top to bottom, by priority)
 Cheap and blocking first, then what changes what customers/staff see
