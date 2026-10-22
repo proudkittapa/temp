@@ -6,6 +6,7 @@ import {
 import { StorageService, findClosure, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, formatBaht, findNoShow, resalePrice } from '../../mockData';
 import * as api from '../../api';
 import { notify, ask } from '../Dialog';
+import { can } from '../../permissions';
 import type { StaffPOSCore } from './useStaffPOS';
 import { LocalVoucher } from './shared';
 import type { useShiftActions } from './shiftActions';
@@ -15,6 +16,7 @@ import type { useSlipActions } from './slipActions';
 // Walk-in bookings at the counter, including the PromptPay wait box.
 export function useWalkinActions(deps: StaffPOSCore & ReturnType<typeof useShiftActions> & ReturnType<typeof useVoucherActions> & ReturnType<typeof useSlipActions>) {
   const {
+    actingUser,
     bookings,
     confirmCashWithoutShift,
     courts,
@@ -91,6 +93,12 @@ export function useWalkinActions(deps: StaffPOSCore & ReturnType<typeof useShift
     const blockedReason = findClosure(daysOff, walkinDate, walkinCourtId, hourNum, courts)?.reason;
 
     if (blockedReason) {
+      // Only whoever may manage closures can book through one (the server
+      // checks it too).
+      if (!can(actingUser, 'manage_closures')) {
+        notify(`วันที่/ช่วงเวลานี้ถูกปิดบริการ ("${blockedReason}")\nการจองกรณีพิเศษต้องให้ผู้ที่มีสิทธิ์จัดการวันปิดสนามเป็นผู้จอง`);
+        return;
+      }
       if (!(await ask(`วันที่/ช่วงเวลานี้ถูกปิดบริการ ("${blockedReason}")\nต้องการจองเป็นกรณีพิเศษหรือไม่?`, { title: '⚠️ ช่วงเวลาปิดบริการ', okLabel: 'จองกรณีพิเศษ' }))) {
         return;
       }

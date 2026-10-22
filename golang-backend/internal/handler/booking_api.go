@@ -211,6 +211,12 @@ func (h *ArenaHandler) CreateWalkInBooking(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "payment_method must be CASH, PROMPTPAY or VOUCHER"})
 		return
 	}
+	// Booking through a day off is the closure manager's call, not every
+	// counter account's (the closure would otherwise mean nothing).
+	if input.OverrideClosure && !hasPermission(c, model.PermManageClosures) {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "error": "booking during a closure needs the manage_closures permission"})
+		return
+	}
 	customer, err := h.bookingService.FindCustomerByPhone(c.Request.Context(), input.CustomerPhone)
 	if err != nil {
 		respondError(c, err)

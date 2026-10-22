@@ -10,6 +10,7 @@ export function useShiftActions(deps: StaffPOSCore) {
   const {
     blindCount,
     countLocked,
+    lastShiftCount,
     onAddAuditLog,
     onRefreshAll,
     setActivePosTab,
@@ -19,10 +20,12 @@ export function useShiftActions(deps: StaffPOSCore) {
     setShiftCountInput,
     setShiftFloatInput,
     setShiftNote,
+    setShiftOpenNote,
     shift,
     shiftCountInput,
     shiftFloatInput,
-    shiftNote
+    shiftNote,
+    shiftOpenNote
   } = deps;
   // Cash only with a drawer shift open (owner decision 2026-10-21): cash
   // taken outside a shift is in no shift's count, so the drawer never adds
@@ -57,17 +60,24 @@ export function useShiftActions(deps: StaffPOSCore) {
       notify('กรุณากรอกเงินทอนตั้งต้นในลิ้นชัก (บาท)');
       return;
     }
+    // A float other than the last close's count (cash taken to the bank,
+    // another drawer) is explained - the server refuses it otherwise.
+    const note = shiftOpenNote.trim();
+    if (lastShiftCount !== null && roundBaht(float) !== lastShiftCount && !note) {
+      notify(`เงินทอนตั้งต้นไม่ตรงกับยอดที่นับได้ตอนปิดกะล่าสุด (${formatBaht(lastShiftCount)} บาท)\nกรุณาใส่หมายเหตุว่าทำไมไม่เท่ากัน เช่น นำเงินฝากธนาคาร`);
+      return;
+    }
     setClosedShift(null);
+    const done = () => { setShiftFloatInput(''); setShiftOpenNote(''); onRefreshAll(); };
     if (api.USE_BACKEND) {
-      return api.openShift(float).then(() => { setShiftFloatInput(''); onRefreshAll(); }).catch(err => notify(`เปิดกะไม่สำเร็จ: ${err.message}`));
+      return api.openShift(float, note).then(done).catch(err => notify(`เปิดกะไม่สำเร็จ: ${err.message}`));
     }
     const list = StorageService.get<Shift[]>('shifts', []);
     if (list.some(sh => !sh.closedAt)) { notify('มีกะที่เปิดอยู่แล้ว ปิดกะก่อน'); return; }
-    const sh: Shift = { id: 'shf-' + Date.now(), staffId: 'u-staff-1', staffName: 'คุณ กิตติ (เดโม)', openedAt: new Date().toISOString(), openingFloat: roundBaht(float) };
+    const sh: Shift = { id: 'shf-' + Date.now(), staffId: 'u-staff-1', staffName: 'คุณ กิตติ (เดโม)', openedAt: new Date().toISOString(), openingFloat: roundBaht(float), openingNote: note || undefined };
     StorageService.set('shifts', [...list, sh]);
-    onAddAuditLog('SHIFT_OPENED', 'Shift', sh.id, null, { openingFloat: sh.openingFloat });
-    setShiftFloatInput('');
-    onRefreshAll();
+    onAddAuditLog('SHIFT_OPENED', 'Shift', sh.id, null, { openingFloat: sh.openingFloat, lastCount: lastShiftCount, note: note || undefined });
+    done();
   };
 
   // Close it with the counted cash: expected vs counted = over/short (FR-6.2).

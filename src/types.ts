@@ -366,6 +366,7 @@ export interface Shift {
   staffName: string;
   openedAt: string;
   openingFloat: number;
+  openingNote?: string; // why the float isn't the last shift's count
   closedAt?: string;
   countedCash?: number;
   expectedCash?: number; // openingFloat + cash bookings + cash retail in-period

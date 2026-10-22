@@ -218,11 +218,12 @@ export function useSlipActions(deps: StaffPOSCore) {
   const handleRefundPayment = async (pay: Payment) => {
     const reason = await askText(`เหตุผลการคืนเงิน ${formatBaht(pay.amount - (pay.refundAmount || 0))} บาท (จำเป็น):`, { title: '💸 คืนเงิน', okLabel: 'บันทึกคืนเงิน' });
     if (!reason) return;
+    // A slip nobody approved proves nothing: the manager confirms the
+    // transfer is really in the bank account (the server requires it;
+    // browser-only mode asks the same).
+    const bankChecked = pay.status !== PaymentStatus.VERIFIED;
+    if (bankChecked && !(await ask('สลิปนี้ยังไม่เคยได้รับอนุมัติ — ตรวจในบัญชีธนาคารแล้วว่าเงินโอนเข้ามาจริง?', { title: '💸 ยืนยันยอดเงินเข้า', okLabel: 'ตรวจแล้ว เงินเข้าจริง', cancelLabel: 'ยังไม่ได้ตรวจ' }))) return;
     if (api.USE_BACKEND) {
-      // A slip nobody approved proves nothing: the manager confirms the
-      // transfer is really in the bank account (the server requires it).
-      const bankChecked = pay.status !== PaymentStatus.VERIFIED;
-      if (bankChecked && !(await ask('สลิปนี้ยังไม่เคยได้รับอนุมัติ — ตรวจในบัญชีธนาคารแล้วว่าเงินโอนเข้ามาจริง?', { title: '💸 ยืนยันยอดเงินเข้า', okLabel: 'ตรวจแล้ว เงินเข้าจริง', cancelLabel: 'ยังไม่ได้ตรวจ' }))) return;
       return api.refundPayment(pay.id, reason, undefined, bankChecked)
         .then(p => {
           onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: p.refundAmount, reason });
@@ -245,7 +246,7 @@ export function useSlipActions(deps: StaffPOSCore) {
     StorageService.set('payments', StorageService.get<Payment[]>('payments', []).map(p => p.id === pay.id
       ? { ...p, status: kept > 0 ? p.status : PaymentStatus.REFUNDED, refundAmount: roundBaht((p.refundAmount || 0) + amount), refundReason: reason,
           refundedAt: at, refunds: [...(p.refunds || []), { amount, at }] } : p));
-    onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: amount, reason });
+    onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: amount, reason, bankChecked });
     onRefreshAll();
   };
   return {

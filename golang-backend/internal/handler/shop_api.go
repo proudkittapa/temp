@@ -255,14 +255,26 @@ func (h *ShopHandler) VoidOrder(c *gin.Context) {
 }
 
 // GET /api/v1/staff/shift - staff: the open shift with cash taken so far
-// (data is null when no shift is open).
+// (data is null when no shift is open; last_count is then the cash counted
+// at the last close, null before the first).
 func (h *ShopHandler) CurrentShift(c *gin.Context) {
 	sh, err := h.shifts.Current(c.Request.Context())
 	if err != nil {
 		respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": blindShift(c, sh)})
+	if sh != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": blindShift(c, sh)})
+		return
+	}
+	// No shift open: the cash counted at the last close, which the next
+	// float should match (or be explained).
+	last, err := h.shifts.LastCount(c.Request.Context())
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": nil, "last_count": last})
 }
 
 // blindCount: counter staff count the drawer without knowing what it should
@@ -280,17 +292,20 @@ func blindShift(c *gin.Context, sh *service.ShiftView) *service.ShiftView {
 	return &cp
 }
 
-// POST /api/v1/staff/shift/open {"opening_float": 2000} - staff (FR-6.1).
+// POST /api/v1/staff/shift/open {"opening_float": 2000, "opening_note": "..."}
+// - staff (FR-6.1). The note is required when the float isn't the last
+// close's count.
 func (h *ShopHandler) OpenShift(c *gin.Context) {
 	var in struct {
 		OpeningFloat float64 `json:"opening_float"`
+		OpeningNote  string  `json:"opening_note"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
-	sh, err := h.shifts.Open(c.Request.Context(), in.OpeningFloat, actorID, actorName)
+	sh, err := h.shifts.Open(c.Request.Context(), in.OpeningFloat, in.OpeningNote, actorID, actorName)
 	if err != nil {
 		respondError(c, err)
 		return

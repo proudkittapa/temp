@@ -107,6 +107,10 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   const [shift, setShift] = useState<api.ShiftView | null>(null);
   const [shiftHistory, setShiftHistory] = useState<api.ShiftView[]>([]);
   const [shiftFloatInput, setShiftFloatInput] = useState<string>('');
+  // Cash counted at the last close: the next float should be the same, or
+  // explained in shiftOpenNote.
+  const [lastShiftCount, setLastShiftCount] = useState<number | null>(null);
+  const [shiftOpenNote, setShiftOpenNote] = useState<string>('');
   const [shiftCountInput, setShiftCountInput] = useState<string>('');
   const [shiftNote, setShiftNote] = useState<string>('');
   const [closedShift, setClosedShift] = useState<api.ShiftView | null>(null);
@@ -179,7 +183,7 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     const skip = Promise.resolve(null);
     return Promise.all([
       api.listPaymentsForReview(),
-      api.currentShift(),
+      api.shiftState(),
       onDay ? api.daySummary(today) : skip,
       tab === 'slips' && can(staffUser, 'cancel_refund') ? api.listRefundChecks() : skip,
       tab === 'fb' || tab === 'rentals' ? api.listProducts() : skip,
@@ -191,7 +195,8 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
       .then(([queue, openShift, summary, checks, prods, dayOrders, rentals, history, todays]) => {
         if (!isCurrent()) return;
         setReviewQueue(queue);
-        setShift(openShift);
+        setShift(openShift.shift);
+        setLastShiftCount(openShift.lastCount);
         if (summary) setDaySummary(summary);
         if (checks) setRefundChecks(checks);
         if (prods) setProducts(prods);
@@ -268,6 +273,7 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     if (!api.USE_BACKEND) {
       const shifts = StorageService.get<Shift[]>('shifts', []).map(sh => localShiftView(sh, rawPayments, rawOrders));
       setShift(shifts.find(sh => !sh.closedAt) || null);
+      setLastShiftCount([...shifts].reverse().find(sh => sh.closedAt)?.countedCash ?? null);
       setShiftHistory(shifts.filter(sh => sh.closedAt).reverse());
       setProducts(rawProducts.filter(p => p.isActive));
       setOrders(rawOrders);
@@ -481,6 +487,10 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     setShiftHistory,
     shiftFloatInput,
     setShiftFloatInput,
+    lastShiftCount,
+    setLastShiftCount,
+    shiftOpenNote,
+    setShiftOpenNote,
     shiftCountInput,
     setShiftCountInput,
     shiftNote,

@@ -15,7 +15,7 @@ Nothing High was found.
 | # | Sev | Finding | Fix |
 |---|-----|---------|-----|
 | 1 | Medium | A role with "manage staff" could give any account the ADMIN role, and suspend or demote the real admin (`user_service.go` SetRole/updateUser). | You can only hand out a role whose permissions you hold, and only change accounts that don't hold permissions you lack (`missingPermissions`; book_online doesn't count, any customer has it). |
-| 2 | Medium | Refunds treated a slip nobody had approved as money received: cancel-with-refund (and every court closure) recorded a refund for any uploaded image; a rejected (fake) slip could still be refunded. | Only an approved payment counts as received. For any other, the manager must tick "I checked the bank account" (`bank_checked`); without it the hours are cancelled but no refund is recorded and the screen says to check first. |
+| 2 | Medium | Refunds treated a slip nobody had approved as money received: cancel-with-refund (and every court closure) recorded a refund for any uploaded image; a rejected (fake) slip could still be refunded. | Only an approved payment counts as received. For any other, the manager must tick "I checked the bank account" (`bank_checked`); without it the hours are cancelled but no refund is recorded and the screen says to check first. Browser-only demo mode asks the same before the refund button records anything (2026-10-22). |
 | 3 | Medium | Unlimited slip re-uploads: every upload is a file kept on disk, so a script could fill the disk (and the database's disk with it). | At most 5 slips per payment and 20 per customer per day (`SaveSlip`, new `payments.slip_uploads`). |
 | 4 | Medium | No Content-Security-Policy, HSTS or Permissions-Policy (the login token is in localStorage, so any future XSS = account takeover). | Headers added in `deploy/Caddyfile`, CSP checked against the real production bundle. |
 | 5 | Medium | Backups readable by every account on the server, unencrypted, inside the code folder; secrets not backed up. | `backup.sh` uses `umask 077`/`chmod 700`; DEPLOY.md: back up to `/var/backups/arena`, encrypt before copying off the server (rclone crypt), keep the `.env` files in a password manager. |
@@ -54,8 +54,8 @@ Nothing High was found.
 | Low-Med | **Anyone can lock any account** (incl. the admin) for 15 min with 20 wrong passwords from a few IPs. | Already an open owner decision (section 0, login lockout): e.g. let a correct password through the account-wide lock and keep the hard lock per (account, IP). |
 | Low | **Sessions can't be revoked:** a stolen token works for up to 48 h after logout; there's no "log out everywhere". | `token_version` on users, checked per request, bumped on logout-all / password change / suspension - do together with "forgot password". |
 | Low | A manager can cancel and refund an hour that is being played or just finished. | Refuse once the hour has started unless an audited override is given. |
-| Low | The opening float isn't checked against the previous shift's count. | Default it to the last count and require a note when it differs. |
-| Low | Counter staff can book through a closure (`override_closure`). | Require the closures permission for it. |
+| ~~Low~~ fixed 2026-10-22 | The opening float isn't checked against the previous shift's count. | Done: the screen shows the last count ("ใช้ยอดนี้"); a different float needs a note (server and browser-only mode), kept on the shift and in the audit log. |
+| ~~Low~~ fixed 2026-10-22 | Counter staff can book through a closure (`override_closure`). | Done: needs `manage_closures` (403 otherwise); the counter screen says so instead of offering it. |
 | Low | Registration reveals whether a phone/email is registered. | Normal for sign-up; goes away with OTP-first sign-up. |
 
 ## Checked and fine (summary)

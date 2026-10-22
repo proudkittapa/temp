@@ -18,6 +18,50 @@ Entry format:
 
 ---
 
+## 2026-10-22 — Small security items: closure override, opening float, demo refund check
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1", item 3)
+- **Commit(s):** this commit (on `main`, parent `e7b662c`)
+- **Changed:**
+  - **Booking through a closure needs `manage_closures`:**
+    `CreateWalkInBooking` answers 403 "booking during a closure needs the
+    manage_closures permission" for `override_closure` without it (built-in
+    STAFF lacks it, MANAGER/ADMIN have it). Counter screen
+    (`walkinActions.tsx`): without the permission it explains instead of
+    offering "จองกรณีพิเศษ" (both modes).
+  - **Opening float vs last count:** `shifts.opening_note` (new column);
+    `ShiftService.Open(float, note, ...)` refuses (400) a float other than
+    the cash counted at the last close unless a note is given; stored on the
+    shift and in `SHIFT_OPENED` (with `last_count`). `LastCount`;
+    `GET /staff/shift` returns `last_count` while no shift is open. Screen
+    (`DayTotalTab.tsx`, `shiftActions.tsx`, `api.shiftState`): shows the last
+    count with "ใช้ยอดนี้", a note box when the float differs, the same rule
+    in browser-only mode; the managers' shift history shows the opening
+    note.
+  - **Browser-only demo refund:** the refund button asks "ตรวจในบัญชีธนาคาร
+    แล้วว่าเงินโอนเข้ามาจริง?" for a slip nobody approved in both modes
+    (`slipActions.tsx`; before, only API mode asked). Cancel-with-refund
+    already matched (the ticked box is the bank check in both modes).
+  - Thai texts for the two new server messages (`errorText.ts`, test).
+  - `shifts_db_test.go` (new, needs `TEST_DATABASE_URL`); race test passes
+    a note (each round reopens at 500 after counting 570).
+  - Docs: `golang-backend/README.md` (walk-in override, shift open),
+    `SECURITY_REVIEW.md` (two Lows marked fixed, #2 note), `TODO.md`.
+- **Verified:** `go vet ./...`, `go test ./...`, with `TEST_DATABASE_URL`
+  all DB tests pass; `tsc --noEmit`, vitest 61/61. Live API: admin closed
+  bad-7 for a day; staff walk-in with override -> 403 with the new message,
+  staff without override -> 409 "closed", manager with override -> 201.
+  Playwright (API mode, staff account): last count line shown (3,786),
+  float 3,686 -> note box appears, "เปิดกะ" without note -> dialog
+  "เงินทอนตั้งต้นไม่ตรง…", shift stays closed; "ใช้ยอดนี้" fills 3786 and hides
+  the note box; float 3,686 + note -> shift opened, server stored the note
+  (`GET /admin/shifts`). No page errors.
+- **Not done / follow-ups:** the browser-only refund dialog was checked by
+  the type checker only, not clicked through in a browser. Next in group 1:
+  money columns as numeric.
+
+---
+
 ## 2026-10-22 — Phone numbers stored in one form, indexed lookups
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1", item 2)

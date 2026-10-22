@@ -46,6 +46,8 @@ const RULES: Rule[] = [
   [/invalid or expired token|session expired/i, 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่'],
   [/^login required/i, 'กรุณาเข้าสู่ระบบก่อน'],
   [/your role is not allowed/i, 'บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้'],
+  [/the opening float differs from the last count \(([\d.]+) THB\)/i, m => `เงินทอนตั้งต้นไม่ตรงกับยอดที่นับได้ตอนปิดกะล่าสุด (${m[1]} บาท) — กรุณาใส่หมายเหตุ`],
+  [/booking during a closure needs the manage_closures permission/i, 'ช่วงเวลานี้ปิดบริการ — การจองกรณีพิเศษต้องให้ผู้ที่มีสิทธิ์จัดการวันปิดสนามเป็นผู้จอง'],
   [/could not check your session right now/i, 'ตรวจสอบการเข้าสู่ระบบไม่ได้ชั่วคราว กรุณาลองใหม่'],
   [/internal server error/i, 'เซิร์ฟเวอร์ขัดข้อง กรุณาลองใหม่อีกครั้ง'],
   [/too many sign-ups from this network/i, 'สมัครสมาชิกจากเครือข่ายนี้บ่อยเกินไป กรุณาลองใหม่ภายหลัง'],

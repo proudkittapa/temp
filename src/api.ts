@@ -1123,14 +1123,14 @@ export async function voidOrder(orderId: string, reason: string): Promise<OrderW
 export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; cashDeposits: number; expected: number; blind?: boolean }
 
 interface ApiShift {
-  id: string; staff_id: string; staff_name: string; opened_at: string; opening_float: number; closed_at?: string;
+  id: string; staff_id: string; staff_name: string; opened_at: string; opening_float: number; opening_note?: string; closed_at?: string;
   counted_cash?: number; expected_cash?: number; variance_cash?: number; notes?: string; closed_by_name?: string;
   cash_bookings: number; cash_orders: number; cash_deposits?: number; expected: number; blind?: boolean;
 }
 
 const toShift = (s: ApiShift): ShiftView => ({
   id: s.id, staffId: s.staff_id, staffName: s.staff_name, openedAt: s.opened_at, openingFloat: s.opening_float,
-  closedAt: s.closed_at, countedCash: s.counted_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
+  openingNote: s.opening_note, closedAt: s.closed_at, countedCash: s.counted_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
   notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, cashDeposits: s.cash_deposits ?? 0, expected: s.expected,
   blind: s.blind
 });
@@ -1140,8 +1140,16 @@ export async function currentShift(): Promise<ShiftView | null> {
   return s ? toShift(s) : null;
 }
 
-export async function openShift(openingFloat: number): Promise<ShiftView> {
-  return toShift(await request<ApiShift>('/staff/shift/open', { method: 'POST', session: 'staff', body: { opening_float: openingFloat } }));
+// The open shift, or - when none is open - the cash counted at the last
+// close (null before the first), which the next float should match.
+export async function shiftState(): Promise<{ shift: ShiftView | null; lastCount: number | null }> {
+  const r = await request<{ data: ApiShift | null; last_count?: number | null }>('/staff/shift', { session: 'staff', withMeta: true });
+  return { shift: r.data ? toShift(r.data) : null, lastCount: r.last_count ?? null };
+}
+
+// note: required by the server when openingFloat isn't the last count.
+export async function openShift(openingFloat: number, note: string): Promise<ShiftView> {
+  return toShift(await request<ApiShift>('/staff/shift/open', { method: 'POST', session: 'staff', body: { opening_float: openingFloat, opening_note: note } }));
 }
 
 export async function closeShift(countedCash: number, notes: string): Promise<ShiftView> {

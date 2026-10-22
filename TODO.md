@@ -9,8 +9,8 @@
    review deadline for waiting slips?), **phone numbers not verified** (OTP
    via SMS/LINE), account lockout (section 0), revoking sessions
    (token_version, with forgot-password), no cancel/refund after the hour
-   started, opening float vs last count, `override_closure` needing the
-   closures permission.
+   started. (Opening float vs last count and `override_closure` needing
+   the closures permission: done 2026-10-22.)
 2. **Owner decisions still open** (section 0 and below): no-show half-court
    resale price 125 (section 12); audit-log retention; kept rental
    deposits as income; cash refunds from the drawer; login lockout policy;

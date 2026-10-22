@@ -651,7 +651,7 @@ func TestConcurrencyVoidVersusShiftClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	for round := 0; round < raceRounds(); round++ {
-		sh, err := e.shifts.Open(ctx, 500, "staff-a", "Staff A")
+		sh, err := e.shifts.Open(ctx, 500, "race test: float reset", "staff-a", "Staff A")
 		if err != nil {
 			t.Fatal(err)
 		}

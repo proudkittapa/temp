@@ -143,10 +143,35 @@ func lockDrawerForCash(tx *gorm.DB) error {
 	return nil
 }
 
-// Open starts a shift with the float counted into the drawer.
-func (s *ShiftService) Open(ctx context.Context, openingFloat float64, staffID, staffName string) (*ShiftView, error) {
+// LastCount is the cash counted when the last shift was closed - what the
+// drawer should hold when the next one opens - or nil before the first.
+func (s *ShiftService) LastCount(ctx context.Context) (*float64, error) {
+	return lastCount(s.db.WithContext(ctx))
+}
+
+func lastCount(db *gorm.DB) (*float64, error) {
+	var last []model.Shift
+	if err := db.Select("counted_cash").Where("closed_at IS NOT NULL AND counted_cash IS NOT NULL").
+		Order("closed_at DESC").Limit(1).Find(&last).Error; err != nil {
+		return nil, err
+	}
+	if len(last) == 0 {
+		return nil, nil
+	}
+	return last[0].CountedCash, nil
+}
+
+// Open starts a shift with the float counted into the drawer. A float other
+// than the cash counted at the last close (money taken to the bank, a
+// different drawer) needs a note, so a gap between two shifts is explained
+// rather than unnoticed.
+func (s *ShiftService) Open(ctx context.Context, openingFloat float64, note, staffID, staffName string) (*ShiftView, error) {
 	if openingFloat < 0 || openingFloat > 1000000 {
 		return nil, fmt.Errorf("%w: opening float must be between 0 and 1,000,000 THB", ErrInvalidBooking)
+	}
+	note = strings.TrimSpace(note)
+	if err := checkText("note", note); err != nil {
+		return nil, err
 	}
 	var out *ShiftView
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
@@ -160,13 +185,25 @@ func (s *ShiftService) Open(ctx context.Context, openingFloat float64, staffID, 
 		if open > 0 {
 			return fmt.Errorf("%w: a shift is already open - close it first", ErrInvalidState)
 		}
-		sh := model.Shift{ID: ids.New("shf"), StaffID: staffID, StaffName: staffName, OpenedAt: s.now(), OpeningFloat: RoundBaht(openingFloat)}
+		float := RoundBaht(openingFloat)
+		last, err := lastCount(tx)
+		if err != nil {
+			return err
+		}
+		if last != nil && float != *last && note == "" {
+			return fmt.Errorf("%w: the opening float differs from the last count (%.2f THB) - add a note explaining it", ErrInvalidBooking, *last)
+		}
+		sh := model.Shift{ID: ids.New("shf"), StaffID: staffID, StaffName: staffName, OpenedAt: s.now(), OpeningFloat: float}
+		if note != "" {
+			sh.OpeningNote = &note
+		}
 		if err := tx.Create(&sh).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: staffID, UserName: staffName, Action: "SHIFT_OPENED", TargetType: "Shift", TargetID: sh.ID,
-			AfterState: model.AuditJSON(map[string]any{"opening_float": sh.OpeningFloat}), CreatedAt: sh.OpenedAt,
+			AfterState: model.AuditJSON(map[string]any{"opening_float": sh.OpeningFloat, "last_count": last}),
+			Reason:     sh.OpeningNote, CreatedAt: sh.OpenedAt,
 		}).Error; err != nil {
 			return err
 		}

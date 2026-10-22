@@ -571,11 +571,13 @@ type Voucher struct {
 // bookings/orders paid by CASH within [OpenedAt, ClosedAt), not re-entered by
 // staff, so the variance calculation has a single source of truth.
 type Shift struct {
-	ID           string     `json:"id" db:"id" gorm:"primaryKey;column:id"`
-	StaffID      string     `json:"staff_id" db:"staff_id" gorm:"column:staff_id"`
-	StaffName    string     `json:"staff_name" db:"staff_name" gorm:"column:staff_name"`
-	OpenedAt     time.Time  `json:"opened_at" db:"opened_at" gorm:"column:opened_at"`
-	OpeningFloat float64    `json:"opening_float" db:"opening_float" gorm:"column:opening_float"`
+	ID           string    `json:"id" db:"id" gorm:"primaryKey;column:id"`
+	StaffID      string    `json:"staff_id" db:"staff_id" gorm:"column:staff_id"`
+	StaffName    string    `json:"staff_name" db:"staff_name" gorm:"column:staff_name"`
+	OpenedAt     time.Time `json:"opened_at" db:"opened_at" gorm:"column:opened_at"`
+	OpeningFloat float64   `json:"opening_float" db:"opening_float" gorm:"column:opening_float"`
+	// OpeningNote explains a float other than the last shift's count.
+	OpeningNote  *string    `json:"opening_note,omitempty" db:"opening_note" gorm:"column:opening_note"`
 	ClosedAt     *time.Time `json:"closed_at,omitempty" db:"closed_at" gorm:"column:closed_at"`
 	CountedCash  *float64   `json:"counted_cash,omitempty" db:"counted_cash" gorm:"column:counted_cash"`
 	ExpectedCash *float64   `json:"expected_cash,omitempty" db:"expected_cash" gorm:"column:expected_cash"`

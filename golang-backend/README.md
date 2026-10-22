@@ -246,7 +246,9 @@ loyalty points). `CASH` is created CONFIRMED with a VERIFIED payment.
 `PROMPTPAY` is created PENDING_PAYMENT with the QR payload in the response;
 staff confirm it with `POST /staff/payments/:id/verify` once the transfer
 has arrived (that also awards the points) or cancel it with `/reject`, and
-it expires after 30 minutes like an online booking:
+it expires after 30 minutes like an online booking. `"override_closure":
+true` books through a closure (section 7) and needs the `manage_closures`
+permission (403 otherwise):
 ```bash
 curl -X POST http://localhost:8080/api/v1/staff/bookings \
   -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
@@ -256,7 +258,8 @@ curl -X POST http://localhost:8080/api/v1/staff/bookings \
 
 ### 7. Court Closures / Days Off (FR-1.3)
 Public list (booking grids use it), manager/admin create and delete. A
-closure blocks new bookings (staff walk-ins may override); bookings that
+closure blocks new bookings (a walk-in by someone with `manage_closures`
+may override it); bookings that
 already exist in the window are returned as `affected_bookings` so staff
 can contact those customers:
 ```bash
@@ -453,10 +456,15 @@ ACTIVE vouchers (newest first, status `CANCELLED`, points back as
 `VOUCHER_CANCELLED`) to cover them, listed in `cancelled_vouchers`; if a
 used reward can't be cancelled the void is refused. Closing stores
 expected, counted and variance (counted - expected); a note is required
-when they differ.
+when they differ. Opening: while no shift is open `GET /staff/shift`
+returns `last_count` (the cash counted at the last close, null before the
+first), and a float other than it needs `opening_note` (400 otherwise),
+stored on the shift and in the `SHIFT_OPENED` audit entry.
 ```bash
-curl http://localhost:8080/api/v1/staff/shift -H "Authorization: Bearer <Staff_Token>"     # open shift + running totals, or null
+curl http://localhost:8080/api/v1/staff/shift -H "Authorization: Bearer <Staff_Token>"     # open shift + running totals, or null + last_count
 curl -X POST http://localhost:8080/api/v1/staff/shift/open -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" -d '{"opening_float": 2000}'
+curl -X POST http://localhost:8080/api/v1/staff/shift/open -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
+  -d '{"opening_float": 1500, "opening_note": "500 taken to the bank"}'   # float differs from last_count
 curl -X POST http://localhost:8080/api/v1/staff/shift/close -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
   -d '{"counted_cash": 4890, "notes": "gave 10 THB too much change"}'
 curl http://localhost:8080/api/v1/admin/shifts -H "Authorization: Bearer <Manager_Token>"   # last 30 days, ?from=&to=
