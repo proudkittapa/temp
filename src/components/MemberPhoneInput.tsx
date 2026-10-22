@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { User, UserRole } from '../types';
+import { MemberType, User, UserRole } from '../types';
 import { StorageService, memberTierLabel, normalizePhone } from '../mockData';
 import * as api from '../api';
 
@@ -42,7 +42,7 @@ export default function MemberPhoneInput({ id, value, onChange, onPick, placehol
           .filter(u => u.role === UserRole.CUSTOMER && u.isActive !== false &&
             (!q || (digits && normalizePhone(u.phone).startsWith(digits)) || u.name.toLowerCase().includes(name)))
           .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 20)
-          .map(u => ({ id: u.id, name: u.name, phone: normalizePhone(u.phone), memberType: u.memberType, points: u.points ?? 0 }));
+          .map(u => ({ id: u.id, name: u.name, phone: normalizePhone(u.phone), memberType: u.memberType ?? MemberType.NORMAL, points: u.points ?? 0 }));
       }
       if (stale) return;
       // A full phone number that belongs to a member links them even

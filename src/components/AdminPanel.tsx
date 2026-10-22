@@ -3,8 +3,7 @@ import * as XLSX from 'xlsx';
 import { 
   Court, CourtType, PricingRule, DayType, PriceType, 
   User, UserRole, MemberType, Booking, BookingStatus, 
-  Payment, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig, LedgerEntryType
-} from '../types';
+  Payment, Product, ProductCat, Order, OrderStatus, OrderType, AuditLog, DayOff, MemberDiscountRule, PricingConfig, LedgerEntryType, AddAuditLog } from '../types';
 import { StorageService, findClosure, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, isHourOffPeak, courtsConflict, memberTierLabel, openingHours, openSlotHours, isPaidBooking, lastBookableDate, roundBaht, formatBaht, localDateOf, bangkokStamp, formatDateTime } from '../mockData';
 import * as api from '../api';
 import { notify, ask, askText } from './Dialog';
@@ -20,7 +19,7 @@ import { Settings, Users, FileDown, Search, ShieldCheck } from 'lucide-react';
 const hoursPerDay = () => { const { open, close } = openingHours(); return close - open; };
 
 interface AdminPanelProps {
-  onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
+  onAddAuditLog: AddAuditLog;
   triggerRefresh: number;
   onRefreshAll: () => void;
 }
@@ -110,7 +109,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   // Discount rule edit state
   const [editingDiscounts, setEditingDiscounts] = useState<Record<string, { name: string; discountPercent: number; isActive: boolean }>>({});
 
-  const handleStageDiscountField = (id: string, field: 'name' | 'discountPercent' | 'isActive', value: any) => {
+  const handleStageDiscountField = (id: string, field: 'name' | 'discountPercent' | 'isActive', value: string | boolean) => {
     setEditingDiscounts(prev => {
       const current = prev[id] || {
         name: memberDiscounts.find(d => d.id === id)?.name || '',
@@ -118,11 +117,11 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         isActive: memberDiscounts.find(d => d.id === id)?.isActive ?? true
       };
       
-      let processedVal = value;
+      let processedVal: string | number | boolean = value;
       if (field === 'discountPercent') {
         // Below 100%: a free booking would need a 0.00 THB PromptPay QR,
         // which banking apps reject (the server enforces the same limit).
-        processedVal = Math.min(99, Math.max(0, parseInt(value, 10) || 0));
+        processedVal = Math.min(99, Math.max(0, parseInt(String(value), 10) || 0));
       }
       
       return {
@@ -693,7 +692,6 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
   // the admin made) in API mode, the built-ins in browser-only mode.
   const [roles, setRoles] = useState<api.RoleView[]>(BUILTIN_ROLES);
   const roleName = (id: string) => roles.find(r => r.id === id)?.name ?? id;
-  const canEditPricing = can(actingAdmin, 'edit_pricing');
   const canManageAccounts = can(actingAdmin, 'manage_staff');
   const canManageCourts = can(actingAdmin, 'manage_courts');
   const adminTabAllowed = (t: AdminTab) => can(actingAdmin, ...ADMIN_TAB_PERMISSIONS[t]);
@@ -1310,7 +1308,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         const wb = XLSX.read(evt.target?.result as ArrayBuffer, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json<any>(ws);
+        const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
 
         if (data.length === 0) {
           notify('ไม่พบข้อมูลรายการสินค้าในสเปรดชีต Excel นี้');
@@ -1326,7 +1324,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         const knownNames = new Set((api.USE_BACKEND ? products : currentProds).map(p => p.name.trim().toLowerCase()));
         const skipped: string[] = [];
 
-        data.forEach((row: any) => {
+        data.forEach(row => {
           // The first column that has a value - a 0 price or 0 stock is a
           // value, not a missing cell.
           const pick = (...keys: string[]) => {
@@ -1410,8 +1408,8 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
         } else {
           notify(`ไม่มีสินค้าใหม่ให้นำเข้า (หัวคอลัมน์ต้องตรงกับไฟล์ตัวอย่างด้านบน)${skippedNote}`);
         }
-      } catch (err: any) {
-        notify('เกิดข้อผิดพลาดขณะแกะไฟล์สเปรดชีต Excel: ' + err.message);
+      } catch (err) {
+        notify('เกิดข้อผิดพลาดขณะแกะไฟล์สเปรดชีต Excel: ' + (err instanceof Error ? err.message : String(err)));
       }
     };
     reader.readAsArrayBuffer(file);
@@ -1676,7 +1674,7 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                       <XAxis dataKey="name" fontSize={11} stroke="#64748b" />
                       <YAxis fontSize={11} stroke="#64748b" />
                       <Tooltip />
-                      <Legend fontSize={10} />
+                      <Legend wrapperStyle={{ fontSize: 10 }} />
                       <Bar dataKey="รายได้ค่าคอร์ท" fill="#15803d" radius={[4, 4, 0, 0]} />
                       <Bar dataKey="รายได้เครื่องดื่ม/เช่าแร็ก" fill="#38bdf8" radius={[4, 4, 0, 0]} />
                     </BarChart>
@@ -3225,8 +3223,8 @@ export default function AdminPanel({ onAddAuditLog, triggerRefresh, onRefreshAll
                             </span>
                             <div className="divide-y divide-slate-800">
                               {changedProperties.map(key => {
-                                const beforeVal = (log.before as any)?.[key];
-                                const afterVal = (log.after as any)?.[key];
+                                const beforeVal = log.before?.[key];
+                                const afterVal = log.after?.[key];
                                 return (
                                   <div key={key} className="py-1 flex flex-col md:flex-row md:items-center justify-between gap-1 text-slate-300">
                                     <span className="font-extrabold text-slate-400 text-[11px] bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">{key}</span>

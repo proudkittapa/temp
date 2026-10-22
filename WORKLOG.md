@@ -18,6 +18,34 @@ Entry format:
 
 ---
 
+## 2026-10-22 — TypeScript strict mode on
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (step 1 of the code-quality plan)
+- **Commit(s):** this commit (on `main`, parent `4c1c3c5`)
+- **Changed:**
+  - devDependencies `@types/react` 19.2.18 and `@types/react-dom` 19.2.7
+    (pinned). Without them every component was untyped (JSX, hooks, events
+    all `any`), which is where TODO's "~3,500 strict errors" came from.
+  - `tsconfig.json`: `strict`, `noUnusedLocals`, `noFallthroughCasesInSwitch`.
+    `npm run lint` (tsc) is clean.
+  - Real errors fixed:
+    - `AddAuditLog` type in `types.ts`, shared by App and the four screens
+      (they declared a looser, different signature); audit target types
+      gain `Role` and `Voucher`, which screens already logged.
+    - Chart `<Legend fontSize>` is not a prop -> `wrapperStyle`.
+    - `MemberPhoneInput` local mode: missing member tier -> NORMAL.
+    - The explicit `any`s in AdminPanel (Excel import rows, error, audit
+      diff, discount field) and StaffPOS (LINE messages) typed.
+    - Unused `React` imports and an unused `canEditPricing`.
+- **Verified:** `tsc` 0 errors, `vitest` 60/60, `vite build` (API mode)
+  OK; Playwright smoke on customer, staff (member search dropdown) and
+  admin (dashboard chart legend) screens: no page errors.
+- **Notes:** the cloud test box can't reach cdn.sheetjs.com, so its local
+  `node_modules` has xlsx 0.18.5 for type checking; the repo still pins
+  0.20.3 (unchanged). `noImplicitReturns` left off (15 style-only hits).
+
+---
+
 ## 2026-10-22 — Undo a no-show
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (owner: "staff can undo no show")

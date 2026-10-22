@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // In-page dialogs replacing window.alert/confirm/prompt: they match the app,
 // work in in-app browsers (LINE) that block native pop-ups, and let one

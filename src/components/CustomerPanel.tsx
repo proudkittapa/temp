@@ -2,8 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Court, CourtType, PriceType, Booking, BookingStatus, 
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayOff,
-  User, UserRole, LedgerEntryType
-} from '../types';
+  User, UserRole, LedgerEntryType, AddAuditLog } from '../types';
 import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, memberTierLabel, normalizePhone, openSlotHours, formatBaht, roundBaht, lastBookableDate, isPaidBooking, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, FREE_HOUR_REWARD_IDS, formatDate, formatDateTime, businessInfo } from '../mockData';
 import { prepareSlipImage, SlipImageError } from '../slipImage';
 import { useLiveLoad, useLiveTick } from '../useLiveTick';
@@ -19,7 +18,7 @@ const PAYMENT_HOLD_MINUTES = 30;
 import { Calendar, CheckCircle, AlertTriangle, MessageSquare, ToggleRight, Shield, FileImage, Sparkles, UserCheck } from 'lucide-react';
 
 interface CustomerPanelProps {
-  onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
+  onAddAuditLog: AddAuditLog;
   triggerRefresh: number;
   onRefreshAll: () => void;
   // One login for everyone: a staff/admin account signed in here is handed

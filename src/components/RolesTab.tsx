@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import * as api from '../api';
 import { PERMISSIONS } from '../permissions';
-import { UserRole } from '../types';
+import { UserRole, AddAuditLog } from '../types';
 import { notify, ask } from './Dialog';
 
 // Settings tab "สิทธิ์และบทบาท": roles are named permission sets. The four
@@ -12,7 +12,7 @@ export default function RolesTab({ roles, editable, onChanged, onAddAuditLog }: 
   roles: api.RoleView[];
   editable: boolean; // false in browser-only mode: built-in roles only
   onChanged: () => void;
-  onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
+  onAddAuditLog: AddAuditLog;
 }) {
   const [editing, setEditing] = useState<{ id?: string; name: string; permissions: string[]; isBuiltin: boolean } | null>(null);
   const [saving, setSaving] = useState(false);

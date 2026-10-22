@@ -284,7 +284,7 @@ export interface AuditLog {
   userId: string;
   userName: string;
   action: string;
-  targetType: 'Booking' | 'Payment' | 'Order' | 'Court' | 'PricingRule' | 'PricingConfig' | 'User' | 'Product' | 'DayOff' | 'Shift' | 'Report';
+  targetType: 'Booking' | 'Payment' | 'Order' | 'Court' | 'PricingRule' | 'PricingConfig' | 'User' | 'Product' | 'DayOff' | 'Shift' | 'Report' | 'Role' | 'Voucher';
   targetId: string;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
@@ -294,6 +294,16 @@ export interface AuditLog {
   reason?: string;
   createdAt: string;
 }
+
+// What the screens call to record an audit entry (App's handleAddNewAuditLog).
+export type AddAuditLog = (
+  action: string,
+  targetType: AuditLog['targetType'],
+  targetId: string,
+  before?: object | null, // a snapshot (any record, e.g. the Booking)
+  after?: object | null,
+  reason?: string
+) => void;
 
 // Simulated LINE API Msg
 export interface LineMessage {

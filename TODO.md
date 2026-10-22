@@ -174,11 +174,11 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] Unbounded lists: `GET /admin/users` returns everyone; audit log does a full COUNT + 4-column LIKE per page (use has_more + keyset paging); monthly export loads the month in memory with an IN list that fails past ~65k orders (join on date range, stream CSV); `GET /admin/shifts` = 4 queries per shift (store cash_deposits at close, skip closed shifts).
 - [ ] Checkout makes 4-7 round trips per cart line under locks - lock all products in one query, bulk update, batch insert items.
 - [ ] Pricing config loaded 3× per booking; roles + user reloaded on every request - small in-process caches invalidated on admin writes.
-- [ ] Frontend: every action refetches everything (~13 requests per sale) - per-resource queries (e.g. TanStack Query) with targeted invalidation; `request()` timeout/AbortController; grid cells read localStorage and recompute on every keystroke - memoise the slot matrix, `calculateLedger` once per render.
+- [ ] Frontend: every action refetches everything (~13 requests per sale) - per-resource queries (e.g. TanStack Query) with targeted invalidation; ~~`request()` timeout~~ (GETs time out after 20 s since 2026-10-21); grid cells read localStorage and recompute on every keystroke - memoise the slot matrix, `calculateLedger` once per render.
 - [ ] Audit rows store full order/product snapshots and are never pruned - store ids/totals, partition or archive by month.
 
 ### Structure / debt
-- [ ] React type checking is off (no `@types/react`, no `strict`; `--strict` = ~3,500 errors) - add types, enable strictNullChecks then strict, file by file. Do this before splitting the big files.
+- [x] React type checking (done 2026-10-22): `@types/react`/`@types/react-dom` added; `strict`, `noUnusedLocals`, `noFallthroughCasesInSwitch` on in `tsconfig.json` (`npm run lint` = 0 errors). The ~3,500 errors were nearly all from React being untyped; 8 real ones fixed. Left off: `noImplicitReturns` (15, style only).
 - [ ] Pricing/availability/drawer rules exist in Go and TypeScript - server returns the availability matrix (status, price, reason) and error codes instead of English text matched by ~130 regexes.
 - [ ] Two data modes (110 `USE_BACKEND` branches) - one DataSource interface, or drop browser-only mode for a Docker demo.
 - [ ] Split StaffPOS / AdminPanel / CustomerPanel (2-3.5k lines each) by tab.

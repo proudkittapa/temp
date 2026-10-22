@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { UserRole, AuditLog } from './types';
+import { useState, useEffect } from 'react';
+import { UserRole, AuditLog, AddAuditLog } from './types';
 import { initializeState, StorageService, formatDateTime } from './mockData';
 import CustomerPanel from './components/CustomerPanel';
 import StaffPOS from './components/StaffPOS';
@@ -84,7 +84,7 @@ export default function App() {
   };
 
   // Helper function to append to Audit Log (Module 6 Anti-Fraud Compliance)
-  const handleAddNewAuditLog = (action: string, targetType: AuditLog['targetType'], targetId: string, before?: Record<string, unknown> | null, after?: Record<string, unknown> | null, reason?: string) => {
+  const handleAddNewAuditLog: AddAuditLog = (action, targetType, targetId, before, after, reason) => {
     const currentLogs = StorageService.get<AuditLog[]>('audit_logs', []);
     const sessionUser = api.USE_BACKEND
       ? api.getSession(currentRole === UserRole.CUSTOMER ? 'customer' : currentRole === UserRole.ADMIN ? 'admin' : 'staff')?.user
@@ -101,8 +101,9 @@ export default function App() {
       action,
       targetType,
       targetId,
-      before: before ?? undefined,
-      after: after ?? undefined,
+      // Snapshots are plain objects, stored as records.
+      before: (before ?? undefined) as Record<string, unknown> | undefined,
+      after: (after ?? undefined) as Record<string, unknown> | undefined,
       reason,
       createdAt: new Date().toISOString()
     };

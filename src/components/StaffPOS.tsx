@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Court, CourtType, Booking, BookingStatus, Payment, PaymentStatus,
-  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift, PointsLedgerEntry
-} from '../types';
+  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, PriceType, DayOff, User, MemberType, LedgerEntryType, Shift, PointsLedgerEntry, LineMessage, AddAuditLog } from '../types';
 import { StorageService, findClosure, getTodayDateStr, calculatePrice, isHourOffPeak, FREE_HOUR_REWARD_IDS, isCourtSlotAvailable, findConflictingBooking, bookingGroupOf, normalizePhone, slotTiming, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, openSlotHours, formatBaht, roundBaht, isPaidBooking, localDateOf, formatDate, formatDateTime, businessInfo, formatTaxId, findNoShow, resalePrice, noShowOpenAt } from '../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import * as api from '../api';
@@ -15,7 +14,7 @@ import { Check, X, ShoppingCart, Activity, AlertTriangle, ShieldCheck, Receipt, 
 
 interface StaffPOSProps {
   currentUserRole: UserRole;
-  onAddAuditLog: (action: string, targetType: string, targetId: string, before?: any, after?: any) => void;
+  onAddAuditLog: AddAuditLog;
   triggerRefresh: number;
   onRefreshAll: () => void;
 }
@@ -362,7 +361,7 @@ export default function StaffPOS({ currentUserRole, onAddAuditLog, triggerRefres
 
   // Standard line push simulation
   const pushLineMessage = (phone: string, text: string, type: "CREATED" | "CONFIRMED" | "REMINDER" | "CANCELLED") => {
-    const rawLine = StorageService.get<any[]>('line_messages', []);
+    const rawLine = StorageService.get<LineMessage[]>('line_messages', []);
     const newMsg = {
       id: 'lm-' + Date.now(),
       timestamp: new Date().toISOString(),
