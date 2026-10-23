@@ -17,9 +17,12 @@ export default function PricingTab() {
     handleDeletePricingRule,
     handleSaveBusiness,
     handleSaveMaxAdvanceDays,
+    handleSaveNoShowRules,
     handleSaveOpeningHours,
     handleSavePricingRule,
     maxAdvanceDays,
+    noShowGraceSetting,
+    noShowResaleSetting,
     openHourSetting,
     ruleCourtType,
     ruleDayType,
@@ -36,6 +39,8 @@ export default function PricingTab() {
     setFilterLabel,
     setFilterPriceType,
     setMaxAdvanceDays,
+    setNoShowGraceSetting,
+    setNoShowResaleSetting,
     setOpenHourSetting,
     setRuleCourtType,
     setRuleDayType,
@@ -55,6 +60,16 @@ export default function PricingTab() {
             className="w-20 border border-slate-300 rounded px-2 py-1" />
           <span className="text-slate-600">วัน (พนักงานจองที่เคาน์เตอร์ได้ไม่จำกัด)</span>
           <button type="button" disabled={busy} onClick={guarded(handleSaveMaxAdvanceDays)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
+        </div>
+        <div id="no-show-setting" className="mt-2 flex flex-wrap items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
+          <span className="text-slate-600">ลูกค้าไม่มาใช้สนาม: กดบันทึกได้หลังเริ่ม</span>
+          <input type="number" min={0} max={120} value={noShowGraceSetting} onChange={e => setNoShowGraceSetting(Number(e.target.value))}
+            className="w-16 border border-slate-300 rounded px-2 py-1" />
+          <span className="text-slate-600">นาที · ขายชั่วโมงนั้นต่อในราคา</span>
+          <input type="number" min={1} max={100} value={noShowResaleSetting} onChange={e => setNoShowResaleSetting(Number(e.target.value))}
+            className="w-16 border border-slate-300 rounded px-2 py-1" />
+          <span className="text-slate-600">% ของราคาปกติ</span>
+          <button type="button" disabled={busy} onClick={guarded(handleSaveNoShowRules)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึก</button>
         </div>
         <div id="opening-hours-setting" className="mt-2 flex flex-wrap items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
           <span className="text-slate-600">เวลาเปิดให้จอง</span>

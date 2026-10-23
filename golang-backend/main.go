@@ -793,6 +793,13 @@ func expireUnpaidBookingsLoop(ctx context.Context, db *gorm.DB, bookings *servic
 		})
 		runJob(ctx, "pruning old failed logins", auth.PruneLoginFailures)
 		runJob(ctx, "pruning old idempotency keys", func(ctx context.Context) error { return handler.PruneIdempotencyKeys(ctx, db) })
+		runJob(ctx, "pruning old audit log entries", func(ctx context.Context) error {
+			n, err := service.PruneAuditLogs(ctx, db)
+			if n > 0 {
+				log.Printf("Deleted %d audit log entries older than %d days.\n", n, service.AuditRetentionDays())
+			}
+			return err
+		})
 		select {
 		case <-ctx.Done():
 			return

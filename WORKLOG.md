@@ -18,6 +18,37 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Owner decisions: cancel after start logged, no-show rules in Admin, audit retention
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (answers to the 8 open decisions; this commit: 3, 7, 8)
+- **Commit(s):** this commit (on `main`, parent `5f82fd8`)
+- **Decided, not changed:** 1 no bank reference at slip approval; 2 waiting
+  slips are not auto-rejected.
+- **Changed:**
+  - **3. Cancel after the hour started: allowed, logged.** `CancelBookings`
+    counts cancelled hours that had started (`hourStarted`, Bangkok) into
+    `started_hours` in its result and the `BOOKING_CANCELLED` audit entry;
+    the counter's cancel dialog warns first.
+  - **7. No-show rules set by admins:** `pricing_configs.no_show_resale_percent`
+    (1-100) and `no_show_grace_minutes` (0-120), saved with
+    `PUT /admin/pricing-config` (`ConfigInput`, replaces the 4 loose
+    arguments); unset = the `NO_SHOW_*` env settings as before. Used for the
+    freed hour's price (`planSlots`) and the no-show button (`MarkNoShow`);
+    `/pricing` reports the values in effect. Admin -> Pricing has the
+    fields (browser-only mode stores them locally).
+  - **8. Audit log kept two years:** `AUDIT_RETENTION_DAYS` (default 730);
+    the minute job deletes older entries, 5,000 at a time
+    (`service.PruneAuditLogs`).
+  - Docs: `golang-backend/.env.example`.
+- **Verified:** `go vet`, `go test ./...` (new `TestHourStarted`), DB tests
+  (new: audit retention keeps 700-day, deletes 800-day; no-show resale 0 %
+  refused, 80 %/20 min saved and reported, a freed 180 THB hour re-sells at
+  144), `tsc`, vitest.
+- **Not done / follow-ups:** 5 (cash refunds from the drawer) and 6 (kept
+  deposits as income) next; 4 (login lockout) waits for the owner's choice.
+
+---
+
 ## 2026-10-23 — Owner rules: hours per booking, walk-in expiry, banked cash, voucher validity
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (answers to "any logic doesn't make sense": 1 keep, 2 keep, 3/4/5/6 change)

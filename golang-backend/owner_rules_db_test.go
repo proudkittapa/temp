@@ -100,3 +100,63 @@ func TestVoucherValidFor365Days(t *testing.T) {
 		t.Errorf("voucher valid for %.1f days, want 365", days)
 	}
 }
+
+// Audit entries older than AUDIT_RETENTION_DAYS (default 730) are deleted,
+// newer ones kept.
+func TestAuditRetention(t *testing.T) {
+	e := raceSetup(t)
+	ctx := context.Background()
+	old := model.AuditLog{ID: "log-retention-old", UserID: "test", UserName: "Test", Action: "TEST", TargetType: "Test", TargetID: "x", CreatedAt: time.Now().AddDate(0, 0, -800)}
+	recent := model.AuditLog{ID: "log-retention-new", UserID: "test", UserName: "Test", Action: "TEST", TargetType: "Test", TargetID: "x", CreatedAt: time.Now().AddDate(0, 0, -700)}
+	if err := e.db.Create(&old).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.Create(&recent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.PruneAuditLogs(ctx, e.db); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	e.db.Model(&model.AuditLog{}).Where("id IN ?", []string{old.ID, recent.ID}).Pluck("id", &left)
+	if len(left) != 1 || left[0] != recent.ID {
+		t.Errorf("after pruning: %v, want only the 700-day-old entry", left)
+	}
+}
+
+// The no-show re-sale price is an admin setting: saved, reported to the
+// screens, and used for the freed hour's price.
+func TestNoShowResaleIsAdminSetting(t *testing.T) {
+	e := raceSetup(t)
+	ctx := context.Background()
+	pricing := service.NewPricingAdminService(e.db)
+	zero := 0
+	if _, err := pricing.UpdateConfig(ctx, service.ConfigInput{NoShowResalePercent: &zero}, "admin-a", "Admin A"); !errors.Is(err, service.ErrInvalidBooking) {
+		t.Fatalf("0 %%: %v, want ErrInvalidBooking", err)
+	}
+	pct, grace := 80, 20
+	if _, err := pricing.UpdateConfig(ctx, service.ConfigInput{NoShowResalePercent: &pct, NoShowGraceMinutes: &grace}, "admin-a", "Admin A"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		e.db.Model(&model.PricingConfig{}).Where("id = ?", "global").Updates(map[string]any{"no_show_resale_percent": nil, "no_show_grace_minutes": nil})
+	})
+	snap, err := pricing.Snapshot(ctx)
+	if err != nil || snap.NoShowResalePercent != 80 || snap.NoShowGraceMinutes != 20 {
+		t.Fatalf("snapshot: %+v %v - want 80 %%, 20 min", snap, err)
+	}
+	// A no-show's hour (weekday off-peak badminton, 180 THB) re-sells at 80 %.
+	date, times := newSlots().take(t, 1)
+	first, err := e.bookings.CreateBookings(ctx, onlineBooking(e.newCustomer(t, 0).ID, date, "bad-7", times[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.db.Model(&model.Booking{}).Where("id = ?", first.Bookings[0].ID).Update("status", model.BookingNoShow)
+	again, err := e.bookings.CreateBookings(ctx, onlineBooking(e.newCustomer(t, 0).ID, date, "bad-7", times[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.TotalAmount != 144 {
+		t.Errorf("re-sold no-show hour costs %.2f, want 144 (80 %% of 180)", again.TotalAmount)
+	}
+}

@@ -66,6 +66,22 @@ const (
 // than the customer's normal price (see noShowFreedShare for half courts).
 func NoShowGraceMinutes() int { return envIntRange("NO_SHOW_GRACE_MINUTES", 15, 0, 120) }
 
+// The no-show rules in effect: the admin's setting (PricingConfig), else
+// the server's NO_SHOW_* settings.
+func noShowResale(cfg *model.PricingConfig) int {
+	if cfg != nil && cfg.NoShowResalePercent != nil {
+		return *cfg.NoShowResalePercent
+	}
+	return NoShowResalePercent()
+}
+
+func noShowGrace(cfg *model.PricingConfig) int {
+	if cfg != nil && cfg.NoShowGraceMinutes != nil {
+		return *cfg.NoShowGraceMinutes
+	}
+	return NoShowGraceMinutes()
+}
+
 // MaxHoursPerBooking is how many one-hour slots one booking may hold
 // (MAX_HOURS_PER_BOOKING, default 3); the screens get it with the pricing.
 func MaxHoursPerBooking() int { return envIntRange("MAX_HOURS_PER_BOOKING", 3, 1, 24) }
@@ -648,7 +664,7 @@ func (s *BookingService) planSlots(ctx context.Context, input CreateBookingInput
 			// The freed part at the resale rate, the rest (the other half of
 			// a full court) at the normal price - never above the normal
 			// price for this customer.
-			if resale := RoundBaht(list*freed*float64(NoShowResalePercent())/100 + amount*(1-freed)); resale < amount {
+			if resale := RoundBaht(list*freed*float64(noShowResale(cfg))/100 + amount*(1-freed)); resale < amount {
 				amount = resale
 			}
 		}
@@ -692,6 +708,19 @@ func (s *BookingService) checkNotPast(date string, slots []SlotRequest, walkIn b
 		}
 	}
 	return nil
+}
+
+// hourStarted: the hour starting at start on date has begun (Bangkok).
+func (s *BookingService) hourStarted(date, start string) bool {
+	day, err := time.ParseInLocation("2006-01-02", date, Bangkok)
+	if err != nil {
+		return false
+	}
+	_, hour, err := hourSlotEnd(start)
+	if err != nil {
+		return false
+	}
+	return !day.Add(time.Duration(hour) * time.Hour).After(s.now().In(Bangkok))
 }
 
 func customerContact(u *model.User, w *WalkInDetails) (*string, *string) {

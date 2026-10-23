@@ -55,6 +55,8 @@ func (s *PricingAdminService) Snapshot(ctx context.Context) (*PricingSnapshot, e
 	if err := db.First(&snap.Config, "id = ?", "global").Error; err != nil {
 		return nil, fmt.Errorf("failed to load pricing config: %w", err)
 	}
+	// The rules in effect: the admin's setting, else the server's.
+	snap.NoShowGraceMinutes, snap.NoShowResalePercent = noShowGrace(&snap.Config), noShowResale(&snap.Config)
 	if err := db.Order("member_type").Find(&snap.MemberDiscounts).Error; err != nil {
 		return nil, err
 	}
@@ -206,15 +208,40 @@ func validHourRange(start, end int) bool { return start >= 0 && end <= 24 && sta
 // MaxAdvanceDaysLimit bounds PricingConfig.MaxAdvanceDays.
 const MaxAdvanceDaysLimit = 365
 
-// UpdateConfig changes the global pricing settings: the half-court rate
-// (FR-2.4) and/or how many days ahead customers may book online. A nil
-// field is left as it is.
-func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent *float64, maxAdvanceDays *int, openHour, closeHour *int, actorID, actorName string) (*model.PricingConfig, error) {
+// ConfigInput is a change to the global settings; a nil field is left as
+// it is.
+type ConfigInput struct {
+	HalfCourtRatePercent *float64 `json:"half_court_rate_percent"`
+	MaxAdvanceDays       *int     `json:"max_advance_days"`
+	OpenHour             *int     `json:"open_hour"`
+	CloseHour            *int     `json:"close_hour"`
+	NoShowResalePercent  *int     `json:"no_show_resale_percent"`
+	NoShowGraceMinutes   *int     `json:"no_show_grace_minutes"`
+}
+
+// Empty: nothing to change.
+func (in ConfigInput) Empty() bool {
+	return in.HalfCourtRatePercent == nil && in.MaxAdvanceDays == nil && in.OpenHour == nil && in.CloseHour == nil &&
+		in.NoShowResalePercent == nil && in.NoShowGraceMinutes == nil
+}
+
+// UpdateConfig changes the global settings: the half-court rate (FR-2.4),
+// how many days ahead customers may book online, opening hours and the
+// no-show rules.
+func (s *PricingAdminService) UpdateConfig(ctx context.Context, in ConfigInput, actorID, actorName string) (*model.PricingConfig, error) {
+	halfCourtPercent, maxAdvanceDays, openHour, closeHour := in.HalfCourtRatePercent, in.MaxAdvanceDays, in.OpenHour, in.CloseHour
 	if halfCourtPercent != nil && (*halfCourtPercent <= 0 || *halfCourtPercent > 100) {
 		return nil, fmt.Errorf("%w: half_court_rate_percent must be between 1 and 100", ErrInvalidBooking)
 	}
 	if maxAdvanceDays != nil && (*maxAdvanceDays < 1 || *maxAdvanceDays > MaxAdvanceDaysLimit) {
 		return nil, fmt.Errorf("%w: max_advance_days must be between 1 and %d", ErrInvalidBooking, MaxAdvanceDaysLimit)
+	}
+	// 0 % would make a no-show hour free (a 0-baht QR).
+	if in.NoShowResalePercent != nil && (*in.NoShowResalePercent < 1 || *in.NoShowResalePercent > 100) {
+		return nil, fmt.Errorf("%w: no_show_resale_percent must be between 1 and 100", ErrInvalidBooking)
+	}
+	if in.NoShowGraceMinutes != nil && (*in.NoShowGraceMinutes < 0 || *in.NoShowGraceMinutes > 120) {
+		return nil, fmt.Errorf("%w: no_show_grace_minutes must be between 0 and 120", ErrInvalidBooking)
 	}
 	var cfg model.PricingConfig
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
@@ -236,6 +263,12 @@ func (s *PricingAdminService) UpdateConfig(ctx context.Context, halfCourtPercent
 		}
 		if closeHour != nil {
 			cfg.CloseHour = *closeHour
+		}
+		if in.NoShowResalePercent != nil {
+			cfg.NoShowResalePercent = in.NoShowResalePercent
+		}
+		if in.NoShowGraceMinutes != nil {
+			cfg.NoShowGraceMinutes = in.NoShowGraceMinutes
 		}
 		if !validHourRange(cfg.OpenHour, cfg.CloseHour) {
 			return fmt.Errorf("%w: opening hours must satisfy 0 <= open_hour < close_hour <= 24", ErrInvalidBooking)

@@ -3,7 +3,7 @@ import {
   Court, CourtType, PricingRule, DayType, PriceType,
   User, UserRole, MemberType, Booking, Payment, Product, ProductCat, Order, AuditLog, DayOff, MemberDiscountRule, PricingConfig
 } from '../../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, openingHours, expireUnpaidLocal } from '../../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, openingHours, expireUnpaidLocal, noShowRules } from '../../mockData';
 import * as api from '../../api';
 import { can, canUseSettings, BUILTIN_ROLES } from '../../permissions';
 import { useAdminSession } from './sessionActions';
@@ -125,6 +125,9 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
   const [closeHourSetting, setCloseHourSetting] = useState<number>(() => openingHours().close);
 
   // How many days ahead customers may book online (admin setting).
+  // No-show rules (admin setting): re-sale % and minutes before marking.
+  const [noShowResaleSetting, setNoShowResaleSetting] = useState<number>(() => noShowRules().resalePercent);
+  const [noShowGraceSetting, setNoShowGraceSetting] = useState<number>(() => noShowRules().graceMinutes);
   const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(() =>
     StorageService.get<{ maxAdvanceDays?: number }>('pricing_config', {}).maxAdvanceDays ?? 30);
 
@@ -212,6 +215,8 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
         setCloseHourSetting(pricing.config.closeHour ?? 23);
         setAuditLogs(logs);
         setMaxAdvanceDays(pricing.config.maxAdvanceDays ?? 30);
+        setNoShowResaleSetting(pricing.config.noShowResalePercent ?? 50);
+        setNoShowGraceSetting(pricing.config.noShowGraceMinutes ?? 15);
         setBusiness(businessFrom(pricing.config));
         setPricingRules(pricing.rules);
         setMemberDiscounts(pricing.memberDiscounts);
@@ -385,6 +390,10 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
     setCloseHourSetting,
     maxAdvanceDays,
     setMaxAdvanceDays,
+    noShowResaleSetting,
+    setNoShowResaleSetting,
+    noShowGraceSetting,
+    setNoShowGraceSetting,
     emptyBusiness,
     businessFrom,
     business,

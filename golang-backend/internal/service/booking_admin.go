@@ -289,6 +289,9 @@ type CancelResult struct {
 	// points that couldn't be taken back (spent on a reward handed over).
 	CancelledVouchers []string `json:"cancelled_vouchers,omitempty"`
 	PointsShort       int      `json:"points_short,omitempty"`
+	// StartedHours: cancelled hours that had already started (allowed,
+	// owner 2026-10-23 - and recorded in the audit log).
+	StartedHours int `json:"started_hours,omitempty"`
 }
 
 // CancelBookings is the manager/admin cancellation (FR-6.3). bookingID is
@@ -384,6 +387,11 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 			paidAmount = RoundBaht(paidAmount + b.TotalAmount)
 		}
 		res.Cancelled, res.RemainingActive, res.BookingCode = len(cancel), active, root.BookingCode
+		for _, b := range cancel {
+			if s.hourStarted(b.Date, b.StartTime) {
+				res.StartedHours++
+			}
+		}
 
 		rev, err := s.reversePoints(ctx, tx, root.UserID, paidHours, actorID,
 			fmt.Sprintf("%dh of booking %s cancelled: %s", paidHours, root.BookingCode, reason), &root.ID)
@@ -456,7 +464,7 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 			BeforeState: model.AuditJSON(map[string]any{"booking_code": root.BookingCode, "hours": len(cancel)}),
 			AfterState: model.AuditJSON(map[string]any{
 				"cancelled": len(cancel), "refund_amount": res.RefundAmount, "points_reversed": res.PointsReversed, "payment_status": p.Status,
-				"vouchers_cancelled": res.CancelledVouchers, "points_short": res.PointsShort,
+				"vouchers_cancelled": res.CancelledVouchers, "points_short": res.PointsShort, "started_hours": res.StartedHours,
 			}),
 			Reason: &reason, CreatedAt: now,
 		}).Error
@@ -673,7 +681,11 @@ func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, act
 			return err
 		}
 		now := s.now()
-		grace := NoShowGraceMinutes()
+		cfg, err := s.courtRepo.GetPricingConfig(ctx)
+		if err != nil {
+			return err
+		}
+		grace := noShowGrace(cfg)
 		if day.Add(time.Duration(hour)*time.Hour + time.Duration(grace)*time.Minute).After(now) {
 			return fmt.Errorf("%w: a no-show can be marked from %d minutes after the hour starts", ErrInvalidState, grace)
 		}

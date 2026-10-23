@@ -229,6 +229,12 @@ type PricingConfig struct {
 	BusinessPhone   string `json:"business_phone" db:"business_phone" gorm:"column:business_phone"`
 	BusinessTaxID   string `json:"business_tax_id" db:"business_tax_id" gorm:"column:business_tax_id"`
 	VatRegistered   bool   `json:"vat_registered" db:"vat_registered" gorm:"column:vat_registered"`
+	// No-show rules set by admins (owner 2026-10-23): the re-sale price of a
+	// no-show hour (% of the normal price) and the minutes after the hour
+	// starts before staff may mark it. Unset = NO_SHOW_* from the server's
+	// settings (or 50 % / 15 min).
+	NoShowResalePercent *int `json:"no_show_resale_percent,omitempty" db:"no_show_resale_percent" gorm:"column:no_show_resale_percent"`
+	NoShowGraceMinutes  *int `json:"no_show_grace_minutes,omitempty" db:"no_show_grace_minutes" gorm:"column:no_show_grace_minutes"`
 }
 
 // MemberDiscount mirrors the frontend's MemberDiscountRule - one row per

@@ -114,3 +114,15 @@ func TestNoShowFreedShare(t *testing.T) {
 		}
 	}
 }
+
+func TestHourStarted(t *testing.T) {
+	s := &BookingService{now: func() time.Time { return time.Date(2026, 10, 23, 18, 30, 0, 0, Bangkok) }}
+	for _, c := range []struct {
+		date, start string
+		want        bool
+	}{{"2026-10-23", "18:00", true}, {"2026-10-23", "19:00", false}, {"2026-10-22", "22:00", true}, {"2026-10-24", "07:00", false}} {
+		if got := s.hourStarted(c.date, c.start); got != c.want {
+			t.Errorf("hourStarted(%s %s) at 18:30 = %v, want %v", c.date, c.start, got, c.want)
+		}
+	}
+}

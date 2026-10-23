@@ -1,6 +1,6 @@
 import React from 'react';
 import { CourtType, PricingRule, DayType, MemberType, PricingConfig } from '../../types';
-import { StorageService, lastBookableDate } from '../../mockData';
+import { StorageService, lastBookableDate, noShowRules } from '../../mockData';
 import * as api from '../../api';
 import { notify, ask } from '../Dialog';
 import type { AdminPanelCore } from './useAdminPanel';
@@ -19,6 +19,8 @@ export function usePricingActions(deps: AdminPanelCore) {
     filterLabel,
     filterPriceType,
     maxAdvanceDays,
+    noShowGraceSetting,
+    noShowResaleSetting,
     memberDiscounts,
     onAddAuditLog,
     onRefreshAll,
@@ -172,6 +174,28 @@ export function usePricingActions(deps: AdminPanelCore) {
     StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), maxAdvanceDays: days });
     done();
   };
+  // No-show rules: the re-sale price of a no-show hour (% of the normal
+  // price) and how long after the start staff may mark it (owner setting).
+  const handleSaveNoShowRules = () => {
+    const resale = Math.round(Number(noShowResaleSetting));
+    const grace = Math.round(Number(noShowGraceSetting));
+    if (!(resale >= 1 && resale <= 100) || !(grace >= 0 && grace <= 120)) {
+      notify('ราคาขายต่อ 1–100% และเวลารอ 0–120 นาที');
+      return;
+    }
+    const before = noShowRules();
+    const done = () => {
+      onAddAuditLog('PRICING_CONFIG_UPDATED', 'PricingConfig', 'global', { noShowResalePercent: before.resalePercent, noShowGraceMinutes: before.graceMinutes },
+        { noShowResalePercent: resale, noShowGraceMinutes: grace });
+      onRefreshAll();
+      notify(`ตั้งค่าแล้ว: ไม่มาใช้สนาม — กดบันทึกได้หลังเริ่ม ${grace} นาที, ขายต่อในราคา ${resale}% ของราคาปกติ`);
+    };
+    if (api.USE_BACKEND) {
+      return api.setNoShowRules(resale, grace).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+    }
+    StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), noShowResalePercent: resale, noShowGraceMinutes: grace });
+    done();
+  };
   const handleSaveBusiness = () => {
     const b = { name: business.name.trim(), address: business.address.trim(), phone: business.phone.trim(),
       taxId: business.taxId.replace(/\D/g, ''), vatRegistered: business.vatRegistered };
@@ -311,6 +335,7 @@ export function usePricingActions(deps: AdminPanelCore) {
     unpricedHours,
     handleSaveOpeningHours,
     handleSaveMaxAdvanceDays,
+    handleSaveNoShowRules,
     handleSaveBusiness,
     handleSavePricingRule,
     handleDeletePricingRule,

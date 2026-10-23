@@ -820,6 +820,12 @@ export async function daySummary(date: string): Promise<DaySummary> {
   };
 }
 
+// Admin: the no-show rules - re-sale price of a no-show hour (% of the
+// normal price, 1-100) and minutes after the start before it can be marked.
+export async function setNoShowRules(resalePercent: number, graceMinutes: number): Promise<void> {
+  await request('/admin/pricing-config', { method: 'PUT', session: 'admin', body: { no_show_resale_percent: resalePercent, no_show_grace_minutes: graceMinutes } });
+}
+
 // Admin: how many days ahead customers may book online.
 export async function setMaxAdvanceDays(days: number): Promise<void> {
   await request('/admin/pricing-config', { method: 'PUT', session: 'admin', body: { max_advance_days: days } });

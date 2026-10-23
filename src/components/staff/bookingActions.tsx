@@ -2,7 +2,7 @@ import {
   Booking, BookingStatus, Payment, PaymentStatus,
   PaymentMethod, MemberType, LedgerEntryType, PointsLedgerEntry
 } from '../../types';
-import { StorageService, calculatePrice, findConflictingBooking, bookingGroupOf, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, formatBaht, roundBaht, resalePrice, noShowOpenAt } from '../../mockData';
+import { StorageService, calculatePrice, findConflictingBooking, bookingGroupOf, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, formatBaht, roundBaht, resalePrice, noShowOpenAt, slotTiming } from '../../mockData';
 import * as api from '../../api';
 import { notify, ask, dialog } from '../Dialog';
 import type { StaffPOSCore } from './useStaffPOS';
@@ -35,7 +35,9 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
     // Nothing to refund on a free (voucher) hour - the voucher is given back instead.
     const answer = await dialog({
       title: `ยกเลิกการจอง ${booking.bookingCode}`,
-      message: `${booking.date} ${booking.startTime}-${booking.endTime} · ${booking.userName}`,
+      // Allowed after the hour has started (owner 2026-10-23), with a
+      // warning - the server records it in the audit log.
+      message: `${booking.date} ${booking.startTime}-${booking.endTime} · ${booking.userName}${group.some(b => slotTiming(b.date, b.startTime).started) ? '\n⚠️ มีชั่วโมงที่เริ่มเล่นไปแล้ว — การยกเลิกนี้จะถูกบันทึกในประวัติการตรวจสอบ (Audit Log)' : ''}`,
       input: { label: 'เหตุผล (จำเป็น - บันทึกใน Audit Log)', required: true },
       choices: group.length > 1 ? [
         { value: 'all', label: `ยกเลิกทั้งหมด ${group.length} ชั่วโมง` },
