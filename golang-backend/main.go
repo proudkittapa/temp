@@ -388,7 +388,8 @@ func main() {
 
 	// Cancel online bookings left unpaid past the payment hold, so abandoned
 	// checkouts don't block courts forever (and the other periodic jobs).
-	// Stops with ctx; a job already running is allowed to finish.
+	// Stops with ctx: a job running then is cancelled (each is one
+	// transaction, rolled back and simply done again on the next run).
 	background.Add(1)
 	go func() {
 		defer background.Done()
@@ -402,7 +403,8 @@ func main() {
 	}
 
 	// Timeouts, so slow or stalled clients can't hold connections open
-	// (router.Run sets none). WriteTimeout leaves room for a 5 MB slip.
+	// (router.Run sets none). Slip uploads and reports get longer ones of
+	// their own (requestDeadline).
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%s", port),
 		Handler:           router,
@@ -443,9 +445,11 @@ func main() {
 	log.Println("HTTP server stopped. Waiting for background jobs...")
 	jobsDone := make(chan struct{})
 	go func() { background.Wait(); close(jobsDone) }()
+	// Its own limit: the request drain above may have used all of grace.
+	// Jobs were cancelled with ctx, so they end within moments.
 	select {
 	case <-jobsDone:
-	case <-shutdownCtx.Done():
+	case <-time.After(10 * time.Second):
 		log.Println("WARNING: background jobs did not stop in time.")
 	}
 	if err := sqlDB.Close(); err != nil {
@@ -769,26 +773,26 @@ func expireUnpaidBookingsLoop(ctx context.Context, db *gorm.DB, bookings *servic
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
-		runJob("expiring unpaid bookings", func(ctx context.Context) error {
+		runJob(ctx, "expiring unpaid bookings", func(ctx context.Context) error {
 			n, err := bookings.ExpireUnpaidBookings(ctx)
 			if n > 0 {
 				log.Printf("Expired %d unpaid booking group(s) past the %v payment hold.\n", n, service.PaymentHoldDuration)
 			}
 			return err
 		})
-		runJob("completing finished bookings", func(ctx context.Context) error {
+		runJob(ctx, "completing finished bookings", func(ctx context.Context) error {
 			n, err := bookings.CompleteFinishedBookings(ctx)
 			if n > 0 {
 				log.Printf("Marked %d finished booking hour(s) COMPLETED.\n", n)
 			}
 			return err
 		})
-		runJob("expiring vouchers", func(ctx context.Context) error {
+		runJob(ctx, "expiring vouchers", func(ctx context.Context) error {
 			_, err := rewards.ExpireVouchers(ctx)
 			return err
 		})
-		runJob("pruning old failed logins", auth.PruneLoginFailures)
-		runJob("pruning old idempotency keys", func(ctx context.Context) error { return handler.PruneIdempotencyKeys(ctx, db) })
+		runJob(ctx, "pruning old failed logins", auth.PruneLoginFailures)
+		runJob(ctx, "pruning old idempotency keys", func(ctx context.Context) error { return handler.PruneIdempotencyKeys(ctx, db) })
 		select {
 		case <-ctx.Done():
 			return
@@ -799,16 +803,21 @@ func expireUnpaidBookingsLoop(ctx context.Context, db *gorm.DB, bookings *servic
 
 // runJob runs one background job with a time limit (a lock wait stuck on a
 // hung request is cancelled instead of stopping every later run) and
-// recovers a panic, so one bad job can't take the server down.
-func runJob(name string, job func(ctx context.Context) error) {
+// recovers a panic, so one bad job can't take the server down. It is
+// skipped, or cancelled, once parent is (shutdown), so no job is still
+// using the database when the pool is closed.
+func runJob(parent context.Context, name string, job func(ctx context.Context) error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("ERROR: background job %q panicked: %v\n", name, r)
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	if parent.Err() != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 45*time.Second)
 	defer cancel()
-	if err := job(ctx); err != nil {
+	if err := job(ctx); err != nil && parent.Err() == nil {
 		log.Printf("Warning: %s failed: %v\n", name, err)
 	}
 }
@@ -1145,6 +1154,16 @@ func requestDeadline(c *gin.Context) {
 		limit = 2 * time.Minute // the photo may come over a slow phone connection
 	case strings.Contains(p, "/admin/report") || strings.Contains(p, "/admin/dashboard") || strings.Contains(p, "/export"):
 		limit = 90 * time.Second
+	}
+	// The server's ReadTimeout/WriteTimeout (60 s, from the start of the
+	// request) would cut a longer one off first - a slow slip upload read
+	// as "missing file", a finished report never sent. Give such a request
+	// its own connection limits a little past its deadline.
+	if limit > 30*time.Second {
+		rc := http.NewResponseController(c.Writer)
+		until := time.Now().Add(limit + 15*time.Second)
+		_ = rc.SetReadDeadline(until) // not supported in tests' recorders - fine
+		_ = rc.SetWriteDeadline(until)
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), limit)
 	defer cancel()

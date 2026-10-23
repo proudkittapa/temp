@@ -75,7 +75,13 @@ func (s *UserService) ListUsers(ctx context.Context, role, search string, limit,
 	if len([]rune(search)) > 100 {
 		return []model.User{}, false, nil
 	}
-	return s.usrRepo.FetchPage(ctx, repository.UserFilter{Role: role, Search: search, PhoneDigits: partialPhone(search), Limit: limit, Offset: offset})
+	// Phone digits only for a search that is a (part of a) phone number:
+	// the digits of "somchai1" would match every phone with a 1 in it.
+	digits := ""
+	if phoneLike(search) {
+		digits = partialPhone(search)
+	}
+	return s.usrRepo.FetchPage(ctx, repository.UserFilter{Role: role, Search: search, PhoneDigits: digits, Limit: limit, Offset: offset})
 }
 
 // MemberMatch is what the counter sees when it looks up a customer to give
@@ -109,6 +115,23 @@ func (s *UserService) SearchMembers(ctx context.Context, q string) ([]MemberMatc
 	}
 	err := tx.Order("name").Limit(20).Select("id, name, phone, member_type, points").Scan(&out).Error
 	return out, err
+}
+
+// phoneLike: q has digits and nothing but digits, spaces, dashes, dots,
+// parentheses and a leading + ("081-234", "+66 81", "(02) 123").
+func phoneLike(q string) bool {
+	q = strings.TrimSpace(q)
+	digits := 0
+	for i, r := range q {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r == ' ' || r == '-' || r == '.' || r == '(' || r == ')' || (r == '+' && i == 0):
+		default:
+			return false
+		}
+	}
+	return digits > 0
 }
 
 // partialPhone is NormalizePhone for a number still being typed: a leading

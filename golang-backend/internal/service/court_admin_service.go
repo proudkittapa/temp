@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
@@ -46,7 +47,7 @@ type CourtInput struct {
 
 func cleanCourtName(name string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || len(name) > 100 {
+	if name == "" || utf8.RuneCountInString(name) > 100 {
 		return "", fmt.Errorf("%w: court name is required (max 100 characters)", ErrInvalidBooking)
 	}
 	return name, nil

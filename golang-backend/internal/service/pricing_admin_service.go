@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
@@ -290,7 +291,7 @@ func (s *PricingAdminService) UpdateBusiness(ctx context.Context, in BusinessInf
 		return -1
 	}, in.TaxID)
 	switch {
-	case len(in.Name) > 200 || len(in.Address) > 500 || len(in.Phone) > 30:
+	case utf8.RuneCountInString(in.Name) > 200 || utf8.RuneCountInString(in.Address) > 500 || utf8.RuneCountInString(in.Phone) > 50:
 		return nil, fmt.Errorf("%w: business name, address or phone is too long", ErrInvalidBooking)
 	case in.TaxID != "" && len(in.TaxID) != 13:
 		return nil, fmt.Errorf("%w: the tax ID must have 13 digits", ErrInvalidBooking)

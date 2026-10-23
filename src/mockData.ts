@@ -628,6 +628,8 @@ export function normalizePhone(phone: string | undefined): string {
   const d = (phone || '').replace(/[^0-9]/g, '');
   if ((d.length === 10 || d.length === 11) && d.startsWith('66')) return '0' + d.slice(2);
   if ((d.length === 12 || d.length === 13) && d.startsWith('0066')) return '0' + d.slice(4);
+  // A mobile (06/08/09 + 8 digits) typed without its leading 0.
+  if (d.length === 9 && /^[689]/.test(d)) return '0' + d;
   return d;
 }
 

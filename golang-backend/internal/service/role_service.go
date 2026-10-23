@@ -165,9 +165,23 @@ func cleanRoleInput(in RoleInput) (RoleInput, error) {
 	return in, nil
 }
 
-func (s *RoleService) Create(ctx context.Context, in RoleInput, actorID, actorName string) (*model.Role, error) {
+// actorPerms (Create, Update) are the caller's own permissions: a role can
+// only hold rights its editor has, and nobody edits a role with rights they
+// lack - otherwise "manage roles" alone could grant itself everything, or
+// strip the Admin role (the same rule SetRole applies to giving roles).
+func checkRoleEditable(perms, actorPerms []model.Permission) error {
+	if missing := missingPermissions(perms, actorPerms); len(missing) > 0 {
+		return fmt.Errorf("%w: a role can only hold permissions you have yourself (%s)", ErrForbidden, joinPermissions(missing))
+	}
+	return nil
+}
+
+func (s *RoleService) Create(ctx context.Context, in RoleInput, actorID, actorName string, actorPerms []model.Permission) (*model.Role, error) {
 	in, err := cleanRoleInput(in)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkRoleEditable(in.Permissions, actorPerms); err != nil {
 		return nil, err
 	}
 	r := model.Role{ID: ids.New("role"), Name: in.Name, Permissions: in.Permissions, CreatedAt: s.now(), UpdatedAt: s.now()}
@@ -186,9 +200,12 @@ func (s *RoleService) Create(ctx context.Context, in RoleInput, actorID, actorNa
 	return &r, nil
 }
 
-func (s *RoleService) Update(ctx context.Context, id string, in RoleInput, actorID, actorName string) (*model.Role, error) {
+func (s *RoleService) Update(ctx context.Context, id string, in RoleInput, actorID, actorName string, actorPerms []model.Permission) (*model.Role, error) {
 	in, err := cleanRoleInput(in)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkRoleEditable(in.Permissions, actorPerms); err != nil {
 		return nil, err
 	}
 	var r model.Role
@@ -198,6 +215,9 @@ func (s *RoleService) Update(ctx context.Context, id string, in RoleInput, actor
 				return ErrNotFound
 			}
 			return err
+		}
+		if err := checkRoleEditable(r.Permissions, actorPerms); err != nil {
+			return fmt.Errorf("%w: this role has permissions you don't have - ask an admin", ErrForbidden)
 		}
 		// ADMIN keeps role management, or nobody could ever fix roles again.
 		if r.ID == string(model.RoleAdmin) && !hasPerm(in.Permissions, model.PermManageRoles) {

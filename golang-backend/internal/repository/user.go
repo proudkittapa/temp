@@ -107,8 +107,10 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, e
 // NormalizePhone reduces a phone number to one canonical form: digits only,
 // with the Thai country code rewritten as the domestic leading 0. So
 // "081-234-5678", "081 234 5678", "+66 81 234 5678" and "0066812345678" are
-// all "0812345678". Phones are stored this way (see AuthService.Register)
-// and compared this way.
+// all "0812345678" - and so is "812345678": a 9-digit number starting
+// with 6, 8 or 9 is a mobile (06/08/09 + 8 digits) typed without its 0.
+// Phones are stored this way (see AuthService.Register) and compared this
+// way.
 func NormalizePhone(p string) string {
 	var b strings.Builder
 	for _, r := range p {
@@ -124,6 +126,8 @@ func NormalizePhone(p string) string {
 		return "0" + d[2:]
 	case (len(d) == 12 || len(d) == 13) && strings.HasPrefix(d, "0066"):
 		return "0" + d[4:]
+	case len(d) == 9 && (d[0] == '6' || d[0] == '8' || d[0] == '9'):
+		return "0" + d
 	}
 	return d
 }
@@ -134,6 +138,7 @@ func NormalizePhone(p string) string {
 const canonicalPhoneSQL = `(CASE
 	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^66[0-9]{8,9}$' THEN '0' || substr(regexp_replace(phone, '[^0-9]', '', 'g'), 3)
 	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^0066[0-9]{8,9}$' THEN '0' || substr(regexp_replace(phone, '[^0-9]', '', 'g'), 5)
+	WHEN regexp_replace(phone, '[^0-9]', '', 'g') ~ '^[689][0-9]{8}$' THEN '0' || regexp_replace(phone, '[^0-9]', '', 'g')
 	ELSE regexp_replace(phone, '[^0-9]', '', 'g') END)`
 
 // phonesNormalized is true once startup found every stored phone in

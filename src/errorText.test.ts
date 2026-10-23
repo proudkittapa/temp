@@ -93,4 +93,14 @@ describe('thaiErrorText', () => {
     expect(th('invalid request body: reason is missing or invalid')).toBe('ข้อมูลที่ส่งไม่ถูกต้อง (reason) — กรุณารีเฟรชหน้าแล้วลองใหม่');
     expect(th('invalid request body')).toBe('ข้อมูลที่ส่งไม่ถูกต้อง — กรุณารีเฟรชหน้าแล้วลองใหม่');
   });
+  it('keeps the specific reason ahead of a generic one', () => {
+    expect(thaiErrorText("voucher can't be used for a free hour: RW-123456 is REDEEMED")).toBe('คูปอง RW-123456 ใช้ไม่ได้ (REDEEMED)');
+    expect(thaiErrorText("voucher can't be used for a free hour: RW-123456 is a Water voucher, not a free court hour")).toBe('คูปองนี้ไม่ใช่ชั่วโมงฟรี');
+    expect(thaiErrorText('slot already booked: สนามแบดมินตัน 1 is currently closed for booking')).toBe('สนามปิดบริการในช่วงเวลานี้ กรุณาเลือกเวลาหรือสนามอื่น');
+    expect(thaiErrorText('slot already booked')).toBe('ช่วงเวลานี้เพิ่งถูกจองไป กรุณาเลือกเวลาอื่น');
+  });
+  it('translates the role-editing limits', () => {
+    expect(thaiErrorText('not allowed: a role can only hold permissions you have yourself (view_reports)')).toBe('บทบาทมีได้เฉพาะสิทธิ์ที่คุณมีเอง — เอาสิทธิ์ที่คุณไม่มีออก หรือให้ผู้ดูแลระบบทำ');
+    expect(thaiErrorText("not allowed: this role has permissions you don't have - ask an admin")).toBe('แก้บทบาทนี้ไม่ได้ — บทบาทนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)');
+  });
 });

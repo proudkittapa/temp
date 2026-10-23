@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
@@ -161,7 +162,7 @@ type ProductInput struct {
 
 func (in *ProductInput) validate() error {
 	in.Name = strings.TrimSpace(in.Name)
-	if in.Name == "" || len(in.Name) > 200 {
+	if in.Name == "" || utf8.RuneCountInString(in.Name) > 200 {
 		return fmt.Errorf("%w: product name is required (max 200 characters)", ErrInvalidBooking)
 	}
 	if in.Category != model.ProductFB && in.Category != model.ProductEquipment {
@@ -296,13 +297,17 @@ func (s *POSService) AdjustStock(ctx context.Context, productID string, variantI
 				return err
 			}
 			before["variant"], before["variant_stock"] = v.ID, v.Stock
-			if v.Stock+delta < 0 {
-				return fmt.Errorf("%w: only %d left of %s size %s", ErrInvalidBooking, v.Stock, p.Name, v.Label)
+			// The product's total too: if the two ever drifted apart the
+			// database check would refuse the write with a bare error.
+			if v.Stock+delta < 0 || p.Stock+delta < 0 {
+				return fmt.Errorf("%w: only %d left of %s size %s", ErrInvalidBooking, min(v.Stock, p.Stock), p.Name, v.Label)
 			}
 			if err := tx.Model(&v).Update("stock", v.Stock+delta).Error; err != nil {
 				return err
 			}
 			after["variant"], after["variant_stock"] = v.ID, v.Stock+delta
+		} else if variantID != nil && *variantID != "" {
+			return fmt.Errorf("%w: %s has no sizes", ErrInvalidBooking, p.Name)
 		} else if p.Stock+delta < 0 {
 			return fmt.Errorf("%w: only %d of %s in stock", ErrInvalidBooking, p.Stock, p.Name)
 		}
@@ -342,9 +347,18 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 	}
 	// A zero or negative quantity used to be accepted: it added stock back
 	// and recorded a negative sale (and could cancel out a real line).
+	// The cap counts per product (and size), not per line - the same item
+	// on 50 lines used to get past it.
+	perItem := map[string]int{}
 	for _, item := range input.Items {
-		if item.Qty < 1 || item.Qty > MaxPOSLineQty {
+		perItem[lineLockKey(item)] += item.Qty
+		if item.Qty < 1 || perItem[lineLockKey(item)] > MaxPOSLineQty {
 			return nil, fmt.Errorf("%w: quantity for %s must be between 1 and %d", ErrInvalidBooking, item.ProductID, MaxPOSLineQty)
+		}
+		if item.Notes != nil {
+			if err := checkText("notes", *item.Notes); err != nil {
+				return nil, err
+			}
 		}
 	}
 	switch input.Type {
@@ -356,7 +370,7 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 		return nil, fmt.Errorf("%w: payment_method must be CASH or PROMPTPAY", ErrInvalidBooking)
 	}
 	input.CustomerName = strings.TrimSpace(input.CustomerName)
-	if len(input.CustomerName) > 200 {
+	if utf8.RuneCountInString(input.CustomerName) > 200 {
 		return nil, fmt.Errorf("%w: customer name is too long", ErrInvalidBooking)
 	}
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
@@ -365,6 +379,19 @@ func (s *POSService) ProcessCheckout(ctx context.Context, input CheckoutInput) (
 	}
 	if res, err := s.replayCheckout(ctx, input.IdempotencyKey); err != nil || res != nil {
 		return res, err
+	}
+	// The court a sale is linked to must exist ("" = none).
+	if input.CourtID != nil && strings.TrimSpace(*input.CourtID) == "" {
+		input.CourtID = nil
+	}
+	if input.CourtID != nil {
+		var n int64
+		if err := s.db.WithContext(ctx).Model(&model.Court{}).Where("id = ?", *input.CourtID).Count(&n).Error; err != nil {
+			return nil, err
+		}
+		if n == 0 {
+			return nil, fmt.Errorf("%w: court %q does not exist", ErrInvalidBooking, *input.CourtID)
+		}
 	}
 
 	var customer *model.User
@@ -438,9 +465,11 @@ func coverPointsWithRewards(ctx context.Context, tx *gorm.DB, usrRepo *repositor
 	if short <= 0 {
 		return nil, 0, nil
 	}
+	// Only vouchers still usable: one past its date (not yet marked by the
+	// voucher job) gives no points back - expired points stay spent.
 	var active []model.Voucher
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id = ? AND status = ?", u.ID, model.VoucherActive).
+		Where("user_id = ? AND status = ? AND expires_at > ?", u.ID, model.VoucherActive, time.Now()).
 		Order("created_at DESC").Find(&active).Error; err != nil {
 		return nil, 0, err
 	}
@@ -792,7 +821,7 @@ func (s *POSService) ActiveRentals(ctx context.Context) ([]OrderView, error) {
 func (s *POSService) ReturnRentalItem(ctx context.Context, itemID string, keep float64, note, actorID, actorName string) (*OrderView, error) {
 	note = strings.TrimSpace(note)
 	keep = RoundBaht(keep)
-	if keep < 0 || len(note) > 500 {
+	if keep < 0 || utf8.RuneCountInString(note) > 500 {
 		return nil, fmt.Errorf("%w: invalid deposit amount or note", ErrInvalidBooking)
 	}
 	var view *OrderView

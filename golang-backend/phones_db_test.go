@@ -27,7 +27,7 @@ func TestNormalizeStoredPhones(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ids := []string{"ph-a", "ph-b", "ph-c", "ph-d", "ph-e", "ph-f"}
+	ids := []string{"ph-a", "ph-b", "ph-c", "ph-d", "ph-e", "ph-f", "ph-g"}
 	t.Cleanup(func() {
 		e.db.Where("id IN ?", ids).Delete(&model.User{})
 		repository.NormalizeStoredPhones(ctx, e.db) // back to the fast path for the other tests
@@ -38,13 +38,14 @@ func TestNormalizeStoredPhones(t *testing.T) {
 	add("ph-d", "081-555-0103", t1)     // same number as ph-c
 	add("ph-e", "66815550104", t1)      // same number as ph-f, newer
 	add("ph-f", "0066 81 555 0104", t0) // oldest of the two: gets it
+	add("ph-g", "81-555-0107", t0)      // mobile typed without its 0
 
 	fixed, leftover, err := repository.NormalizeStoredPhones(ctx, e.db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixed != 3 {
-		t.Errorf("fixed %d phones, want 3 (a, b, f)", fixed)
+	if fixed != 4 {
+		t.Errorf("fixed %d phones, want 4 (a, b, f, g)", fixed)
 	}
 	if want := map[string][]string{"0815550103": {"ph-d"}, "0815550104": {"ph-e"}}; !reflect.DeepEqual(leftover, want) {
 		t.Errorf("leftover %v, want %v", leftover, want)
@@ -56,7 +57,7 @@ func TestNormalizeStoredPhones(t *testing.T) {
 		stored[u.ID] = u.Phone
 	}
 	want := map[string]string{"ph-a": "0815550101", "ph-b": "0815550102", "ph-c": "0815550103",
-		"ph-d": "081-555-0103", "ph-e": "66815550104", "ph-f": "0815550104"}
+		"ph-d": "081-555-0103", "ph-e": "66815550104", "ph-f": "0815550104", "ph-g": "0815550107"}
 	if !reflect.DeepEqual(stored, want) {
 		t.Errorf("stored %v, want %v", stored, want)
 	}

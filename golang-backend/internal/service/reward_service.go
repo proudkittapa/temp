@@ -211,11 +211,10 @@ func (s *RewardService) Dispense(ctx context.Context, code, staffID, staffName s
 			return err
 		}
 		now := s.now()
+		// Past its date: refused as expired (the voucher job marks it - a
+		// write here would be rolled back with the error anyway).
 		if v.Status == model.VoucherActive && now.After(v.ExpiresAt) {
 			v.Status = model.VoucherExpired
-			if err := tx.Model(&v).Update("status", v.Status).Error; err != nil {
-				return err
-			}
 		}
 		if v.Status != model.VoucherActive {
 			return fmt.Errorf("%w: voucher %s is %s", ErrInvalidState, code, v.Status)

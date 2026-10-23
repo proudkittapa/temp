@@ -166,8 +166,8 @@ func lastCount(db *gorm.DB) (*float64, error) {
 // different drawer) needs a note, so a gap between two shifts is explained
 // rather than unnoticed.
 func (s *ShiftService) Open(ctx context.Context, openingFloat float64, note, staffID, staffName string) (*ShiftView, error) {
-	if openingFloat < 0 || openingFloat > 1000000 {
-		return nil, fmt.Errorf("%w: opening float must be between 0 and 1,000,000 THB", ErrInvalidBooking)
+	if openingFloat < 0 || openingFloat > 10000000 {
+		return nil, fmt.Errorf("%w: opening float must be between 0 and 10,000,000 THB", ErrInvalidBooking)
 	}
 	note = strings.TrimSpace(note)
 	if err := checkText("note", note); err != nil {

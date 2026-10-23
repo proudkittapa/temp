@@ -9,3 +9,14 @@ func TestPartialPhone(t *testing.T) {
 		}
 	}
 }
+
+func TestPhoneLike(t *testing.T) {
+	for q, want := range map[string]bool{
+		"081-234-5678": true, "+66 81 234": true, "(02) 123": true, "0812": true,
+		"somchai1": false, "john2@gmail.com": false, "สมชาย": false, "": false, "  ": false, "08+1": false,
+	} {
+		if got := phoneLike(q); got != want {
+			t.Errorf("phoneLike(%q) = %v, want %v", q, got, want)
+		}
+	}
+}

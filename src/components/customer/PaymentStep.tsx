@@ -66,6 +66,13 @@ export default function PaymentStep() {
                 <span className="text-2xl">⌛</span>
                 หมดเวลาชำระแล้ว กรุณาอย่าโอนเงินเพิ่ม
               </div>
+            ) : currentPayment?.status === PaymentStatus.SLIP_UPLOADED && currentPayment.expiredAt ? (
+              // A slip sent after the hold ran out: the hours were released,
+              // staff check it as a late payment - no QR, no second transfer.
+              <div id="late-slip-notice" className="h-44 w-44 flex flex-col items-center justify-center text-center gap-1 text-xs text-amber-700 font-bold">
+                <span className="text-2xl">📨</span>
+                ส่งสลิปหลังหมดเวลา รอพนักงานตรวจ กรุณาอย่าโอนเงินเพิ่ม
+              </div>
             ) : qrCodePayload ? (
               <QRCodeSVG value={qrCodePayload} size={176} level="M" />
             ) : (

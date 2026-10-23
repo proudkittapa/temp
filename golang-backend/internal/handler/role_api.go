@@ -36,7 +36,7 @@ func (h *RoleHandler) Create(c *gin.Context) {
 		return
 	}
 	actorID, actorName := actor(c)
-	r, err := h.roles.Create(c.Request.Context(), in, actorID, actorName)
+	r, err := h.roles.Create(c.Request.Context(), in, actorID, actorName, currentPermissions(c))
 	if err != nil {
 		respondError(c, err)
 		return
@@ -52,7 +52,7 @@ func (h *RoleHandler) Update(c *gin.Context) {
 		return
 	}
 	actorID, actorName := actor(c)
-	r, err := h.roles.Update(c.Request.Context(), c.Param("id"), in, actorID, actorName)
+	r, err := h.roles.Update(c.Request.Context(), c.Param("id"), in, actorID, actorName, currentPermissions(c))
 	if err != nil {
 		respondError(c, err)
 		return

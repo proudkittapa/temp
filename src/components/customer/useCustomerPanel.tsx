@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, createContext, useContext } from 'react';
+import React, { useState, useEffect, useMemo, useRef, createContext, useContext } from 'react';
 import {
   Court, CourtType, Booking, Payment, LineMessage, DayOff,
   User
@@ -293,6 +293,13 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
     setPayments([]);
     setRedemptions([]);
   };
+  // Also when the account changes any other way - the nav bar's sign-out,
+  // another tab signing in or out - not only the panel's own logout.
+  const shownUserId = useRef(loggedInUserId);
+  useEffect(() => {
+    if (shownUserId.current && shownUserId.current !== loggedInUserId) clearCustomerScreen();
+    shownUserId.current = loggedInUserId;
+  }, [loggedInUserId]);
 
   // Picked hours are dropped when the court list really changes (a court
   // added or closed). Keyed on the ids, not the array: every refresh

@@ -271,6 +271,8 @@ describe('normalizePhone (same canonical form as the backend)', () => {
       expect(normalizePhone(p)).toBe('0812345678');
     }
     expect(normalizePhone('+66 2 123 4567')).toBe('021234567');
+    expect(normalizePhone('812345678')).toBe('0812345678'); // mobile typed without its 0
+    expect(normalizePhone('021234567')).toBe('021234567'); // a landline keeps its 0
     expect(normalizePhone(undefined)).toBe('');
   });
 });

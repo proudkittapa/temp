@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -139,8 +141,11 @@ func (h *ShopHandler) ReturnRental(c *gin.Context) {
 		KeepDeposit float64 `json:"keep_deposit"`
 		Note        string  `json:"note"`
 	}
-	if c.Request.ContentLength > 0 {
-		if err := c.ShouldBindJSON(&in); err != nil {
+	// Read whenever there may be one: a body sent without Content-Length
+	// (chunked) used to be ignored - the deposit then all given back and
+	// the kept part lost. An empty body is fine.
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&in); err != nil && !errors.Is(err, io.EOF) {
 			badBody(c, err)
 			return
 		}

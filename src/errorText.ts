@@ -20,6 +20,8 @@ const RULES: Rule[] = [
   // From the 2026-10-22 security fixes (before the generic sentinel rules).
   [/you can't approve the payment for your own booking/i, 'อนุมัติการชำระเงินของการจองตัวเองไม่ได้ — ให้พนักงานคนอื่นหรือผู้จัดการอนุมัติ'],
   [/role "(.+?)" has permissions you don't have/i, m => `ให้บทบาท "${m[1]}" ไม่ได้ — บทบาทนี้มีสิทธิ์ที่คุณไม่มี`],
+  [/a role can only hold permissions you have yourself/i, 'บทบาทมีได้เฉพาะสิทธิ์ที่คุณมีเอง — เอาสิทธิ์ที่คุณไม่มีออก หรือให้ผู้ดูแลระบบทำ'],
+  [/this role has permissions you don't have/i, 'แก้บทบาทนี้ไม่ได้ — บทบาทนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)'],
   [/this account has permissions you don't have/i, 'แก้บัญชีนี้ไม่ได้ — บัญชีนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)'],
   [/this slip was never approved - check that the transfer is in the bank account/i, 'สลิปนี้ยังไม่เคยได้รับอนุมัติ — ตรวจในบัญชีธนาคารว่าเงินเข้าจริงก่อน แล้วยืนยันการคืนเงิน'],
   [/this payment has no refund waiting for a check/i, 'รายการนี้ไม่มีการคืนเงินที่รอตรวจแล้ว (รีเฟรชหน้าจอ)'],
@@ -61,11 +63,13 @@ const RULES: Rule[] = [
   [/you already have (\d+) bookings awaiting payment/i, m => `คุณมีการจองที่รอชำระ/รอตรวจสลิปอยู่ ${m[1]} รายการแล้ว กรุณารอให้ยืนยันก่อนจองเพิ่ม`],
   [/too many unpaid bookings/i, 'มีการจองที่รอชำระครบจำนวนแล้ว กรุณารอให้ยืนยันก่อนจองเพิ่ม'],
   [/(.+?) (\d\d:\d\d)-(\d\d:\d\d) is already reserved/i, m => `${detail(m[1])} ${m[2]}-${m[3]} ถูกจองไปแล้ว กรุณาเลือกเวลาอื่น`],
+  // Before "slot already booked": a court closed while booking is sent as
+  // "slot already booked: <court> is currently closed for booking".
+  [/is closed at|currently closed for booking/i, 'สนามปิดบริการในช่วงเวลานี้ กรุณาเลือกเวลาหรือสนามอื่น'],
   [/slot already booked/i, 'ช่วงเวลานี้เพิ่งถูกจองไป กรุณาเลือกเวลาอื่น'],
   [/has already started - book it at the counter/i, 'ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ (ติดต่อเคาน์เตอร์ได้)'],
   [/has already passed|is over\)/i, 'ช่วงเวลานี้ผ่านไปแล้ว'],
   [/can only be booked during off-peak hours/i, 'สนามนี้จองได้เฉพาะช่วง Off-Peak'],
-  [/is closed at|currently closed for booking/i, 'สนามปิดบริการในช่วงเวลานี้ กรุณาเลือกเวลาหรือสนามอื่น'],
   [/outside opening hours|no price set for that hour/i, 'ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ'],
   [/online bookings open (\d+) days ahead/i, m => `จองออนไลน์ล่วงหน้าได้ไม่เกิน ${m[1]} วัน`],
   [/at most (\d+) slots per booking/i, m => `จองได้สูงสุด ${m[1]} ชั่วโมงต่อครั้ง`],
@@ -151,6 +155,7 @@ const RULES: Rule[] = [
   [/no voucher (\S+)/i, m => `ไม่พบรหัสคูปอง ${m[1]}`],
   [/expired on/i, 'คูปองนี้หมดอายุแล้ว'],
   [/is a free court hour - book the hour with it in the walk-in form/i, 'คูปองนี้เป็นชั่วโมงฟรี ใช้จองที่ฟอร์ม Walk-in'],
+  [/voucher can't be used for a free hour: (\S+) is (REDEEMED|EXPIRED|CANCELLED|ACTIVE)$/i, m => `คูปอง ${m[1]} ใช้ไม่ได้ (${m[2]})`],
   [/voucher, not a free court hour|voucher can't be used for a free hour/i, 'คูปองนี้ไม่ใช่ชั่วโมงฟรี'],
   [/a free-hour voucher covers exactly one hour/i, 'คูปองชั่วโมงฟรีใช้ได้ครั้งละ 1 ชั่วโมง'],
   [/free-hour voucher is for off-peak hours only/i, 'คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วง Off-Peak'],

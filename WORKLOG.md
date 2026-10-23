@@ -18,6 +18,65 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Full code recheck, part 1 (backend + customer screen fixes)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck every codes. no bug")
+- **Commit(s):** this commit (on `main`, parent `0991185`)
+- **How:** six reviewers read the whole code in parallel (Go booking core,
+  Go shop/money, Go auth/handlers/startup, frontend API+customer, staff
+  screen, admin+mockData); every finding is checked by hand before fixing.
+  Also `go test -race` (unit + DB race tests) and staticcheck. This commit
+  has the fixes done so far; the staff/admin screen and booking-core
+  findings follow in part 2.
+- **Changed:**
+  - **Role editing could escalate** (`role_service.go`, `role_api.go`): a
+    role can only hold permissions its editor has, and nobody edits a role
+    holding permissions they lack (e.g. ADMIN). Before, "manage roles"
+    alone could give itself every permission. Unit test + live: 403 for
+    own-role escalation, stripping ADMIN and a stronger new role; equal role
+    still 201. Thai texts added.
+  - **Slow uploads/reports cut at 60 s** (`main.go` requestDeadline): the
+    slip route (2 min) and reports (90 s) now set their own connection
+    deadlines. Live: a 70 s slip upload failed at 61 s before, 200 after.
+  - **Background jobs vs shutdown** (`main.go` runJob): jobs take the app
+    context (cancelled on SIGTERM, skipped after it); the wait for them has
+    its own 10 s limit. Live: SIGTERM -> "Stopped cleanly".
+  - **Admin user search** (`user_service.go` phoneLike): phone matching only
+    when the search looks like a phone ("somchai1" no longer matches every
+    phone containing 1). Unit test.
+  - **Text limits in characters, not bytes** (Thai = 3 bytes): user name,
+    product name, order customer name, deposit note, court name, shop
+    name/address/phone (shop phone 50 as in the form).
+  - **Phone typed without its 0** ("812345678" -> "0812345678": 9 digits
+    starting 6/8/9) in Go, its SQL twin and `mockData.normalizePhone`;
+    Go, TS and DB tests.
+  - **Rental return body** (`shop_api.go`): read also without
+    Content-Length (chunked), so a kept deposit isn't lost.
+  - **Expired vouchers** (`reward_service.go`, `pos.go`): Dispense refuses
+    without a pointless write; covering points no longer cancels an expired
+    voucher (which gave its points back).
+  - **Checkout**: quantity cap per product across lines (not per line),
+    line notes length-checked, linked court must exist.
+  - **Shift**: opening float cap 10,000,000 (same as the count).
+  - **AdjustStock**: product total checked in the size branch; a size for a
+    product without sizes refused.
+  - **Customer screen**: cleared whenever the signed-in account changes
+    (nav sign-out, another tab) - the next person saw the QR/booking; a
+    late slip waiting for review no longer shows the QR again (invited a
+    second transfer).
+  - **Thai errors**: a used/cancelled free-hour voucher and a court closed
+    mid-booking got the wrong text (rule order); tests.
+  - Removed unused `currentRole` (staticcheck).
+- **Verified:** `go vet`, `go test ./...`, `go test -race` incl. all DB race
+  tests, `tsc`, vitest 63/63; live checks as listed.
+- **Not changed, on purpose:** blind count staff can still add up today's
+  cash from the order/booking lists they need for work (a limit of the
+  blind count, not fixable without hiding sales from the counter); a
+  checkout retry returns the order as it is now even if voided later
+  (normal idempotent replay).
+
+---
+
 ## 2026-10-23 — Cleanup: unused packages, larger small text
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (group 3, "sure")

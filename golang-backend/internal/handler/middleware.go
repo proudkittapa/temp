@@ -141,12 +141,6 @@ func currentUserID(c *gin.Context) string {
 	return c.GetString(ctxUserID)
 }
 
-func currentRole(c *gin.Context) model.UserRole {
-	role, _ := c.Get(ctxRole)
-	r, _ := role.(model.UserRole)
-	return r
-}
-
 // actor returns the caller's id and display name for audit logs (both set
 // by Authenticate, so no extra lookup).
 func actor(c *gin.Context) (string, string) {

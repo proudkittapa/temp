@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
@@ -119,7 +120,7 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 	email = strings.ToLower(strings.TrimSpace(email))
 	name = strings.TrimSpace(name)
 	switch {
-	case name == "" || len(name) > 100:
+	case name == "" || utf8.RuneCountInString(name) > 100:
 		return nil, fmt.Errorf("%w: name is required (max 100 characters)", ErrInvalidRegistration)
 	case len(phone) > 15:
 		return nil, fmt.Errorf("%w: phone number is too long", ErrInvalidRegistration)
