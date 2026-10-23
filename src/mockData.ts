@@ -524,6 +524,15 @@ export function noShowRules(): { graceMinutes: number; resalePercent: number } {
   const c = StorageService.get<Partial<PricingConfig>>('pricing_config', {});
   return { graceMinutes: c.noShowGraceMinutes ?? 15, resalePercent: c.noShowResalePercent ?? 50 };
 }
+// How many hours one booking may hold: the server's MAX_HOURS_PER_BOOKING
+// (API mode, from /pricing); browser-only mode reads the same setting from
+// the root .env (vite.config.ts), default 3.
+export function maxHoursPerBooking(): number {
+  const fromServer = StorageService.get<Partial<PricingConfig>>('pricing_config', {}).maxHoursPerBooking;
+  if (fromServer) return fromServer;
+  const local = parseInt(typeof __MAX_HOURS_PER_BOOKING__ !== 'undefined' ? __MAX_HOURS_PER_BOOKING__ : '', 10);
+  return local >= 1 && local <= 24 ? local : 3;
+}
 // Whether staff may mark a no-show for the hour starting at startTime on
 // date yet (graceMinutes after it starts, Bangkok time), and from when.
 export function noShowOpenAt(date: string, startTime: string): Date {
@@ -694,16 +703,16 @@ export const LOCAL_MAX_UNPAID_GROUPS = 3;
 const madeOnline = (b: Booking) => b.createdBy === 'customer' || b.createdBy === b.userId;
 
 // The server's ExpireUnpaidBookings for browser-only mode, run when a
-// screen loads: an online booking still unpaid (no slip) after the hold is
-// cancelled and its payment EXPIRED, so the courts free up as the screen
-// says. A walk-in waiting for a transfer is left to staff, as on the server.
+// screen loads: a booking still unpaid by transfer (no slip) after the hold
+// - online or a counter walk-in - is cancelled and its payment EXPIRED, so
+// the courts free up as the screen says.
 export function expireUnpaidLocal(now = Date.now()): number {
   const payments = StorageService.get<Payment[]>('payments', []);
   const bookings = StorageService.get<Booking[]>('bookings', []);
   const byId = new Map(bookings.map(b => [b.id, b]));
   const stale = payments.filter(p => {
     const root = byId.get(p.bookingId);
-    return p.status === PaymentStatus.PENDING && p.method === PaymentMethod.PROMPTPAY && !!root && madeOnline(root) &&
+    return p.status === PaymentStatus.PENDING && p.method === PaymentMethod.PROMPTPAY && !!root &&
       now - new Date(p.createdAt).getTime() > LOCAL_PAYMENT_HOLD_MS;
   });
   if (!stale.length) return 0;

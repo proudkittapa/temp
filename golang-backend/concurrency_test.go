@@ -674,7 +674,7 @@ func TestConcurrencyVoidVersusShiftClose(t *testing.T) {
 				return err
 			},
 			func() error {
-				_, err := e.shifts.Close(ctx, 570, "race test", "staff-a", "Staff A", false)
+				_, err := e.shifts.Close(ctx, 570, 0, "race test", "staff-a", "Staff A", false)
 				return err
 			},
 		)
@@ -708,7 +708,7 @@ func (e *raceEnv) openTestShift(t *testing.T) *service.ShiftView {
 	if cur, err := e.shifts.Current(ctx); err != nil {
 		t.Fatal(err)
 	} else if cur != nil {
-		if _, err := e.shifts.Close(ctx, 0, "race test cleanup", "staff-a", "Staff A", false); err != nil {
+		if _, err := e.shifts.Close(ctx, 0, 0, "race test cleanup", "staff-a", "Staff A", false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -872,7 +872,7 @@ func TestConcurrencyCashPaymentVersusShiftClose(t *testing.T) {
 			},
 			func() error {
 				time.Sleep(time.Duration(rand.IntN(4000)) * time.Microsecond) // as above: both orders
-				_, err := e.shifts.Close(ctx, 500, "race test", "staff-a", "Staff A", false)
+				_, err := e.shifts.Close(ctx, 500, 0, "race test", "staff-a", "Staff A", false)
 				return err
 			},
 		}

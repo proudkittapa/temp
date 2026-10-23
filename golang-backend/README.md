@@ -183,7 +183,7 @@ curl "http://localhost:8080/api/v1/bookings?date=2026-06-20"
 Other customers' bookings come back without user details.
 
 ### 3. Book Slots & Get the PromptPay Payload
-Books up to 3 one-hour slots as a single group (one booking code, one
+Books up to `MAX_HOURS_PER_BOOKING` (default 3) one-hour slots as a single group (one booking code, one
 payment for the total). All-or-nothing: if any slot is taken, closed,
 outside opening hours (no pricing rule covers it), already over, or a
 half-court side at a peak hour (FR-1.2), nothing is booked (409/400).
@@ -379,7 +379,7 @@ curl http://localhost:8080/api/v1/staff/vouchers/RW-123456 -H "Authorization: Be
 curl -X POST http://localhost:8080/api/v1/staff/vouchers/RW-123456/dispense -H "Authorization: Bearer <Staff_Token>"
 ```
 Redeeming deducts the points (ledger `REDEEM`) and issues an `RW-XXXXXX`
-voucher valid for 30 days; it can be handed out once.
+voucher valid for `VOUCHER_VALID_DAYS` (default 365) days; it can be handed out once.
 
 The free court hour (`rw-hour`, kind `FREE_OFFPEAK_HOUR`) is not handed out
 with `/dispense` (refused); staff book the hour with it as a walk-in paid by
@@ -459,14 +459,17 @@ expected, counted and variance (counted - expected); a note is required
 when they differ. Opening: while no shift is open `GET /staff/shift`
 returns `last_count` (the cash counted at the last close, null before the
 first), and a float other than it needs `opening_note` (400 otherwise),
-stored on the shift and in the `SHIFT_OPENED` audit entry.
+stored on the shift and in the `SHIFT_OPENED` audit entry. Closing can
+record `banked_cash` - cash taken out (bank, safe), 0 to the counted
+amount - and `last_count` is then the count minus it, so a nightly bank run
+needs no note at the next opening.
 ```bash
 curl http://localhost:8080/api/v1/staff/shift -H "Authorization: Bearer <Staff_Token>"     # open shift + running totals, or null + last_count
 curl -X POST http://localhost:8080/api/v1/staff/shift/open -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" -d '{"opening_float": 2000}'
 curl -X POST http://localhost:8080/api/v1/staff/shift/open -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
   -d '{"opening_float": 1500, "opening_note": "500 taken to the bank"}'   # float differs from last_count
 curl -X POST http://localhost:8080/api/v1/staff/shift/close -H "Authorization: Bearer <Staff_Token>" -H "Content-Type: application/json" \
-  -d '{"counted_cash": 4890, "notes": "gave 10 THB too much change"}'
+  -d '{"counted_cash": 4890, "banked_cash": 3000, "notes": "gave 10 THB too much change"}'   # 1890 stays for the next shift
 curl http://localhost:8080/api/v1/admin/shifts -H "Authorization: Bearer <Manager_Token>"   # last 30 days, ?from=&to=
 ```
 Managers void a counter sale from today (reason required): stock comes back

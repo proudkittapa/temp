@@ -23,7 +23,7 @@ describe('thaiErrorText', () => {
     expect(thaiErrorText('session expired - please log in again')).toBe('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
     expect(thaiErrorText('login required')).toBe('กรุณาเข้าสู่ระบบก่อน');
     expect(thaiErrorText('your role is not allowed to do this')).toBe('บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้');
-    expect(thaiErrorText('invalid booking request: the opening float differs from the last count (2000.00 THB) - add a note explaining it')).toBe('เงินทอนตั้งต้นไม่ตรงกับยอดที่นับได้ตอนปิดกะล่าสุด (2000.00 บาท) — กรุณาใส่หมายเหตุ');
+    expect(thaiErrorText('invalid booking request: the opening float differs from the last count (2000.00 THB) - add a note explaining it')).toBe('เงินทอนตั้งต้นไม่ตรงกับเงินที่เหลือในลิ้นชักจากกะล่าสุด (2000.00 บาท) — กรุณาใส่หมายเหตุ');
     expect(thaiErrorText('booking during a closure needs the manage_closures permission')).toBe('ช่วงเวลานี้ปิดบริการ — การจองกรณีพิเศษต้องให้ผู้ที่มีสิทธิ์จัดการวันปิดสนามเป็นผู้จอง');
     expect(thaiErrorText('could not check your session right now - please try again')).toBe('ตรวจสอบการเข้าสู่ระบบไม่ได้ชั่วคราว กรุณาลองใหม่');
     expect(thaiErrorText('internal server error - please try again')).toBe('เซิร์ฟเวอร์ขัดข้อง กรุณาลองใหม่อีกครั้ง');
@@ -107,5 +107,8 @@ describe('thaiErrorText', () => {
     expect(thaiErrorText('invalid state for this action: สนามบาสเกตบอล A (เต็มสนาม) already has two halves')).toContain('มีครึ่งสนามครบ 2 ฝั่งแล้ว');
     expect(thaiErrorText('the selected court does not exist')).toBe('ไม่พบสนามนี้ (อาจถูกปิดหรือลบไปแล้ว)');
     expect(thaiErrorText('invalid booking request: customer name or phone is too long')).toBe('ชื่อหรือเบอร์โทรลูกค้ายาวเกินไป');
+  });
+  it('translates the banked-cash limit', () => {
+    expect(thaiErrorText('invalid booking request: cash taken out must be between 0 and the counted cash')).toBe('ยอดนำเงินออก/ฝากธนาคารต้องไม่ติดลบ และไม่เกินยอดที่นับได้');
   });
 });

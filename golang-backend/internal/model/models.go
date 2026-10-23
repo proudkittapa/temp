@@ -577,12 +577,15 @@ type Shift struct {
 	OpenedAt     time.Time `json:"opened_at" db:"opened_at" gorm:"column:opened_at"`
 	OpeningFloat float64   `json:"opening_float" db:"opening_float" gorm:"column:opening_float;type:numeric(12,2)"`
 	// OpeningNote explains a float other than the last shift's count.
-	OpeningNote  *string    `json:"opening_note,omitempty" db:"opening_note" gorm:"column:opening_note"`
-	ClosedAt     *time.Time `json:"closed_at,omitempty" db:"closed_at" gorm:"column:closed_at"`
-	CountedCash  *float64   `json:"counted_cash,omitempty" db:"counted_cash" gorm:"column:counted_cash;type:numeric(12,2)"`
-	ExpectedCash *float64   `json:"expected_cash,omitempty" db:"expected_cash" gorm:"column:expected_cash;type:numeric(12,2)"`
-	VarianceCash *float64   `json:"variance_cash,omitempty" db:"variance_cash" gorm:"column:variance_cash;type:numeric(12,2)"`
-	Notes        *string    `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
+	OpeningNote *string    `json:"opening_note,omitempty" db:"opening_note" gorm:"column:opening_note"`
+	ClosedAt    *time.Time `json:"closed_at,omitempty" db:"closed_at" gorm:"column:closed_at"`
+	CountedCash *float64   `json:"counted_cash,omitempty" db:"counted_cash" gorm:"column:counted_cash;type:numeric(12,2)"`
+	// BankedCash: cash taken out of the drawer at close (to the bank, the
+	// safe). The next shift's float should be CountedCash - BankedCash.
+	BankedCash   *float64 `json:"banked_cash,omitempty" db:"banked_cash" gorm:"column:banked_cash;type:numeric(12,2)"`
+	ExpectedCash *float64 `json:"expected_cash,omitempty" db:"expected_cash" gorm:"column:expected_cash;type:numeric(12,2)"`
+	VarianceCash *float64 `json:"variance_cash,omitempty" db:"variance_cash" gorm:"column:variance_cash;type:numeric(12,2)"`
+	Notes        *string  `json:"notes,omitempty" db:"notes" gorm:"column:notes"`
 	// The cash taken during the shift, frozen at close (with ExpectedCash).
 	CashBookingsAtClose *float64 `json:"-" db:"cash_bookings_at_close" gorm:"column:cash_bookings_at_close;type:numeric(12,2)"`
 	CashOrdersAtClose   *float64 `json:"-" db:"cash_orders_at_close" gorm:"column:cash_orders_at_close;type:numeric(12,2)"`

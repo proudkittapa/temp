@@ -143,22 +143,27 @@ func lockDrawerForCash(tx *gorm.DB) error {
 	return nil
 }
 
-// LastCount is the cash counted when the last shift was closed - what the
-// drawer should hold when the next one opens - or nil before the first.
+// LastCount is what the drawer should hold when the next shift opens: the
+// cash counted at the last close minus what was taken out then (banked) -
+// or nil before the first.
 func (s *ShiftService) LastCount(ctx context.Context) (*float64, error) {
 	return lastCount(s.db.WithContext(ctx))
 }
 
 func lastCount(db *gorm.DB) (*float64, error) {
 	var last []model.Shift
-	if err := db.Select("counted_cash").Where("closed_at IS NOT NULL AND counted_cash IS NOT NULL").
+	if err := db.Select("counted_cash", "banked_cash").Where("closed_at IS NOT NULL AND counted_cash IS NOT NULL").
 		Order("closed_at DESC").Limit(1).Find(&last).Error; err != nil {
 		return nil, err
 	}
 	if len(last) == 0 {
 		return nil, nil
 	}
-	return last[0].CountedCash, nil
+	left := *last[0].CountedCash
+	if last[0].BankedCash != nil {
+		left = RoundBaht(left - *last[0].BankedCash)
+	}
+	return &left, nil
 }
 
 // Open starts a shift with the float counted into the drawer. A float other
@@ -219,9 +224,17 @@ func (s *ShiftService) Open(ctx context.Context, openingFloat float64, note, sta
 // closer may not see the expected cash (no view_reports), so an off count
 // is refused without saying by how much - the figure would give the
 // expected cash away to a probe with counted_cash 0.
-func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffID, staffName string, blind bool) (*ShiftView, error) {
+//
+// banked is the cash taken out of the drawer at close (to the bank, the
+// safe), 0 if none: the next shift's float is then checked against
+// counted - banked, so a nightly bank run doesn't need a note every day.
+func (s *ShiftService) Close(ctx context.Context, counted, banked float64, notes, staffID, staffName string, blind bool) (*ShiftView, error) {
 	if counted < 0 || counted > 10000000 {
 		return nil, fmt.Errorf("%w: counted cash must be 0 or more", ErrInvalidBooking)
+	}
+	banked = RoundBaht(banked)
+	if banked < 0 || banked > RoundBaht(counted) {
+		return nil, fmt.Errorf("%w: cash taken out must be between 0 and the counted cash", ErrInvalidBooking)
 	}
 	notes = strings.TrimSpace(notes)
 	if err := checkText("notes", notes); err != nil {
@@ -256,6 +269,9 @@ func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffI
 		sh.CountedCash, sh.ExpectedCash, sh.VarianceCash = &counted, &v.Expected, &variance
 		sh.CashBookingsAtClose, sh.CashOrdersAtClose, sh.CashDepositsAtClose = &v.CashBookings, &v.CashOrders, &v.CashDeposits
 		sh.ClosedByID, sh.ClosedByName = &staffID, &staffName
+		if banked > 0 {
+			sh.BankedCash = &banked
+		}
 		if notes != "" {
 			sh.Notes = &notes
 		}
@@ -264,7 +280,7 @@ func (s *ShiftService) Close(ctx context.Context, counted float64, notes, staffI
 		}
 		if err := tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: staffID, UserName: staffName, Action: "SHIFT_CLOSED", TargetType: "Shift", TargetID: sh.ID,
-			AfterState: model.AuditJSON(map[string]any{"opening_float": sh.OpeningFloat, "expected": v.Expected, "counted": counted, "variance": variance}),
+			AfterState: model.AuditJSON(map[string]any{"opening_float": sh.OpeningFloat, "expected": v.Expected, "counted": counted, "variance": variance, "banked": banked}),
 			Reason:     sh.Notes, CreatedAt: now,
 		}).Error; err != nil {
 			return err

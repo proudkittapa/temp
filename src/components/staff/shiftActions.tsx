@@ -19,11 +19,13 @@ export function useShiftActions(deps: StaffPOSCore) {
     setClosedShift,
     setCountLocked,
     setShift,
+    setShiftBankedInput,
     setShiftCountInput,
     setShiftFloatInput,
     setShiftNote,
     setShiftOpenNote,
     shift,
+    shiftBankedInput,
     shiftCountInput,
     shiftFloatInput,
     shiftNote,
@@ -69,7 +71,7 @@ export function useShiftActions(deps: StaffPOSCore) {
     // another drawer) is explained - the server refuses it otherwise.
     const note = shiftOpenNote.trim();
     if (lastShiftCount !== null && roundBaht(float) !== lastShiftCount && !note) {
-      notify(`เงินทอนตั้งต้นไม่ตรงกับยอดที่นับได้ตอนปิดกะล่าสุด (${formatBaht(lastShiftCount)} บาท)\nกรุณาใส่หมายเหตุว่าทำไมไม่เท่ากัน เช่น นำเงินฝากธนาคาร`);
+      notify(`เงินทอนตั้งต้นไม่ตรงกับเงินที่เหลือในลิ้นชักจากกะล่าสุด (${formatBaht(lastShiftCount)} บาท)\nกรุณาใส่หมายเหตุว่าทำไมไม่เท่ากัน เช่น นำเงินฝากธนาคาร`);
       return;
     }
     setClosedShift(null);
@@ -91,6 +93,11 @@ export function useShiftActions(deps: StaffPOSCore) {
     const counted = Number(shiftCountInput);
     if (shiftCountInput.trim() === '' || !(counted >= 0)) {
       notify('กรุณากรอกยอดเงินสดที่นับได้จริง');
+      return;
+    }
+    const banked = shiftBankedInput.trim() === '' ? 0 : Number(shiftBankedInput);
+    if (!(banked >= 0) || roundBaht(banked) > roundBaht(counted)) {
+      notify('ยอดนำเงินออก/ฝากธนาคารต้องไม่ติดลบ และไม่เกินยอดที่นับได้');
       return;
     }
     if (blindCount) {
@@ -127,6 +134,8 @@ export function useShiftActions(deps: StaffPOSCore) {
   // the note (showing the difference) and tries again with the same count.
   const closeShiftWith = async (counted: number, note: string): Promise<void> => {
     if (!shift) return;
+    // Checked in handleCloseShift (0..counted); empty = nothing taken out.
+    const banked = () => shiftBankedInput.trim() === '' ? 0 : roundBaht(Number(shiftBankedInput));
     const askNote = async (message: string) => {
       const n = await askText(`${message}\n(ยอดนับ ${formatBaht(counted)} บาท แก้ไม่ได้แล้ว)`, { title: 'ยอดนับไม่ตรง', okLabel: 'บันทึกและปิดกะ' });
       return n ? closeShiftWith(counted, n) : undefined;
@@ -134,13 +143,14 @@ export function useShiftActions(deps: StaffPOSCore) {
     const done = (closed: api.ShiftView) => {
       setClosedShift(closed);
       setShiftCountInput('');
+      setShiftBankedInput('');
       setShiftNote('');
       setCountLocked(false);
       onRefreshAll();
     };
     if (api.USE_BACKEND) {
       try {
-        done(await api.closeShift(counted, note));
+        done(await api.closeShift(counted, note, banked()));
       } catch (err) {
         // Managers get the difference, blind staff only "doesn't match".
         if (err instanceof api.ApiError && /the count is .* off|the count doesn't match/i.test(err.serverMessage)) return askNote(err.message);
@@ -157,9 +167,9 @@ export function useShiftActions(deps: StaffPOSCore) {
         : `ยอดนับ${variance > 0 ? 'เกิน' : 'ขาด'} ${formatBaht(Math.abs(variance))} บาท กรุณาใส่หมายเหตุอธิบาย`);
     }
     const closedAt = new Date().toISOString();
-    const closed: Shift = { ...shift, closedAt, countedCash: roundBaht(counted), expectedCash: shift.expected, varianceCash: variance, notes: note || undefined, closedByName: 'คุณ กิตติ (เดโม)' };
+    const closed: Shift = { ...shift, closedAt, countedCash: roundBaht(counted), bankedCash: banked() || undefined, expectedCash: shift.expected, varianceCash: variance, notes: note || undefined, closedByName: 'คุณ กิตติ (เดโม)' };
     StorageService.set('shifts', StorageService.get<Shift[]>('shifts', []).map(sh => sh.id === shift.id ? closed : sh));
-    onAddAuditLog('SHIFT_CLOSED', 'Shift', shift.id, null, { expected: shift.expected, counted, variance });
+    onAddAuditLog('SHIFT_CLOSED', 'Shift', shift.id, null, { expected: shift.expected, counted, variance, banked: banked() });
     done({ ...shift, ...closed });
   };
   return {

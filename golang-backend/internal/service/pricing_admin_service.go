@@ -39,11 +39,13 @@ type PricingSnapshot struct {
 	// price previews.
 	NoShowGraceMinutes  int `json:"no_show_grace_minutes"`
 	NoShowResalePercent int `json:"no_show_resale_percent"`
+	// How many hours one booking may hold (MAX_HOURS_PER_BOOKING).
+	MaxHoursPerBooking int `json:"max_hours_per_booking"`
 }
 
 func (s *PricingAdminService) Snapshot(ctx context.Context) (*PricingSnapshot, error) {
 	db := s.db.WithContext(ctx)
-	snap := &PricingSnapshot{NoShowGraceMinutes: NoShowGraceMinutes(), NoShowResalePercent: NoShowResalePercent()}
+	snap := &PricingSnapshot{NoShowGraceMinutes: NoShowGraceMinutes(), NoShowResalePercent: NoShowResalePercent(), MaxHoursPerBooking: MaxHoursPerBooking()}
 	// A fixed order (id breaks ties): the screens cache this and other open
 	// tabs reload when the cached copy changes, so a shuffled order made
 	// tabs keep waking each other.

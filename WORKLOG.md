@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Owner rules: hours per booking, walk-in expiry, banked cash, voucher validity
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (answers to "any logic doesn't make sense": 1 keep, 2 keep, 3/4/5/6 change)
+- **Commit(s):** this commit (on `main`, parent `fc8cef0`)
+- **Decided, not changed:** customers still can't cancel their own
+  bookings (staff do); points stay 1 per paid hour.
+- **Changed:**
+  - **Hours per booking configurable:** `MAX_HOURS_PER_BOOKING` (default 3,
+    1-24) replaces the constant; `/pricing` returns `max_hours_per_booking`,
+    the customer slot picker and its hint use it (`mockData.maxHoursPerBooking`;
+    browser-only mode reads the same name from the root `.env`).
+  - **Walk-in transfers expire after 30 minutes** like online bookings
+    (`ExpireUnpaidBookings` no longer skips bookings made by staff; the
+    unpaid cap still counts only the customer's own). The counter's waiting
+    box says so and tells staff when it was cancelled; browser-only
+    `expireUnpaidLocal` matches.
+  - **Cash taken out at close:** `shifts.banked_cash` (0..counted);
+    `LastCount` = counted - banked, so a nightly bank run needs no opening
+    note. Close form field "นำเงินออก / ฝากธนาคาร", sent as `banked_cash`,
+    shown in the shift history; same in browser-only mode; the opening line
+    now reads "money left in the drawer from the last shift".
+  - **Vouchers valid 365 days:** `VOUCHER_VALID_DAYS` (default 365, 1-3650).
+  - Docs: both `.env.example`, `golang-backend/README.md`, TODO note; Thai
+    text for the banked-cash limit.
+- **Verified:** `go vet`, `go test ./...`, DB tests incl. new
+  `owner_rules_db_test.go` (4 hours refused by default and allowed with
+  MAX_HOURS_PER_BOOKING=4; walk-in transfer EXPIRED after the hold and the
+  court freed; banked more than counted refused, next float = counted -
+  banked opens without a note; voucher valid 365 days), `tsc`, vitest 66/66.
+  Live with MAX_HOURS_PER_BOOKING=4: `/pricing` says 4, customer page hint
+  "สูงสุด 4 ชั่วโมง", a 5th pick refused with "4 ชั่วโมง"; manager closed a
+  shift (expected 4,383.05) with 1,000 banked -> next opening expects
+  3,383.05.
+- **Note:** a walk-in whose transfer arrives after 30 minutes is now
+  approved as a late payment (re-books the hour if still free and not over;
+  otherwise refund) - as online bookings already were.
+
+---
+
 ## 2026-10-23 — Full code recheck, part 3 (staff, admin and customer screens)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck every codes. no bug")

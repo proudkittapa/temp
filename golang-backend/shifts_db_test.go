@@ -21,7 +21,7 @@ func TestShiftOpeningFloatMatchesLastCount(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.shifts.Close(ctx, 1234.5, "test count", "staff-a", "Staff A", false); err != nil {
+	if _, err := e.shifts.Close(ctx, 1234.5, 0, "test count", "staff-a", "Staff A", false); err != nil {
 		t.Fatal(err)
 	}
 	if last, err := e.shifts.LastCount(ctx); err != nil || last == nil || *last != 1234.5 {
@@ -43,7 +43,7 @@ func TestShiftOpeningFloatMatchesLastCount(t *testing.T) {
 	if sh.Shift.OpeningNote != nil {
 		t.Errorf("note stored for a matching float: %q", *sh.Shift.OpeningNote)
 	}
-	if _, err := e.shifts.Close(ctx, 1234.5, "", "staff-b", "Staff B", false); err != nil {
+	if _, err := e.shifts.Close(ctx, 1234.5, 0, "", "staff-b", "Staff B", false); err != nil {
 		t.Fatal(err)
 	}
 	// A different float with a note: opened, note kept.
@@ -54,7 +54,7 @@ func TestShiftOpeningFloatMatchesLastCount(t *testing.T) {
 	if sh.Shift.OpeningNote == nil || *sh.Shift.OpeningNote != "took 234.50 to the bank" {
 		t.Errorf("opening note = %v", sh.Shift.OpeningNote)
 	}
-	if _, err := e.shifts.Close(ctx, 1000, "", "staff-b", "Staff B", false); err != nil {
+	if _, err := e.shifts.Close(ctx, 1000, 0, "", "staff-b", "Staff B", false); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -324,6 +324,7 @@ func (h *ShopHandler) OpenShift(c *gin.Context) {
 func (h *ShopHandler) CloseShift(c *gin.Context) {
 	var in struct {
 		CountedCash *float64 `json:"counted_cash"`
+		BankedCash  float64  `json:"banked_cash"` // taken out at close (bank, safe); optional
 		Notes       string   `json:"notes"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil || in.CountedCash == nil {
@@ -332,7 +333,7 @@ func (h *ShopHandler) CloseShift(c *gin.Context) {
 	}
 	actorID, actorName := actor(c)
 	blind := !hasPermission(c, model.PermViewReports)
-	sh, err := h.shifts.Close(c.Request.Context(), *in.CountedCash, in.Notes, actorID, actorName, blind)
+	sh, err := h.shifts.Close(c.Request.Context(), *in.CountedCash, in.BankedCash, in.Notes, actorID, actorName, blind)
 	if err != nil {
 		respondError(c, err)
 		return

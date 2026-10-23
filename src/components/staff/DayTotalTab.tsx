@@ -20,11 +20,13 @@ export default function DayTotalTab() {
     setSelectedReceiptBooking,
     setSelectedReceiptOrder,
     setShiftCountInput,
+    setShiftBankedInput,
     setShiftFloatInput,
     setShiftNote,
     setShiftOpenNote,
     shift,
     shiftCountInput,
+    shiftBankedInput,
     shiftFloatInput,
     shiftHistory,
     shiftNote,
@@ -56,7 +58,7 @@ export default function DayTotalTab() {
             <button type="button" disabled={busy} onClick={guarded(handleOpenShift)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-lg">เปิดกะ</button>
             {lastShiftCount !== null && (
               <p id="shift-last-count" className="text-slate-600 w-full">
-                ยอดที่นับได้ตอนปิดกะล่าสุด <b>{formatBaht(lastShiftCount)}</b> บาท{' '}
+                เงินที่เหลือในลิ้นชักจากกะล่าสุด <b>{formatBaht(lastShiftCount)}</b> บาท{' '}
                 <button type="button" onClick={() => setShiftFloatInput(String(lastShiftCount))} className="text-emerald-700 font-bold underline">ใช้ยอดนี้</button>
                 {' '}· ถ้าเงินในลิ้นชักไม่เท่านี้ ต้องใส่หมายเหตุ
               </p>
@@ -85,13 +87,17 @@ export default function DayTotalTab() {
                 <label className="block text-slate-600 mb-1">เงินสดที่นับได้จริง (บาท)</label>
                 <input id="shift-count" type="number" min={0} value={shiftCountInput} readOnly={countLocked} onChange={e => setShiftCountInput(e.target.value)} className="w-40 border border-slate-300 rounded-lg px-3 py-2 read-only:bg-slate-100" />
               </div>
+              <div>
+                <label className="block text-slate-600 mb-1">นำเงินออก / ฝากธนาคาร (บาท)</label>
+                <input id="shift-banked" type="number" min={0} value={shiftBankedInput} onChange={e => setShiftBankedInput(e.target.value)} placeholder="0" className="w-40 border border-slate-300 rounded-lg px-3 py-2" />
+              </div>
               <div className="flex-1 min-w-[180px]">
                 <label className="block text-slate-600 mb-1">{blindCount ? 'หมายเหตุ (ถ้ามี)' : 'หมายเหตุ (จำเป็นถ้ายอดไม่ตรง)'}</label>
                 <input id="shift-note" value={shiftNote} onChange={e => setShiftNote(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2" />
               </div>
               <button type="button" disabled={busy} onClick={guarded(handleCloseShift)} className="disabled:opacity-50 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-lg">นับเงินและปิดกะ</button>
             </div>
-            <p className="text-[10px] text-slate-500">การคืนเงินลูกค้าเป็นการโอน ไม่ได้จ่ายจากลิ้นชัก จึงไม่ถูกหักจากยอดนี้</p>
+            <p className="text-[10px] text-slate-500">การคืนเงินลูกค้าเป็นการโอน ไม่ได้จ่ายจากลิ้นชัก จึงไม่ถูกหักจากยอดนี้ · เงินที่นำออก/ฝากธนาคารตอนปิดกะ: กะถัดไปเริ่มด้วยยอดนับลบยอดที่นำออก</p>
           </div>
         )}
         {closedShift && (
@@ -113,7 +119,7 @@ export default function DayTotalTab() {
                     <td className="text-right">{formatBaht(sh.expectedCash ?? sh.expected)}</td>
                     <td className="text-right">{formatBaht(sh.countedCash ?? 0)}</td>
                     <td className={`text-right font-bold ${(sh.varianceCash ?? 0) === 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{formatBaht(sh.varianceCash ?? 0)}</td>
-                    <td>{[sh.openingNote && `เปิดกะ: ${sh.openingNote}`, sh.notes].filter(Boolean).join(' · ')}</td>
+                    <td>{[sh.openingNote && `เปิดกะ: ${sh.openingNote}`, sh.bankedCash ? `นำออก ${formatBaht(sh.bankedCash)}` : '', sh.notes].filter(Boolean).join(' · ')}</td>
                   </tr>
                 ))}
               </tbody>

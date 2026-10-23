@@ -161,7 +161,7 @@ Done 2026-10-21 (see WORKLOG.md).
 - [ ] Optional later: one grid row per court with a full/left/right choice instead of 9 rows.
 
 ## 11. Performance / concurrency review (2026-10-21) - what's left
-Full review: three reviewers (backend performance, concurrency/money, frontend) + spot checks. Done the same day: database pool cap + statement/lock/idle timeouts + request deadlines (section below, "done"), walk-in PromptPay no longer auto-expires.
+Full review: three reviewers (backend performance, concurrency/money, frontend) + spot checks. Done the same day: database pool cap + statement/lock/idle timeouts + request deadlines (section below, "done"), walk-in PromptPay no longer auto-expires (reversed 2026-10-23, owner: walk-in transfers expire after 30 minutes like online bookings).
 
 ### Go-live (do before real customers - not needed while the data is fake)
 - [x] **Database indexes** - done 2026-10-21 (`golang-backend/perf_indexes.go`): 16 indexes (order items, my bookings, slip queue, expiry/finished jobs, vouchers, open rentals, audit by type, users by role, phone prefix, closures by date, shifts, and pg_trgm search on member names and the audit log). Built CONCURRENTLY in the background after startup, so they work on an empty database and on one full of data without blocking writes; an index left unfinished by an interrupted build is rebuilt on the next start.

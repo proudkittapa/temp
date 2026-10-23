@@ -22,7 +22,7 @@ var moneyColumns = map[string][]string{
 	"order_items":   {"unit_price"},
 	"products":      {"price", "deposit"},
 	"pricing_rules": {"price_per_hour"},
-	"shifts": {"opening_float", "counted_cash", "expected_cash", "variance_cash",
+	"shifts": {"opening_float", "counted_cash", "banked_cash", "expected_cash", "variance_cash",
 		"cash_bookings_at_close", "cash_orders_at_close", "cash_deposits_at_close"},
 }
 

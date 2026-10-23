@@ -184,6 +184,7 @@ export default function WalkinTab() {
           <div id="walkin-pending-payment" className="mt-4 p-4 rounded-xl border-2 border-amber-300 bg-amber-50 space-y-3 text-xs">
             <p className="font-black text-amber-900">⏳ รอลูกค้าโอนเงิน · {pendingWalkin.bookingCode}</p>
             <p className="text-amber-800">{pendingWalkin.label}</p>
+            <p className="text-amber-700 text-[11px]">ถ้าไม่ได้รับเงินโอนภายใน 30 นาที ระบบจะยกเลิกการจองนี้และปล่อยสนามว่าง</p>
             <div className="flex items-center gap-4">
               {pendingWalkin.qrPayload && (
                 <div className="bg-white p-2 rounded-lg border border-amber-200">

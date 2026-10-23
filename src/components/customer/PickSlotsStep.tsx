@@ -1,5 +1,5 @@
 import { CourtType } from '../../types';
-import { formatBaht, lastBookableDate, getTodayDateStr } from '../../mockData';
+import { formatBaht, lastBookableDate, getTodayDateStr, maxHoursPerBooking } from '../../mockData';
 import { Calendar, Sparkles } from 'lucide-react';
 import { useCustomerPanelContext, COURT_TYPE_LABEL } from './useCustomerPanel';
 
@@ -96,7 +96,7 @@ export default function PickSlotsStep() {
             <div className="w-full sm:w-auto flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">🎾 เลือกสนามและเวลา</h3>
-                <p className="text-xs text-slate-500 mt-0.5">แตะช่อง "ว่าง" เพื่อเลือก (สูงสุด 3 ชั่วโมงต่อการจอง)</p>
+                <p className="text-xs text-slate-500 mt-0.5">แตะช่อง "ว่าง" เพื่อเลือก (สูงสุด {maxHoursPerBooking()} ชั่วโมงต่อการจอง)</p>
               </div>
               {/* Grid / list toggle (remembered on this device) */}
               <div id="view-toggle" className="flex bg-slate-100 p-1 rounded-lg shrink-0">

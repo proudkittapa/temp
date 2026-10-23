@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Court, CourtType, PriceType, BookingStatus, MemberType
 } from '../../types';
-import { findClosure, calculatePrice, slotTiming, openSlotHours, formatBaht, roundBaht, lastBookableDate, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking } from '../../mockData';
+import { findClosure, calculatePrice, slotTiming, openSlotHours, formatBaht, roundBaht, lastBookableDate, getTodayDateStr, isHourOffPeak, isCourtSlotAvailable, findConflictingBooking, maxHoursPerBooking } from '../../mockData';
 import { notify } from '../Dialog';
 import type { CustomerPanelCore } from './useCustomerPanel';
 import { SlotState } from './shared';
@@ -70,9 +70,10 @@ export function useSlotPicker(deps: CustomerPanelCore) {
     if (existsIdx > -1) {
       setSelectedSlots(selectedSlots.filter((_, i) => i !== existsIdx));
     } else {
-      // Constraint 1: max 3 hours total per booking
-      if (selectedSlots.length >= 3) {
-        notify('คุณสามารถจองได้สูงสุดไม่เกิน 3 ชั่วโมง (3 สล็อต) ต่อการจอง 1 ครั้งค่ะ');
+      // Constraint 1: max hours per booking (server setting, default 3)
+      const maxHours = maxHoursPerBooking();
+      if (selectedSlots.length >= maxHours) {
+        notify(`คุณสามารถจองได้สูงสุดไม่เกิน ${maxHours} ชั่วโมง (${maxHours} สล็อต) ต่อการจอง 1 ครั้งค่ะ`);
         return;
       }
       

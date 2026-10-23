@@ -3,8 +3,9 @@ import {
   Court, CourtType, Booking, Payment, PaymentStatus,
   PaymentMethod, Product, Order, OrderStatus, OrderType, DayOff, User, Shift, LineMessage
 } from '../../types';
-import { StorageService, getTodayDateStr, normalizePhone, expireUnpaidLocal } from '../../mockData';
+import { StorageService, getTodayDateStr, normalizePhone, expireUnpaidLocal, roundBaht } from '../../mockData';
 import * as api from '../../api';
+import { notify } from '../Dialog';
 import { useLiveLoad, useLiveTick } from '../../useLiveTick';
 import { can, canUseCounter, Permission } from '../../permissions';
 import { useStaffSession } from './sessionActions';
@@ -113,6 +114,8 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   const [lastShiftCount, setLastShiftCount] = useState<number | null>(null);
   const [shiftOpenNote, setShiftOpenNote] = useState<string>('');
   const [shiftCountInput, setShiftCountInput] = useState<string>('');
+  // Cash taken out at close (to the bank, the safe): the next float.
+  const [shiftBankedInput, setShiftBankedInput] = useState<string>('');
   const [shiftNote, setShiftNote] = useState<string>('');
   const [closedShift, setClosedShift] = useState<api.ShiftView | null>(null);
 
@@ -278,7 +281,8 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     if (!api.USE_BACKEND) {
       const shifts = StorageService.get<Shift[]>('shifts', []).map(sh => localShiftView(sh, rawPayments, rawOrders));
       setShift(shifts.find(sh => !sh.closedAt) || null);
-      setLastShiftCount([...shifts].reverse().find(sh => sh.closedAt)?.countedCash ?? null);
+      const lastClosed = [...shifts].reverse().find(sh => sh.closedAt);
+      setLastShiftCount(lastClosed?.countedCash !== undefined ? roundBaht(lastClosed.countedCash - (lastClosed.bankedCash ?? 0)) : null);
       setShiftHistory(shifts.filter(sh => sh.closedAt).reverse());
       setProducts(rawProducts.filter(p => p.isActive));
       setOrders(rawOrders);
@@ -329,7 +333,15 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
       status = pay?.status;
     }
     if (present) pendingSeen.current = true;
-    if ((pendingSeen.current && !present) || (status && status !== PaymentStatus.PENDING)) setPendingWalkin(null);
+    if ((pendingSeen.current && !present) || (status && status !== PaymentStatus.PENDING)) {
+      // Say why the box went away when it wasn't paid: the hold ran out
+      // (walk-ins expire after 30 minutes like online bookings) or it was
+      // cancelled elsewhere - API mode no longer lists cancelled rows.
+      if (status === PaymentStatus.EXPIRED || !present) {
+        notify(`${pendingWalkin.bookingCode}: ไม่ได้รับเงินโอนภายใน 30 นาที หรือถูกยกเลิกแล้ว — สนามว่างแล้ว`);
+      }
+      setPendingWalkin(null);
+    }
   }, [bookings, payments, pendingWalkin, loadedDate]);
 
   // Standard line push simulation
@@ -378,6 +390,7 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   useEffect(() => {
     setCountLocked(false);
     setShiftCountInput('');
+    setShiftBankedInput('');
     setShiftNote('');
   }, [openShiftId]);
 
@@ -516,6 +529,8 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     setShiftOpenNote,
     shiftCountInput,
     setShiftCountInput,
+    shiftBankedInput,
+    setShiftBankedInput,
     shiftNote,
     setShiftNote,
     closedShift,

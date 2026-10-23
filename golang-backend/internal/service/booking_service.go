@@ -47,9 +47,6 @@ const (
 	// waiting for a payment slip before ExpireUnpaidBookings cancels it - the
 	// "30 minutes" customers are told at checkout.
 	PaymentHoldDuration = 30 * time.Minute
-	// MaxSlotsPerBooking mirrors the customer UI's limit of 3 one-hour slots
-	// per checkout.
-	MaxSlotsPerBooking = 3
 	// MaxUnpaidGroupsPerUser caps how many booking groups one customer can
 	// hold before staff have approved a payment - awaiting a slip or awaiting
 	// review - so nobody can block courts by booking and never paying.
@@ -68,6 +65,10 @@ const (
 // 50, 100 = full price), in place of the member discount and never more
 // than the customer's normal price (see noShowFreedShare for half courts).
 func NoShowGraceMinutes() int { return envIntRange("NO_SHOW_GRACE_MINUTES", 15, 0, 120) }
+
+// MaxHoursPerBooking is how many one-hour slots one booking may hold
+// (MAX_HOURS_PER_BOOKING, default 3); the screens get it with the pricing.
+func MaxHoursPerBooking() int { return envIntRange("MAX_HOURS_PER_BOOKING", 3, 1, 24) }
 func NoShowResalePercent() int {
 	return envIntRange("NO_SHOW_RESALE_PRICE_PERCENT", 50, 1, 100) // 0 would make free bookings (0-baht QR)
 }
@@ -251,8 +252,8 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 	if len(input.Slots) == 0 {
 		return nil, fmt.Errorf("%w: select at least one slot", ErrInvalidBooking)
 	}
-	if len(input.Slots) > MaxSlotsPerBooking {
-		return nil, fmt.Errorf("%w: at most %d slots per booking", ErrInvalidBooking, MaxSlotsPerBooking)
+	if max := MaxHoursPerBooking(); len(input.Slots) > max {
+		return nil, fmt.Errorf("%w: at most %d slots per booking", ErrInvalidBooking, max)
 	}
 	if err := s.checkNotPast(input.Date, input.Slots, input.WalkIn != nil); err != nil {
 		return nil, err
@@ -814,16 +815,15 @@ func countUnpaidGroups(db *gorm.DB, userID string) (int, error) {
 // ExpireUnpaidBookings cancels online bookings whose payment is still
 // PENDING (no slip uploaded) after PaymentHoldDuration, freeing their slots.
 // Bookings with an uploaded slip are left for staff to verify or reject.
-// A walk-in paid by transfer at the counter (made by staff, so created_by
-// is not the customer) never expires: the customer is there and may
-// already be playing; staff confirm the transfer or cancel it themselves.
+// A walk-in paid by transfer at the counter expires the same way (owner,
+// 2026-10-23): a customer who left without paying no longer blocks the
+// court; a transfer that arrives later is approved as a late payment.
 // main runs this every minute.
 func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) {
 	cutoff := s.now().Add(-PaymentHoldDuration)
 	var stale []model.Payment
 	if err := s.db.WithContext(ctx).
 		Where("status = ? AND method = ? AND created_at < ?", model.PaymentPending, model.PaymentPromptPay, cutoff).
-		Where("EXISTS (SELECT 1 FROM bookings b WHERE b.id = payments.booking_id AND b.created_by = b.user_id)").
 		Order("created_at").Limit(500).Find(&stale).Error; err != nil {
 		return 0, err
 	}

@@ -492,10 +492,11 @@ export async function updateBusiness(b: { name: string; address: string; phone: 
 
 async function getPricing(): Promise<PricingSnapshot> {
   const d = await request<{ rules: ApiPricingRule[]; config: ApiPricingConfig; member_discounts: ApiMemberDiscount[];
-    no_show_grace_minutes?: number; no_show_resale_percent?: number }>('/pricing');
+    no_show_grace_minutes?: number; no_show_resale_percent?: number; max_hours_per_booking?: number }>('/pricing');
   return {
     rules: d.rules.map(toRule),
-    config: { ...toPricingConfig(d.config), noShowGraceMinutes: d.no_show_grace_minutes ?? 15, noShowResalePercent: d.no_show_resale_percent ?? 50 },
+    config: { ...toPricingConfig(d.config), noShowGraceMinutes: d.no_show_grace_minutes ?? 15, noShowResalePercent: d.no_show_resale_percent ?? 50,
+      maxHoursPerBooking: d.max_hours_per_booking ?? 3 },
     memberDiscounts: d.member_discounts.map(toDiscount)
   };
 }
@@ -1124,13 +1125,13 @@ export interface ShiftView extends Shift { cashBookings: number; cashOrders: num
 
 interface ApiShift {
   id: string; staff_id: string; staff_name: string; opened_at: string; opening_float: number; opening_note?: string; closed_at?: string;
-  counted_cash?: number; expected_cash?: number; variance_cash?: number; notes?: string; closed_by_name?: string;
+  counted_cash?: number; banked_cash?: number; expected_cash?: number; variance_cash?: number; notes?: string; closed_by_name?: string;
   cash_bookings: number; cash_orders: number; cash_deposits?: number; expected: number; blind?: boolean;
 }
 
 const toShift = (s: ApiShift): ShiftView => ({
   id: s.id, staffId: s.staff_id, staffName: s.staff_name, openedAt: s.opened_at, openingFloat: s.opening_float,
-  openingNote: s.opening_note, closedAt: s.closed_at, countedCash: s.counted_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
+  openingNote: s.opening_note, closedAt: s.closed_at, countedCash: s.counted_cash, bankedCash: s.banked_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
   notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, cashDeposits: s.cash_deposits ?? 0, expected: s.expected,
   blind: s.blind
 });
@@ -1152,8 +1153,9 @@ export async function openShift(openingFloat: number, note: string): Promise<Shi
   return toShift(await request<ApiShift>('/staff/shift/open', { method: 'POST', session: 'staff', body: { opening_float: openingFloat, opening_note: note } }));
 }
 
-export async function closeShift(countedCash: number, notes: string): Promise<ShiftView> {
-  return toShift(await request<ApiShift>('/staff/shift/close', { method: 'POST', session: 'staff', body: { counted_cash: countedCash, notes } }));
+// bankedCash: taken out of the drawer at close (bank, safe), 0 if none.
+export async function closeShift(countedCash: number, notes: string, bankedCash = 0): Promise<ShiftView> {
+  return toShift(await request<ApiShift>('/staff/shift/close', { method: 'POST', session: 'staff', body: { counted_cash: countedCash, banked_cash: bankedCash, notes } }));
 }
 
 // Managers: recent shifts with over/short.

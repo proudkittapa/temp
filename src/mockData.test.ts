@@ -443,16 +443,16 @@ describe('browser-only payment hold (as the server)', () => {
     id, bookingId, amount: 180, method: PaymentMethod.PROMPTPAY, status, createdAt,
   } as Payment);
 
-  it('expires an online booking unpaid past 30 minutes, not a walk-in or a fresh one', () => {
+  it('expires a booking unpaid past 30 minutes (online or walk-in), not a fresh one', () => {
     stubLocalStorage();
     const now = Date.parse('2026-10-23T10:00:00Z');
     StorageService.set('bookings', [booking('old', 'customer'), booking('fresh', 'customer'), booking('walkin', 'u-staff-1')]);
     StorageService.set('payments', [
       payment('p-old', 'old', '2026-10-23T09:00:00Z'), payment('p-fresh', 'fresh', '2026-10-23T09:50:00Z'), payment('p-walkin', 'walkin', '2026-10-23T09:00:00Z'),
     ]);
-    expect(expireUnpaidLocal(now)).toBe(1);
+    expect(expireUnpaidLocal(now)).toBe(2);
     const pays = Object.fromEntries(StorageService.get<Payment[]>('payments', []).map(p => [p.id, p.status]));
-    expect(pays).toEqual({ 'p-old': PaymentStatus.EXPIRED, 'p-fresh': PaymentStatus.PENDING, 'p-walkin': PaymentStatus.PENDING });
+    expect(pays).toEqual({ 'p-old': PaymentStatus.EXPIRED, 'p-fresh': PaymentStatus.PENDING, 'p-walkin': PaymentStatus.EXPIRED });
     const rows = Object.fromEntries(StorageService.get<Booking[]>('bookings', []).map(b => [b.id, b.status]));
     expect(rows.old).toBe(BookingStatus.CANCELLED);
     expect(rows.fresh).toBe(BookingStatus.PENDING_PAYMENT);

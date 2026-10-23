@@ -17,8 +17,9 @@ import (
 )
 
 // VoucherValidDays is how long a redeemed voucher can be claimed at the
-// counter before it expires.
-const VoucherValidDays = 30
+// counter before it expires (VOUCHER_VALID_DAYS, default 365; the points
+// of an expired voucher are not given back).
+func VoucherValidDays() int { return envIntRange("VOUCHER_VALID_DAYS", 365, 1, 3650) }
 
 // RewardService is the loyalty rewards club (FR-4.2/4.3): customers spend
 // points on catalog items and get an RW-XXXXXX voucher; staff look the code
@@ -92,7 +93,7 @@ func (s *RewardService) redeemTx(ctx context.Context, userID, rewardID string) (
 		now := s.now()
 		v := model.Voucher{
 			ID: ids.New("vch"), Code: code, UserID: userID, RewardID: item.ID, PointsSpent: item.PointsCost,
-			Status: model.VoucherActive, CreatedAt: now, ExpiresAt: now.AddDate(0, 0, VoucherValidDays),
+			Status: model.VoucherActive, CreatedAt: now, ExpiresAt: now.AddDate(0, 0, VoucherValidDays()),
 		}
 		if err := tx.Create(&v).Error; err != nil {
 			return err

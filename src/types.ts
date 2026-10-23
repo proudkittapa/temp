@@ -127,6 +127,7 @@ export interface PricingConfig {
   // No-show rules from the server (read-only here).
   noShowGraceMinutes?: number;
   noShowResalePercent?: number;
+  maxHoursPerBooking?: number; // server setting MAX_HOURS_PER_BOOKING
   // The business on receipts and the payment screen (admin setting).
   // vatRegistered: receipts are abbreviated tax invoices with VAT 7%.
   businessName?: string;
@@ -369,6 +370,7 @@ export interface Shift {
   openingNote?: string; // why the float isn't the last shift's count
   closedAt?: string;
   countedCash?: number;
+  bankedCash?: number; // taken out at close (bank, safe): the next float is countedCash - bankedCash
   expectedCash?: number; // openingFloat + cash bookings + cash retail in-period
   varianceCash?: number; // countedCash - expectedCash
   notes?: string;

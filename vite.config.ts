@@ -18,6 +18,8 @@ export default defineConfig(({mode}) => {
         pickleball: env.PICKLEBALL_COURT_COUNT ?? '',
         meetingRoom: env.MEETING_ROOM_COUNT ?? '',
       }),
+      // Hours per booking for browser-only mode (API mode: the backend's).
+      __MAX_HOURS_PER_BOOKING__: JSON.stringify(env.MAX_HOURS_PER_BOOKING ?? ''),
     },
     resolve: {
       alias: {
