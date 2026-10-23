@@ -445,7 +445,7 @@ replacements).
 ### 8f. Cash drawer shifts and voids (FR-6.1/6.2)
 One drawer, so one shift is open at a time. Expected cash = opening float +
 cash booking payments approved + non-voided cash counter sales while the
-shift was open (refunds are transfers, not from the drawer). Cash (walk-ins,
+shift was open, minus refunds paid in cash from the drawer (`refund_method: "CASH"` on cancel / refund - needs an open shift; `TRANSFER`, the default, doesn't touch the drawer). Cash (walk-ins,
 sales, rentals, mark-cash) is refused with 409 "open the cash drawer shift
 before taking cash" while no shift is open; PromptPay is not affected.
 Blind count: for the STAFF role, `GET /staff/shift` (and the open response)

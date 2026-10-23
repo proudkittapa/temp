@@ -19,13 +19,15 @@ func (h *ArenaHandler) CancelBooking(c *gin.Context) {
 		// The manager checked the bank account (needed to refund a slip
 		// that was never approved).
 		BankChecked bool `json:"bank_checked"`
+		// TRANSFER (default) or CASH from the drawer (needs an open shift).
+		RefundMethod string `json:"refund_method"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
-	res, err := h.bookingService.CancelBookings(c.Request.Context(), c.Param("id"), in.BookingIDs, in.Reason, in.Refund, in.BankChecked, actorID, actorName)
+	res, err := h.bookingService.CancelBookings(c.Request.Context(), c.Param("id"), in.BookingIDs, in.Reason, in.Refund, in.BankChecked, in.RefundMethod, actorID, actorName)
 	if err != nil {
 		respondError(c, err)
 		return
@@ -41,13 +43,15 @@ func (h *ArenaHandler) RefundPayment(c *gin.Context) {
 		Amount *float64 `json:"amount"`
 		// Required unless the payment was approved (VERIFIED).
 		BankChecked bool `json:"bank_checked"`
+		// TRANSFER (default) or CASH from the drawer (needs an open shift).
+		RefundMethod string `json:"refund_method"`
 	}
 	if err := c.ShouldBindJSON(&in); err != nil {
 		badBody(c, err)
 		return
 	}
 	actorID, actorName := actor(c)
-	p, err := h.bookingService.RefundPayment(c.Request.Context(), c.Param("id"), in.Amount, in.Reason, in.BankChecked, actorID, actorName)
+	p, err := h.bookingService.RefundPayment(c.Request.Context(), c.Param("id"), in.Amount, in.Reason, in.BankChecked, in.RefundMethod, actorID, actorName)
 	if err != nil {
 		respondError(c, err)
 		return

@@ -76,13 +76,14 @@ export function useDayReport(deps: StaffPOSCore) {
     const cashSumFromOrders = api.USE_BACKEND ? daySummary?.ordersCash ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.CASH));
     const qrSumFromOrders = api.USE_BACKEND ? daySummary?.ordersPromptpay ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.PROMPTPAY));
 
-    let cashFromBookings = 0, qrFromBookings = 0, refundedCash = 0, refundedQr = 0, refundedNotReceived = 0;
+    let cashFromBookings = 0, qrFromBookings = 0, refundedCash = 0, refundedQr = 0, refundedNotReceived = 0, refundedFromDrawer = 0;
     if (api.USE_BACKEND) {
       cashFromBookings = daySummary?.cashReceived ?? 0;
       qrFromBookings = daySummary?.promptpayVerified ?? 0;
       refundedCash = daySummary?.refundedCash ?? 0;
       refundedQr = daySummary?.refundedPromptpay ?? 0;
       refundedNotReceived = daySummary?.refundedNotReceived ?? 0;
+      refundedFromDrawer = daySummary?.refundedFromDrawer ?? 0;
     } else {
       // Money received today, whatever day it was for - as the server
       // counts it: payments approved today (refunded ones too, their refund
@@ -102,6 +103,7 @@ export function useDayReport(deps: StaffPOSCore) {
         if (!p.verifiedAt) refundedNotReceived += today;
         else if (p.method === PaymentMethod.CASH) refundedCash += today;
         else refundedQr += today;
+        refundedFromDrawer += (p.refunds || []).filter(r => r.method === 'CASH' && localDateOf(r.at) === todayStr).reduce((n, r) => n + r.amount, 0);
       }
     }
     const bookingIncome = roundBaht(cashFromBookings + qrFromBookings);
@@ -113,7 +115,9 @@ export function useDayReport(deps: StaffPOSCore) {
       fbIncome,
       rentalIncome,
       keptDeposits,
-      cashExpected: roundBaht(cashFromBookings + cashSumFromOrders + keptDeposits),
+      // Refunds paid in cash came out of the drawer.
+      refundedFromDrawer: roundBaht(refundedFromDrawer),
+      cashExpected: roundBaht(cashFromBookings + cashSumFromOrders + keptDeposits - refundedFromDrawer),
       qrExpected: roundBaht(qrFromBookings + qrSumFromOrders),
       refunded: roundBaht(refundedCash + refundedQr),
       refundedCash: roundBaht(refundedCash),

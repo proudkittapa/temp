@@ -356,7 +356,16 @@ type Refund struct {
 	Reason     string    `json:"reason" db:"reason" gorm:"column:reason"`
 	RefundedBy string    `json:"refunded_by" db:"refunded_by" gorm:"column:refunded_by"`
 	RefundedAt time.Time `json:"refunded_at" db:"refunded_at" gorm:"column:refunded_at;index"`
+	// Method: how the money went back - TRANSFER, or CASH from the drawer
+	// (counted out of the open shift; owner 2026-10-23).
+	Method string `json:"method" db:"method" gorm:"column:method;type:varchar(16);not null;default:TRANSFER"`
 }
+
+// How a refund is paid back.
+const (
+	RefundTransfer = "TRANSFER"
+	RefundCash     = "CASH"
+)
 
 // AppMigration marks a one-off data migration as done, so it never runs twice.
 type AppMigration struct {
@@ -596,6 +605,7 @@ type Shift struct {
 	CashBookingsAtClose *float64 `json:"-" db:"cash_bookings_at_close" gorm:"column:cash_bookings_at_close;type:numeric(12,2)"`
 	CashOrdersAtClose   *float64 `json:"-" db:"cash_orders_at_close" gorm:"column:cash_orders_at_close;type:numeric(12,2)"`
 	CashDepositsAtClose *float64 `json:"-" db:"cash_deposits_at_close" gorm:"column:cash_deposits_at_close;type:numeric(12,2)"`
+	CashRefundsAtClose  *float64 `json:"-" db:"cash_refunds_at_close" gorm:"column:cash_refunds_at_close;type:numeric(12,2)"`
 	// Who counted the drawer at the end (may differ from who opened it).
 	ClosedByID   *string `json:"closed_by_id,omitempty" db:"closed_by_id" gorm:"column:closed_by_id"`
 	ClosedByName *string `json:"closed_by_name,omitempty" db:"closed_by_name" gorm:"column:closed_by_name"`

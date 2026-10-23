@@ -427,7 +427,7 @@ func TestConcurrencyApproveVersusCancel(t *testing.T) {
 				return err
 			},
 			func() error {
-				_, err := e.bookings.CancelBookings(ctx, res.Bookings[0].ID, nil, "customer called", true, false, "staff-b", "Staff B")
+				_, err := e.bookings.CancelBookings(ctx, res.Bookings[0].ID, nil, "customer called", true, false, "", "staff-b", "Staff B")
 				return err
 			},
 		)
@@ -623,7 +623,7 @@ func TestConcurrencyCancelVersusRedeem(t *testing.T) {
 				return err
 			},
 			func() error {
-				_, err := e.bookings.CancelBookings(ctx, res.Bookings[0].ID, nil, "rain", true, false, "staff-b", "Staff B")
+				_, err := e.bookings.CancelBookings(ctx, res.Bookings[0].ID, nil, "rain", true, false, "", "staff-b", "Staff B")
 				return err
 			},
 		)

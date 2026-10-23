@@ -226,7 +226,21 @@ type pointsReversal struct {
 
 // applyRefund records money returned on a payment (the transfer itself is
 // done by staff outside the system). REFUNDED once it covers the amount.
-func applyRefund(tx *gorm.DB, p *model.Payment, amount float64, reason, actorID string, now time.Time) error {
+// checkRefundMethod: "" means TRANSFER.
+func checkRefundMethod(method string) (string, error) {
+	switch method {
+	case "", model.RefundTransfer:
+		return model.RefundTransfer, nil
+	case model.RefundCash:
+		return model.RefundCash, nil
+	}
+	return "", fmt.Errorf("%w: refund_method must be TRANSFER or CASH", ErrInvalidBooking)
+}
+
+// applyRefund records amount refunded by method. A CASH refund comes out of
+// the drawer: the caller has locked it (lockDrawerForCash) before taking
+// now, so the refund lands in exactly one shift.
+func applyRefund(tx *gorm.DB, p *model.Payment, amount float64, reason, actorID string, now time.Time, method string) error {
 	remaining := RoundBaht(p.Amount - p.RefundAmount)
 	if amount <= 0 || amount > remaining {
 		return fmt.Errorf("%w: refund must be more than 0 and at most %.2f THB", ErrInvalidBooking, remaining)
@@ -243,7 +257,7 @@ func applyRefund(tx *gorm.DB, p *model.Payment, amount float64, reason, actorID 
 		return err
 	}
 	p.RefundAmount = total
-	return tx.Create(&model.Refund{ID: ids.New("rfd"), PaymentID: p.ID, Amount: amount, Reason: reason, RefundedBy: actorID, RefundedAt: now}).Error
+	return tx.Create(&model.Refund{ID: ids.New("rfd"), PaymentID: p.ID, Amount: amount, Reason: reason, RefundedBy: actorID, RefundedAt: now, Method: method}).Error
 }
 
 // keptAmount is what the group's still-standing hours cost: hours booked
@@ -306,7 +320,13 @@ type CancelResult struct {
 // its refund is recorded only with that confirmation; without it the hours
 // are cancelled and RefundNeedsCheck tells the caller to check and refund
 // later (RefundPayment).
-func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, onlyIDs []string, reason string, wantRefund, bankChecked bool, actorID, actorName string) (*CancelResult, error) {
+// refundMethod: TRANSFER ("" too) or CASH from the drawer (needs an open
+// shift; only used when a refund is recorded).
+func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, onlyIDs []string, reason string, wantRefund, bankChecked bool, refundMethod string, actorID, actorName string) (*CancelResult, error) {
+	refundMethod, err := checkRefundMethod(refundMethod)
+	if err != nil {
+		return nil, err
+	}
 	reason = strings.TrimSpace(reason)
 	if err := checkText("reason", reason); err != nil {
 		return nil, err
@@ -315,7 +335,7 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 		return nil, fmt.Errorf("%w: a cancellation reason is required", ErrInvalidBooking)
 	}
 	res := &CancelResult{}
-	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+	err = repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		// A retried attempt starts over: the payment may have changed
 		// meanwhile (e.g. a slip arrived), so decide refund afresh.
 		*res = CancelResult{}
@@ -359,8 +379,15 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 		if refund && p.Status == model.PaymentSlipUploaded && !bankChecked {
 			res.RefundNeedsCheck = true
 		}
-		if !moneyIn {
-			refund = false
+		if !moneyIn || p.Method == model.PaymentVoucher {
+			refund = false // a free (voucher) hour: the voucher is given back instead
+		}
+		// Cash out of the drawer: an open shift, and the time taken after
+		// the drawer lock (as every cash movement).
+		if refund && refundMethod == model.RefundCash {
+			if err := lockDrawerForCash(tx); err != nil {
+				return err
+			}
 		}
 
 		now := s.now()
@@ -417,7 +444,7 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 
 		switch {
 		case refund:
-			if err := applyRefund(tx, p, paidAmount, reason, actorID, now); err != nil {
+			if err := applyRefund(tx, p, paidAmount, reason, actorID, now, refundMethod); err != nil {
 				return err
 			}
 			res.RefundAmount = paidAmount
@@ -484,7 +511,11 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 // other (a slip still waiting, rejected or sent after expiry) the manager
 // must confirm with bankChecked that the transfer is in the bank account -
 // otherwise a fake slip turns into a real refund.
-func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, amount *float64, reason string, bankChecked bool, actorID, actorName string) (*model.Payment, error) {
+func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, amount *float64, reason string, bankChecked bool, refundMethod string, actorID, actorName string) (*model.Payment, error) {
+	refundMethod, err := checkRefundMethod(refundMethod)
+	if err != nil {
+		return nil, err
+	}
 	reason = strings.TrimSpace(reason)
 	if err := checkText("reason", reason); err != nil {
 		return nil, err
@@ -493,7 +524,7 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 		return nil, fmt.Errorf("%w: a refund reason is required", ErrInvalidBooking)
 	}
 	var p *model.Payment
-	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
+	err = repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		var err error
 		if p, err = lockPayment(tx, paymentID); err != nil {
 			return err
@@ -507,6 +538,11 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 		group, root, err := s.bookingGroup(tx, p.BookingID)
 		if err != nil {
 			return err
+		}
+		if refundMethod == model.RefundCash {
+			if err := lockDrawerForCash(tx); err != nil {
+				return err
+			}
 		}
 		now := s.now()
 		// A slip still waiting: the manager refunds instead of confirming,
@@ -538,7 +574,7 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 				return fmt.Errorf("%w: at most %.2f THB can be refunded (the rest pays for hours still booked)", ErrInvalidBooking, refundable)
 			}
 		}
-		if err := applyRefund(tx, p, amt, reason, actorID, now); err != nil {
+		if err := applyRefund(tx, p, amt, reason, actorID, now, refundMethod); err != nil {
 			return err
 		}
 		// A waiting slip whose hours were all released is closed now, so
@@ -899,7 +935,10 @@ type DaySummary struct {
 	// cancelled with a refund): not in the received totals, so not in
 	// Refunded either.
 	RefundedNotReceived float64 `json:"refunded_not_received"`
-	PaidBookings        int64   `json:"paid_bookings"`
+	// Refunds paid in cash from the drawer that day (whatever was refunded):
+	// out of the drawer's cash.
+	RefundedFromDrawer float64 `json:"refunded_from_drawer"`
+	PaidBookings       int64   `json:"paid_bookings"`
 }
 
 // Summary totals payments approved on date by method (cash goes in the
@@ -948,6 +987,9 @@ func (s *BookingService) Summary(ctx context.Context, date string) (*DaySummary,
 	}
 	out.RefundedCash, out.RefundedPromptPay = RoundBaht(out.RefundedCash), RoundBaht(out.RefundedPromptPay)
 	out.RefundedNotReceived = RoundBaht(out.RefundedNotReceived)
+	if out.RefundedFromDrawer, err = cashRefundsBetween(db, from, to); err != nil {
+		return nil, err
+	}
 	out.Refunded = out.RefundedCash + out.RefundedPromptPay
 	if err := db.Model(&model.Booking{}).Where("date = ? AND status IN ?", date, paidStatuses).Count(&out.PaidBookings).Error; err != nil {
 		return nil, err

@@ -3,6 +3,7 @@ import { StorageService, bookingGroupOf, formatBaht, roundBaht, isPaidBooking } 
 import * as api from '../../api';
 import { notify, askText, ask } from '../Dialog';
 import type { StaffPOSCore } from './useStaffPOS';
+import { askRefundMethod } from './shared';
 
 
 // Slip review queue: approve, reject, refund a payment.
@@ -16,6 +17,7 @@ export function useSlipActions(deps: StaffPOSCore) {
     reviewQueue,
     setRejectId,
     setRejectReason,
+    shift,
     slipVersionShown
   } = deps;
   // Phase 1 CORE: Approve Bank Slips (Slip Verification). Also confirms a
@@ -223,8 +225,13 @@ export function useSlipActions(deps: StaffPOSCore) {
     // browser-only mode asks the same).
     const bankChecked = pay.status !== PaymentStatus.VERIFIED;
     if (bankChecked && !(await ask('สลิปนี้ยังไม่เคยได้รับอนุมัติ — ตรวจในบัญชีธนาคารแล้วว่าเงินโอนเข้ามาจริง?', { title: '💸 ยืนยันยอดเงินเข้า', okLabel: 'ตรวจแล้ว เงินเข้าจริง', cancelLabel: 'ยังไม่ได้ตรวจ' }))) return;
+    // Transfer or cash from the drawer (cash needs an open shift; the
+    // server checks it too).
+    const refundMethod = await askRefundMethod(formatBaht(pay.amount - (pay.refundAmount || 0)));
+    if (!refundMethod) return;
+    if (refundMethod === 'CASH' && !shift && !api.USE_BACKEND) { notify('ต้องเปิดกะลิ้นชักก่อนจ่ายเงินสด'); return; }
     if (api.USE_BACKEND) {
-      return api.refundPayment(pay.id, reason, undefined, bankChecked)
+      return api.refundPayment(pay.id, reason, undefined, bankChecked, refundMethod)
         .then(p => {
           onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: p.refundAmount, reason });
           onRefreshAll();
@@ -245,7 +252,7 @@ export function useSlipActions(deps: StaffPOSCore) {
     const at = new Date().toISOString();
     StorageService.set('payments', StorageService.get<Payment[]>('payments', []).map(p => p.id === pay.id
       ? { ...p, status: kept > 0 ? p.status : PaymentStatus.REFUNDED, refundAmount: roundBaht((p.refundAmount || 0) + amount), refundReason: reason,
-          refundedAt: at, refunds: [...(p.refunds || []), { amount, at }] } : p));
+          refundedAt: at, refunds: [...(p.refunds || []), { amount, at, method: refundMethod }] } : p));
     onAddAuditLog('PAYMENT_REFUNDED', 'Payment', pay.id, null, { refundAmount: amount, reason, bankChecked });
     onRefreshAll();
   };

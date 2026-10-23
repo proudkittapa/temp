@@ -28,18 +28,18 @@ func TestPartialRefundKeepsApprovedPayment(t *testing.T) {
 	if res.Payment.Status != model.PaymentVerified {
 		t.Fatalf("cash walk-in payment is %s", res.Payment.Status)
 	}
-	if _, err := e.bookings.CancelBookings(ctx, res.Bookings[0].ID, nil, "customer left", false, false, "mgr-a", "Manager A"); err != nil {
+	if _, err := e.bookings.CancelBookings(ctx, res.Bookings[0].ID, nil, "customer left", false, false, "", "mgr-a", "Manager A"); err != nil {
 		t.Fatal(err)
 	}
 	part := 100.0
-	p, err := e.bookings.RefundPayment(ctx, res.Payment.ID, &part, "part back", false, "mgr-a", "Manager A")
+	p, err := e.bookings.RefundPayment(ctx, res.Payment.ID, &part, "part back", false, "", "mgr-a", "Manager A")
 	if err != nil {
 		t.Fatalf("first refund: %v", err)
 	}
 	if p.Status != model.PaymentVerified || p.RefundAmount != 100 {
 		t.Fatalf("after refunding 100 of %.2f: %s, refunded %.2f - want VERIFIED, 100", p.Amount, p.Status, p.RefundAmount)
 	}
-	p, err = e.bookings.RefundPayment(ctx, res.Payment.ID, nil, "the rest", false, "mgr-a", "Manager A")
+	p, err = e.bookings.RefundPayment(ctx, res.Payment.ID, nil, "the rest", false, "", "mgr-a", "Manager A")
 	if err != nil {
 		t.Fatalf("second refund (no bank check needed for cash): %v", err)
 	}

@@ -18,6 +18,52 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Cash refunds from the drawer
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (decision 5: "yes staff could")
+- **Commit(s):** this commit (on `main`, parent `c08e262`)
+- **Changed:** a refund can now be paid back in cash from the drawer
+  instead of only by bank transfer:
+  - `model.Refund.Method` (`TRANSFER` default, `CASH`); `Shift.CashRefundsAtClose`
+    frozen at close like the other cash figures; money column list updated.
+  - `CancelBookings` / `RefundPayment` take `refund_method`
+    (`POST /admin/bookings/:id/cancel`, `POST /admin/payments/:id/refund`);
+    anything else is a 400. A CASH refund needs an open shift: it takes the
+    drawer lock (`lockDrawerForCash`) before its timestamp, like every
+    other cash movement, so it lands in exactly one shift.
+  - Shift expected cash = float + cash bookings + cash orders + kept
+    deposits − cash refunds (`ShiftView.cash_refunds`); blind count hides it.
+  - Day summary `refunded_from_drawer`; `GET /staff/summary` now actually
+    returns it **and `kept_deposits`** (the previous commit computed kept
+    deposits but the handler never sent them, so API-mode day ledger cash
+    left them out). Both withheld in blind count.
+  - Frontend: `askRefundMethod` dialog after the refund decision (cancel
+    booking and refund slip); CASH without an open shift needs the same
+    confirmation as other cash; shift panel shows "− คืนเงินสดจากลิ้นชัก";
+    day ledger cash subtracts drawer refunds; the refunds line reads
+    "ที่รับเป็นเงินสด · ที่รับเป็นเงินโอน · จ่ายเป็นเงินสดจากลิ้นชัก".
+    Demo mode does the same locally (refund entries carry `method`).
+  - Files: `models.go`, `money_columns.go`, `shift_service.go`,
+    `booking_admin.go`, `lifecycle_api.go`, `shop_api.go`, `types.ts`,
+    `api.ts`, `staff/shared.tsx`, `bookingActions.tsx`, `slipActions.tsx`,
+    `dayReport.tsx`, `DayTotalTab.tsx`, README, TODO.
+- **Verified:**
+  - New DB test `TestCashRefundFromDrawer` (cash refund lowers expected
+    cash, transfer doesn't, summary figure, CASH with no shift =
+    `ErrNoOpenShift`, TRANSFER fine). Full `go test -race ./...` with
+    `TEST_DATABASE_URL` passes; `tsc` clean; vitest 66/66.
+  - Live against the running server: two 180-baht cash walk-ins (+360),
+    cancel one with CASH refund → expected 4383.05 → 4203.05,
+    `cash_refunds` 180; cancel the other with TRANSFER → unchanged;
+    `refund_method: BOGUS` → 400. Staff screen (manager) shows the
+    "− คืนเงินสดจากลิ้นชัก 180" figure and the refunds line with
+    "จ่ายเป็นเงินสดจากลิ้นชัก 180"; staff1 (blind) gets 0s.
+- **Not done / follow-ups:** the new method dialog was not clicked
+  through in a browser (type-checked; the API path it calls was tested
+  live). Decision 4 (login lockout policy) still open.
+
+---
+
 ## 2026-10-23 — Kept rental deposits count as income
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (decision 6: "sure")

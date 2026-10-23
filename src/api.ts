@@ -745,11 +745,13 @@ interface CancelResult {
 // cancellation to those hours. refund records the paid hours as refunded.
 // bankChecked: the manager confirmed the money is in the bank account -
 // required to refund a slip that was never approved.
-export async function cancelBooking(bookingId: string, reason: string, refund: boolean, bookingIds?: string[], session: SessionKind = 'staff', bankChecked = false): Promise<CancelResult> {
+// refundMethod: CASH = paid back from the drawer (needs an open shift).
+export type RefundMethod = 'TRANSFER' | 'CASH';
+export async function cancelBooking(bookingId: string, reason: string, refund: boolean, bookingIds?: string[], session: SessionKind = 'staff', bankChecked = false, refundMethod: RefundMethod = 'TRANSFER'): Promise<CancelResult> {
   const r = await request<{ booking_code: string; cancelled: number; refund_amount: number; points_reversed: number; payment_status: string; remaining_active: number;
     cancelled_vouchers?: string[]; points_short?: number; refund_needs_check?: boolean }>(
     `/admin/bookings/${encodeURIComponent(bookingId)}/cancel`,
-    { method: 'POST', session, body: { reason, refund, booking_ids: bookingIds, bank_checked: bankChecked } }
+    { method: 'POST', session, body: { reason, refund, booking_ids: bookingIds, bank_checked: bankChecked, refund_method: refundMethod } }
   );
   return {
     bookingCode: r.booking_code, cancelled: r.cancelled, refundAmount: r.refund_amount,
@@ -759,9 +761,9 @@ export async function cancelBooking(bookingId: string, reason: string, refund: b
 }
 
 // Manager/admin: record a refund (e.g. a late payment whose slot was taken).
-export async function refundPayment(paymentId: string, reason: string, amount?: number, bankChecked = false): Promise<Payment> {
+export async function refundPayment(paymentId: string, reason: string, amount?: number, bankChecked = false, refundMethod: RefundMethod = 'TRANSFER'): Promise<Payment> {
   return toPayment(await request<ApiPayment>(`/admin/payments/${encodeURIComponent(paymentId)}/refund`, {
-    method: 'POST', session: 'staff', body: { reason, amount, bank_checked: bankChecked }
+    method: 'POST', session: 'staff', body: { reason, amount, bank_checked: bankChecked, refund_method: refundMethod }
   }));
 }
 
@@ -802,6 +804,7 @@ export interface DaySummary {
   equipmentSales: number;
   rentalIncome: number; // rental fees + kept deposits
   keptDeposits: number; // rental deposits kept today (income, part of rentalIncome)
+  refundedFromDrawer: number; // refunds paid in cash from the drawer today
   ordersCount: number;
 }
 
@@ -811,13 +814,13 @@ export async function daySummary(date: string): Promise<DaySummary> {
   const r = await request<{
     date: string; cash_received: number; promptpay_verified: number; refunded: number; paid_bookings: number;
     refunded_cash: number; refunded_promptpay: number; refunded_not_received: number;
-    orders_cash: number; orders_promptpay: number; fb_sales: number; equipment_sales: number; rental_income: number; kept_deposits?: number; orders_count: number;
+    orders_cash: number; orders_promptpay: number; fb_sales: number; equipment_sales: number; rental_income: number; kept_deposits?: number; refunded_from_drawer?: number; orders_count: number;
   }>(`/staff/summary?date=${encodeURIComponent(date)}`, { session: 'staff' });
   return {
     date: r.date, cashReceived: r.cash_received, promptpayVerified: r.promptpay_verified, refunded: r.refunded, paidBookings: r.paid_bookings,
     refundedCash: r.refunded_cash ?? 0, refundedPromptpay: r.refunded_promptpay ?? 0, refundedNotReceived: r.refunded_not_received ?? 0,
     ordersCash: r.orders_cash, ordersPromptpay: r.orders_promptpay, fbSales: r.fb_sales, equipmentSales: r.equipment_sales,
-    rentalIncome: r.rental_income, keptDeposits: r.kept_deposits ?? 0, ordersCount: r.orders_count
+    rentalIncome: r.rental_income, keptDeposits: r.kept_deposits ?? 0, refundedFromDrawer: r.refunded_from_drawer ?? 0, ordersCount: r.orders_count
   };
 }
 
@@ -1128,18 +1131,18 @@ export async function voidOrder(orderId: string, reason: string): Promise<OrderW
 
 // A shift with the cash taken while it was open.
 // blind: the cash figures are withheld from counter staff (blind count).
-export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; cashDeposits: number; expected: number; blind?: boolean }
+export interface ShiftView extends Shift { cashBookings: number; cashOrders: number; cashDeposits: number; cashRefunds: number; expected: number; blind?: boolean }
 
 interface ApiShift {
   id: string; staff_id: string; staff_name: string; opened_at: string; opening_float: number; opening_note?: string; closed_at?: string;
   counted_cash?: number; banked_cash?: number; expected_cash?: number; variance_cash?: number; notes?: string; closed_by_name?: string;
-  cash_bookings: number; cash_orders: number; cash_deposits?: number; expected: number; blind?: boolean;
+  cash_bookings: number; cash_orders: number; cash_deposits?: number; cash_refunds?: number; expected: number; blind?: boolean;
 }
 
 const toShift = (s: ApiShift): ShiftView => ({
   id: s.id, staffId: s.staff_id, staffName: s.staff_name, openedAt: s.opened_at, openingFloat: s.opening_float,
   openingNote: s.opening_note, closedAt: s.closed_at, countedCash: s.counted_cash, bankedCash: s.banked_cash, expectedCash: s.expected_cash, varianceCash: s.variance_cash,
-  notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, cashDeposits: s.cash_deposits ?? 0, expected: s.expected,
+  notes: s.notes, closedByName: s.closed_by_name, cashBookings: s.cash_bookings, cashOrders: s.cash_orders, cashDeposits: s.cash_deposits ?? 0, cashRefunds: s.cash_refunds ?? 0, expected: s.expected,
   blind: s.blind
 });
 

@@ -203,7 +203,8 @@ export interface Payment {
   refundedAt?: string;
   // Browser-only mode: each refund (refundAmount is their running total),
   // so a day's refunds can be counted on the day each was made.
-  refunds?: { amount: number; at: string }[];
+  // method: CASH = paid back from the drawer (browser-only mode), else a transfer.
+  refunds?: { amount: number; at: string; method?: 'CASH' | 'TRANSFER' }[];
   refundedBy?: string;
   refundReason?: string;
   // Money returned so far; REFUNDED once it covers `amount`.

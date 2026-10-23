@@ -6,7 +6,7 @@ import { StorageService, calculatePrice, findConflictingBooking, bookingGroupOf,
 import * as api from '../../api';
 import { notify, ask, dialog } from '../Dialog';
 import type { StaffPOSCore } from './useStaffPOS';
-import { LocalVoucher, planPointsCover, applyPointsCover } from './shared';
+import { LocalVoucher, planPointsCover, applyPointsCover, askRefundMethod } from './shared';
 import type { useShiftActions } from './shiftActions';
 
 // Actions on one booking from its detail dialog: cancel/refund, cash payment, no-show and its undo.
@@ -58,11 +58,19 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
     const wholeGroup = group.length <= 1 || answer.choice === 'all';
     const target = wholeGroup ? group : [booking];
     const refund = answer.checked && paidOf(target) > 0;
+    // Transfer or cash from the drawer (a cash refund needs an open shift).
+    let refundMethod: api.RefundMethod = 'TRANSFER';
+    if (refund) {
+      const m = await askRefundMethod(formatBaht(paidOf(target)));
+      if (!m) return;
+      if (m === 'CASH' && !(await confirmCashWithoutShift())) return;
+      refundMethod = m;
+    }
 
     if (api.USE_BACKEND) {
       // Ticking the box for a slip still waiting is the manager's word that
       // the transfer is in the bank account (the server requires it).
-      return api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id], 'staff', refund && slipIn)
+      return api.cancelBooking(booking.id, reason, refund, wholeGroup ? undefined : [booking.id], 'staff', refund && slipIn, refundMethod)
         .then(res => {
           onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { ...res, reason });
           closeBookingDetail();
@@ -88,7 +96,7 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
         // left standing the payment is closed as refunded.
         const at = new Date().toISOString();
         return { ...p, refundAmount: total, refundReason: reason, refundedAt: at, refundedBy: 'manager',
-          refunds: [...(p.refunds || []), { amount: refundAmount, at }],
+          refunds: [...(p.refunds || []), { amount: refundAmount, at, method: refundMethod }],
           status: total >= p.amount || remaining === 0 ? PaymentStatus.REFUNDED : p.status };
       }
       if (remaining === 0 && (p.status === PaymentStatus.PENDING || p.status === PaymentStatus.SLIP_UPLOADED)) {

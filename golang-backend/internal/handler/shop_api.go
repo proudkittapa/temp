@@ -184,11 +184,12 @@ func (h *ShopHandler) DaySummary(c *gin.Context) {
 		"refunded": sum.Refunded, "refunded_cash": sum.RefundedCash, "refunded_promptpay": sum.RefundedPromptPay,
 		"refunded_not_received": sum.RefundedNotReceived, "paid_bookings": sum.PaidBookings,
 		"orders_cash": orders.Cash, "orders_promptpay": orders.PromptPay, "fb_sales": orders.FB,
-		"equipment_sales": orders.EquipmentSales, "rental_income": orders.Rentals, "orders_count": orders.Count,
+		"equipment_sales": orders.EquipmentSales, "rental_income": orders.Rentals, "kept_deposits": orders.KeptDeposits, "orders_count": orders.Count,
+		"refunded_from_drawer": sum.RefundedFromDrawer,
 	}
 	if blindCount(c) {
 		// Anything the cash could be worked out from is withheld too.
-		for _, k := range []string{"cash_received", "orders_cash", "fb_sales", "equipment_sales", "rental_income"} {
+		for _, k := range []string{"cash_received", "orders_cash", "fb_sales", "equipment_sales", "rental_income", "kept_deposits", "refunded_from_drawer"} {
 			data[k] = 0
 		}
 		data["blind"] = true
@@ -293,7 +294,7 @@ func blindShift(c *gin.Context, sh *service.ShiftView) *service.ShiftView {
 		return sh
 	}
 	cp := *sh
-	cp.CashBookings, cp.CashOrders, cp.CashDeposits, cp.Expected, cp.Blind = 0, 0, 0, 0, true
+	cp.CashBookings, cp.CashOrders, cp.CashDeposits, cp.CashRefunds, cp.Expected, cp.Blind = 0, 0, 0, 0, 0, true
 	return &cp
 }
 

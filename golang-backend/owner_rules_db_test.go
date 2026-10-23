@@ -198,3 +198,56 @@ func TestKeptDepositIsIncome(t *testing.T) {
 		t.Errorf("rental income went up by %.2f, want 90 (50 fee + 40 kept)", got)
 	}
 }
+
+// A refund paid in cash comes out of the drawer: it needs an open shift and
+// lowers that shift's expected cash; a transfer refund doesn't touch it.
+func TestCashRefundFromDrawer(t *testing.T) {
+	e := raceSetup(t)
+	ctx := context.Background()
+	sh := e.openTestShift(t)
+	sl := newSlots()
+	walkIn := func() *service.CreateBookingResult {
+		date, times := sl.take(t, 1)
+		res, err := e.bookings.CreateBookings(ctx, service.CreateBookingInput{
+			Date: date, Slots: []service.SlotRequest{{CourtID: "pick-3", StartTime: times[0]}},
+			WalkIn: &service.WalkInDetails{StaffID: "staff-a", StaffName: "Staff A", CustomerName: "Walk-in", CustomerPhone: "0890000097", PaymentMethod: model.PaymentCash},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	cashIn := walkIn()
+	transfer := walkIn()
+	before, _ := e.shifts.Current(ctx)
+
+	if _, err := e.bookings.CancelBookings(ctx, cashIn.Bookings[0].ID, nil, "customer left", true, false, model.RefundCash, "mgr-a", "Manager A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.bookings.CancelBookings(ctx, transfer.Bookings[0].ID, nil, "customer left", true, false, model.RefundTransfer, "mgr-a", "Manager A"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := e.shifts.Current(ctx)
+	if got := after.CashRefunds - before.CashRefunds; got != cashIn.TotalAmount {
+		t.Errorf("shift cash refunds went up by %.2f, want %.2f (the cash refund only)", got, cashIn.TotalAmount)
+	}
+	if got := before.Expected - after.Expected; got != cashIn.TotalAmount {
+		t.Errorf("expected cash went down by %.2f, want %.2f", got, cashIn.TotalAmount)
+	}
+	sum, err := e.bookings.Summary(ctx, time.Now().In(service.Bangkok).Format("2006-01-02"))
+	if err != nil || sum.RefundedFromDrawer < cashIn.TotalAmount {
+		t.Errorf("day summary refunded from drawer %.2f (%v), want at least %.2f", sum.RefundedFromDrawer, err, cashIn.TotalAmount)
+	}
+	// No shift open: a cash refund is refused, a transfer one is not.
+	third := walkIn()
+	if _, err := e.shifts.Close(ctx, after.Expected, 0, "test", "staff-a", "Staff A", false); err != nil {
+		t.Fatal(err)
+	}
+	_ = sh
+	if _, err := e.bookings.CancelBookings(ctx, third.Bookings[0].ID, nil, "left", true, false, model.RefundCash, "mgr-a", "Manager A"); !errors.Is(err, service.ErrNoOpenShift) {
+		t.Errorf("cash refund with no shift open: %v, want ErrNoOpenShift", err)
+	}
+	if _, err := e.bookings.CancelBookings(ctx, third.Bookings[0].ID, nil, "left", true, false, model.RefundTransfer, "mgr-a", "Manager A"); err != nil {
+		t.Errorf("transfer refund with no shift open: %v", err)
+	}
+}

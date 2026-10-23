@@ -79,6 +79,7 @@ export default function DayTotalTab() {
               <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ เงินสดค่าสนาม</span><b>{formatBaht(shift.cashBookings)}</b></div>
               <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ เงินสดขายของ/เช่า</span><b>{formatBaht(shift.cashOrders)}</b></div>
               {!!shift.cashDeposits && <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">+ มัดจำค้างในลิ้นชัก</span><b>{formatBaht(shift.cashDeposits)}</b></div>}
+              {!!shift.cashRefunds && <div className="bg-slate-50 rounded-lg p-2"><span className="text-slate-500 block">− คืนเงินสดจากลิ้นชัก</span><b>{formatBaht(shift.cashRefunds)}</b></div>}
               <div className="bg-emerald-50 rounded-lg p-2"><span className="text-emerald-700 block">= ควรมีในลิ้นชัก</span><b id="shift-expected">{formatBaht(shift.expected)}</b></div>
             </div>
             )}
@@ -97,7 +98,7 @@ export default function DayTotalTab() {
               </div>
               <button type="button" disabled={busy} onClick={guarded(handleCloseShift)} className="disabled:opacity-50 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2 rounded-lg">นับเงินและปิดกะ</button>
             </div>
-            <p className="text-[10px] text-slate-500">การคืนเงินลูกค้าเป็นการโอน ไม่ได้จ่ายจากลิ้นชัก จึงไม่ถูกหักจากยอดนี้ · เงินที่นำออก/ฝากธนาคารตอนปิดกะ: กะถัดไปเริ่มด้วยยอดนับลบยอดที่นำออก</p>
+            <p className="text-[10px] text-slate-500">คืนเงินลูกค้าแบบเงินสดจากลิ้นชักถูกหักจากยอดนี้ (โอนคืนไม่หัก) · เงินที่นำออก/ฝากธนาคารตอนปิดกะ: กะถัดไปเริ่มด้วยยอดนับลบยอดที่นำออก</p>
           </div>
         )}
         {closedShift && (
@@ -151,7 +152,7 @@ export default function DayTotalTab() {
               {l.refunded > 0 && (
                 <p id="day-refunds" className="text-[10px] text-sky-700 font-bold mt-1">
                   💸 คืนเงินวันนี้: {formatBaht(l.refunded)} บาท
-                  <span className="font-normal"> (ของเงินสด {formatBaht(l.refundedCash)} · ของเงินโอน {formatBaht(l.refundedQr)})</span>
+                  <span className="font-normal"> (ที่รับเป็นเงินสด {formatBaht(l.refundedCash)} · ที่รับเป็นเงินโอน {formatBaht(l.refundedQr)}{l.refundedFromDrawer > 0 ? ` · จ่ายเป็นเงินสดจากลิ้นชัก ${formatBaht(l.refundedFromDrawer)}` : ''})</span>
                 </p>
               )}
               {l.refundedNotReceived > 0 && (

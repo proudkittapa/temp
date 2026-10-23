@@ -23,7 +23,7 @@ var moneyColumns = map[string][]string{
 	"products":      {"price", "deposit"},
 	"pricing_rules": {"price_per_hour"},
 	"shifts": {"opening_float", "counted_cash", "banked_cash", "expected_cash", "variance_cash",
-		"cash_bookings_at_close", "cash_orders_at_close", "cash_deposits_at_close"},
+		"cash_bookings_at_close", "cash_orders_at_close", "cash_deposits_at_close", "cash_refunds_at_close"},
 }
 
 // convertMoneyColumns turns money columns not yet numeric(12,2) - GORM

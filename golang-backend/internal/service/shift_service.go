@@ -36,7 +36,9 @@ type ShiftView struct {
 	CashOrders   float64 `json:"cash_orders"`
 	// Rental deposits taken minus deposits given back while open.
 	CashDeposits float64 `json:"cash_deposits"`
-	Expected     float64 `json:"expected"` // opening float + cash bookings + cash orders + deposits
+	// Refunds paid in cash from the drawer while open (subtracted).
+	CashRefunds float64 `json:"cash_refunds"`
+	Expected    float64 `json:"expected"` // opening float + cash bookings + cash orders + deposits - cash refunds
 	// Blind: the cash figures above are withheld (counter staff, see
 	// handler.blindCount).
 	Blind bool `json:"blind,omitempty"`
@@ -68,12 +70,25 @@ func cashBetween(db *gorm.DB, from, to time.Time) (float64, float64, float64, er
 	return RoundBaht(bookings), RoundBaht(orders), RoundBaht(depIn - depOut), nil
 }
 
+// cashRefundsBetween sums refunds paid in cash from the drawer in [from, to).
+func cashRefundsBetween(db *gorm.DB, from, to time.Time) (float64, error) {
+	var v float64
+	err := db.Model(&model.Refund{}).Select("COALESCE(SUM(amount), 0)").
+		Where("method = ? AND refunded_at >= ? AND refunded_at < ?", model.RefundCash, from, to).Scan(&v).Error
+	return RoundBaht(v), err
+}
+
 func (s *ShiftService) view(db *gorm.DB, sh model.Shift) (*ShiftView, error) {
 	// A closed shift with its figures frozen at close needs no queries (the
-	// shift history used to recount every shift: 3 queries each).
+	// shift history used to recount every shift: 3 queries each). Shifts
+	// closed before cash refunds existed had none (nil = 0).
 	if sh.ClosedAt != nil && sh.ExpectedCash != nil && sh.CashBookingsAtClose != nil && sh.CashOrdersAtClose != nil && sh.CashDepositsAtClose != nil {
-		return &ShiftView{Shift: sh, CashBookings: *sh.CashBookingsAtClose, CashOrders: *sh.CashOrdersAtClose,
-			CashDeposits: *sh.CashDepositsAtClose, Expected: *sh.ExpectedCash}, nil
+		v := &ShiftView{Shift: sh, CashBookings: *sh.CashBookingsAtClose, CashOrders: *sh.CashOrdersAtClose,
+			CashDeposits: *sh.CashDepositsAtClose, Expected: *sh.ExpectedCash}
+		if sh.CashRefundsAtClose != nil {
+			v.CashRefunds = *sh.CashRefundsAtClose
+		}
+		return v, nil
 	}
 	to := s.now()
 	if sh.ClosedAt != nil {
@@ -83,7 +98,11 @@ func (s *ShiftService) view(db *gorm.DB, sh model.Shift) (*ShiftView, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &ShiftView{Shift: sh, CashBookings: b, CashOrders: o, CashDeposits: d, Expected: RoundBaht(sh.OpeningFloat + b + o + d)}
+	r, err := cashRefundsBetween(db, sh.OpenedAt, to)
+	if err != nil {
+		return nil, err
+	}
+	v := &ShiftView{Shift: sh, CashBookings: b, CashOrders: o, CashDeposits: d, CashRefunds: r, Expected: RoundBaht(sh.OpeningFloat + b + o + d - r)}
 	// A closed shift keeps what it was counted against.
 	if sh.ExpectedCash != nil {
 		v.Expected = *sh.ExpectedCash
@@ -268,6 +287,7 @@ func (s *ShiftService) Close(ctx context.Context, counted, banked float64, notes
 		}
 		sh.CountedCash, sh.ExpectedCash, sh.VarianceCash = &counted, &v.Expected, &variance
 		sh.CashBookingsAtClose, sh.CashOrdersAtClose, sh.CashDepositsAtClose = &v.CashBookings, &v.CashOrders, &v.CashDeposits
+		sh.CashRefundsAtClose = &v.CashRefunds
 		sh.ClosedByID, sh.ClosedByName = &staffID, &staffName
 		if banked > 0 {
 			sh.BankedCash = &banked
