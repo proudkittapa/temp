@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"arena-backend/internal/model"
 	"arena-backend/internal/pkg/ids"
@@ -255,6 +256,11 @@ func (s *BookingService) CreateBookings(ctx context.Context, input CreateBooking
 	}
 	if err := s.checkNotPast(input.Date, input.Slots, input.WalkIn != nil); err != nil {
 		return nil, err
+	}
+	// The typed walk-in details are stored on every row of the booking.
+	if input.WalkIn != nil && (utf8.RuneCountInString(strings.TrimSpace(input.WalkIn.CustomerName)) > 200 ||
+		utf8.RuneCountInString(input.WalkIn.CustomerPhone) > 30) {
+		return nil, fmt.Errorf("%w: customer name or phone is too long", ErrInvalidBooking)
 	}
 
 	// A free-hour voucher pays for exactly one hour and the booking is the
@@ -1197,20 +1203,22 @@ const (
 func (s *BookingService) SaveSlip(ctx context.Context, paymentID, servedURL, slipHash, actorID string) (string, error) {
 	var previous string
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
-		// The customer's row first (as CreateBookings does): a slip moves an
-		// EXPIRED payment back to "waiting", which counts toward the unpaid
-		// cap, so it must not race a new booking's cap check.
+		// The payment, then the customer's row - the order approving,
+		// cancelling and recording cash use, so a re-upload during a staff
+		// action can't deadlock. The customer's row is locked because a slip
+		// moves an EXPIRED payment back to "waiting", which counts toward the
+		// unpaid cap: a new booking's cap check (under the same row lock)
+		// waits for this to commit.
+		p, err := lockPayment(tx, paymentID)
+		if err != nil {
+			return err
+		}
 		var owner model.Booking
-		if err := tx.Select("bookings.id", "bookings.user_id").Joins("JOIN payments ON payments.booking_id = bookings.id").
-			Where("payments.id = ?", paymentID).Take(&owner).Error; err == nil {
+		if err := tx.Select("id", "user_id").Take(&owner, "id = ?", p.BookingID).Error; err == nil {
 			if err := lockGroupUser(tx, &owner); err != nil {
 				return err
 			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		p, err := lockPayment(tx, paymentID)
-		if err != nil {
 			return err
 		}
 		if err := slipAcceptable(p); err != nil {
@@ -1320,6 +1328,8 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 		if err != nil {
 			return err
 		}
+		// Before Updates below: GORM writes the new values into p.
+		beforeStatus := p.Status
 		if p.Status != model.PaymentSlipUploaded && p.Status != model.PaymentPending {
 			return fmt.Errorf("%w: payment is %s", ErrInvalidState, p.Status)
 		}
@@ -1376,7 +1386,7 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 			Action:      "SLIP_VERIFIED_BY_STAFF",
 			TargetType:  "Payment",
 			TargetID:    p.ID,
-			BeforeState: model.AuditJSON(map[string]any{"status": p.Status}),
+			BeforeState: model.AuditJSON(map[string]any{"status": beforeStatus}),
 			AfterState:  model.AuditJSON(map[string]any{"status": model.PaymentVerified, "bookings_confirmed": confirmed, "points_awarded": points}),
 			CreatedAt:   now,
 		}).Error
@@ -1400,6 +1410,8 @@ func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, se
 		if err != nil {
 			return err
 		}
+		// Before Updates below: GORM writes the new values into p.
+		beforeStatus := p.Status
 		if p.Status != model.PaymentSlipUploaded && p.Status != model.PaymentPending {
 			return fmt.Errorf("%w: payment is %s", ErrInvalidState, p.Status)
 		}
@@ -1433,7 +1445,7 @@ func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, se
 			Action:      "SLIP_REJECTED_BY_STAFF",
 			TargetType:  "Payment",
 			TargetID:    p.ID,
-			BeforeState: model.AuditJSON(map[string]any{"status": p.Status}),
+			BeforeState: model.AuditJSON(map[string]any{"status": beforeStatus}),
 			AfterState:  model.AuditJSON(map[string]any{"status": model.PaymentRejected, "bookings_cancelled": cancelled}),
 			Reason:      &reason,
 			CreatedAt:   now,

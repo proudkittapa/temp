@@ -103,4 +103,9 @@ describe('thaiErrorText', () => {
     expect(thaiErrorText('not allowed: a role can only hold permissions you have yourself (view_reports)')).toBe('บทบาทมีได้เฉพาะสิทธิ์ที่คุณมีเอง — เอาสิทธิ์ที่คุณไม่มีออก หรือให้ผู้ดูแลระบบทำ');
     expect(thaiErrorText("not allowed: this role has permissions you don't have - ask an admin")).toBe('แก้บทบาทนี้ไม่ได้ — บทบาทนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)');
   });
+  it('translates the court and walk-in limits', () => {
+    expect(thaiErrorText('invalid state for this action: สนามบาสเกตบอล A (เต็มสนาม) already has two halves')).toContain('มีครึ่งสนามครบ 2 ฝั่งแล้ว');
+    expect(thaiErrorText('the selected court does not exist')).toBe('ไม่พบสนามนี้ (อาจถูกปิดหรือลบไปแล้ว)');
+    expect(thaiErrorText('invalid booking request: customer name or phone is too long')).toBe('ชื่อหรือเบอร์โทรลูกค้ายาวเกินไป');
+  });
 });

@@ -155,6 +155,10 @@ func (s *BookingService) reReserve(tx *gorm.DB, group []model.Booking, now time.
 			// A lock error (deadlock, timeout) is returned as it is: it is
 			// retryable, not a reason to refund.
 			g, err := s.bkRepo.LockCourtGroupTx(tx, court)
+			if errors.Is(err, repository.ErrSlotTaken) || errors.Is(err, repository.ErrCourtGone) {
+				// The court was closed or removed since: refund instead.
+				return fmt.Errorf("%w (%v)", ErrLatePaymentSlotGone, err)
+			}
 			if err != nil {
 				return err
 			}
@@ -530,8 +534,11 @@ func (s *BookingService) RefundPayment(ctx context.Context, paymentID string, am
 			return err
 		}
 		// A waiting slip whose hours were all released is closed now, so
-		// it leaves the review queue and the customer's unpaid count.
-		if keptAmount(group) == 0 && p.Status != model.PaymentRefunded {
+		// it leaves the review queue and the customer's unpaid count. Not an
+		// approved payment: part of it refunded leaves it VERIFIED (it turns
+		// REFUNDED when all is back), or the rest couldn't be refunded
+		// without a bank check and it would read as fully refunded.
+		if keptAmount(group) == 0 && p.Status != model.PaymentRefunded && p.Status != model.PaymentVerified {
 			if err := tx.Model(p).Updates(map[string]interface{}{"status": model.PaymentRefunded, "updated_at": now}).Error; err != nil {
 				return err
 			}
@@ -565,6 +572,8 @@ func (s *BookingService) MarkPaidInCash(ctx context.Context, paymentID, actorID,
 		if err != nil {
 			return err
 		}
+		// Before Updates below: GORM writes the new values into p.
+		beforeMethod := p.Method
 		// A transfer slip waiting for review is decided by approving or
 		// rejecting it - recording cash on top would count money twice.
 		if p.Status == model.PaymentSlipUploaded {
@@ -617,7 +626,7 @@ func (s *BookingService) MarkPaidInCash(ctx context.Context, paymentID, actorID,
 		return tx.Create(&model.AuditLog{
 			ID: ids.New("log"), UserID: actorID, UserName: actorName,
 			Action: "PAID_IN_CASH_RECORDED", TargetType: "Payment", TargetID: p.ID,
-			BeforeState: model.AuditJSON(map[string]any{"status": before, "method": p.Method}),
+			BeforeState: model.AuditJSON(map[string]any{"status": before, "method": beforeMethod}),
 			AfterState:  model.AuditJSON(map[string]any{"status": model.PaymentVerified, "method": model.PaymentCash, "amount": p.Amount, "bookings_confirmed": confirmed}),
 			CreatedAt:   now,
 		}).Error
@@ -707,7 +716,7 @@ func (s *BookingService) MarkNoShow(ctx context.Context, bookingID, actorID, act
 // hour COMPLETED again if it has already ended.
 func (s *BookingService) UndoNoShow(ctx context.Context, bookingID, actorID, actorName string) (*UndoNoShowResult, error) {
 	var peek model.Booking
-	if err := s.db.WithContext(ctx).Select("id", "user_id", "court_id").Take(&peek, "id = ?", bookingID).Error; err != nil {
+	if err := s.db.WithContext(ctx).Select("id", "user_id", "court_id", "date").Take(&peek, "id = ?", bookingID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
@@ -720,12 +729,20 @@ func (s *BookingService) UndoNoShow(ctx context.Context, bookingID, actorID, act
 	res := &UndoNoShowResult{}
 	err := repository.RetryTx(s.db.WithContext(ctx), func(tx *gorm.DB) error {
 		*res = UndoNoShowResult{} // a retried attempt starts over
-		// Lock order as a new booking: customer, court group, then rows.
+		// Lock order as a new booking: customer, the date's closure lock,
+		// court group, then rows.
 		if peek.UserID != "" && peek.UserID != model.WalkInUserID {
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Take(&model.User{}, "id = ?", peek.UserID).Error; err != nil &&
 				!errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
 			}
+		}
+		date := peek.Date
+		if len(date) > 10 {
+			date = date[:10]
+		}
+		if err := tx.Exec("SELECT pg_advisory_xact_lock_shared(?, hashtext(?))", closureLockClass, date).Error; err != nil {
+			return err
 		}
 		group, err := s.bkRepo.LockCourtGroupTx(tx, court)
 		if err != nil {
@@ -740,6 +757,21 @@ func (s *BookingService) UndoNoShow(ctx context.Context, bookingID, actorID, act
 		}
 		if b.Status != model.BookingNoShow {
 			return fmt.Errorf("%w: booking is %s, not a no-show", ErrInvalidState, b.Status)
+		}
+		// A closure made since the no-show (it didn't list this hour as
+		// affected, nobody was holding it) - the hour can't come back.
+		var closures []model.DayOff
+		if err := tx.Where("date = ?", b.Date).Find(&closures).Error; err != nil {
+			return err
+		}
+		closedCourts, err := repository.ClosureCourts(tx, closures)
+		if err != nil {
+			return err
+		}
+		if _, hour, err := hourSlotEnd(b.StartTime); err != nil {
+			return err
+		} else if closure := repository.ClosureFor(closures, court, closedCourts, hour); closure != nil {
+			return fmt.Errorf("%w: %s is closed at %s (%s) - remove the closure first", ErrSlotUnavailable, court.Name, b.StartTime, closure.Reason)
 		}
 		if err := s.bkRepo.CheckOverlapTx(tx, court, group, b.Date, b.StartTime, b.EndTime); err != nil {
 			if errors.Is(err, repository.ErrSlotTaken) {

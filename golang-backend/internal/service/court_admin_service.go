@@ -90,6 +90,18 @@ func (s *CourtAdminService) Create(ctx context.Context, in CourtInput, actorID, 
 			if full.ShareOfGroup < 1 || full.Type != in.Type {
 				return fmt.Errorf("%w: a half court must be part of a full %s court", ErrInvalidBooking, in.Type)
 			}
+			// Two halves at most (left and right): halves don't block each
+			// other, so a third would book the same floor twice. Counted under
+			// the full court's row lock, so two creates can't both pass.
+			if full.MutexGroupID != nil && *full.MutexGroupID != "" {
+				var halves int64
+				if err := tx.Model(&model.Court{}).Where("mutex_group_id = ? AND share_of_group < 1", *full.MutexGroupID).Count(&halves).Error; err != nil {
+					return err
+				}
+				if halves >= 2 {
+					return fmt.Errorf("%w: %s already has two halves", ErrInvalidState, full.Name)
+				}
+			}
 			if full.MutexGroupID == nil || *full.MutexGroupID == "" {
 				group := "grp-" + full.ID
 				if err := tx.Model(&full).Update("mutex_group_id", group).Error; err != nil {

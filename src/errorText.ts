@@ -162,6 +162,8 @@ const RULES: Rule[] = [
   [/voucher (\S+) is (\w+)/i, m => `คูปอง ${m[1]} ใช้ไม่ได้ (${m[2]})`],
 
   // Courts, closures, pricing settings
+  [/(.+) already has two halves/i, m => `${m[1]} มีครึ่งสนามครบ 2 ฝั่งแล้ว`],
+  [/customer name or phone is too long/i, 'ชื่อหรือเบอร์โทรลูกค้ายาวเกินไป'],
   [/a court named "?(.+?)"? already exists/i, m => `มีสนามชื่อ ${m[1]} อยู่แล้ว`],
   [/a half court must be part of a full court/i, 'ครึ่งสนามต้องเลือกว่าเป็นครึ่งของสนามใด'],
   [/a half court must be part of a full (\w+) court/i, m => `ครึ่งสนามต้องเป็นครึ่งของสนามเต็มประเภท ${m[1]}`],

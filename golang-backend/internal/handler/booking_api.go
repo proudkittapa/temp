@@ -53,7 +53,7 @@ func respondError(c *gin.Context, err error) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "error": msgSlow})
 		return
 	}
-	if repository.IsRetryableConflict(err) || repository.IsLockTimeout(err) || errors.Is(err, service.ErrBusy) {
+	if repository.IsRetryableConflict(err) || repository.IsLockTimeout(err) || errors.Is(err, service.ErrBusy) || errors.Is(err, repository.ErrCourtRegrouped) {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": msgBusy})
 		return
 	}
@@ -74,7 +74,7 @@ func respondError(c *gin.Context, err error) {
 		status = http.StatusConflict
 	case errors.Is(err, service.ErrInvalidState), errors.Is(err, service.ErrNoOpenShift):
 		status = http.StatusConflict
-	case errors.Is(err, service.ErrInvalidBooking):
+	case errors.Is(err, service.ErrInvalidBooking), errors.Is(err, repository.ErrCourtGone):
 		status = http.StatusBadRequest
 	case errors.Is(err, service.ErrTooManyUnpaid):
 		status = http.StatusTooManyRequests

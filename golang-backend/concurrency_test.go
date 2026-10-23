@@ -917,3 +917,45 @@ func TestConcurrencyCashPaymentVersusShiftClose(t *testing.T) {
 		}
 	}
 }
+
+// The customer re-sends the slip while staff approve it: one wins (approved
+// with the slip staff saw, or refused because a new slip came), and the two
+// never deadlock - they take the payment and customer locks in the same
+// order (deadlocks would be retried, so the database's own counter is
+// checked).
+func TestConcurrencySlipReuploadVersusApprove(t *testing.T) {
+	e := raceSetup(t)
+	sl := newSlots()
+	ctx := context.Background()
+	deadlocks := func() int64 {
+		var n int64
+		e.db.Raw("SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()").Scan(&n)
+		return n
+	}
+	before := deadlocks()
+	for round := 0; round < raceRounds(); round++ {
+		date, times := sl.take(t, 1)
+		u := e.newCustomer(t, 0)
+		_, p := e.bookWithSlip(t, u, date, "bad-12", times[0])
+		n := nextSeq()
+		errs := together(
+			func() error {
+				_, err := e.bookings.SaveSlip(ctx, p.ID, fmt.Sprintf("/uploads/race-%d.png", n), fmt.Sprintf("hash-race-%d", n), u.ID)
+				return err
+			},
+			func() error {
+				_, err := e.bookings.VerifyPayment(ctx, p.ID, p.SlipUploadedAt, "staff-a", "Staff A")
+				return err
+			},
+		)
+		expectOnly(t, fmt.Sprintf("round %d re-upload", round), errs[0], service.ErrInvalidState)
+		expectOnly(t, fmt.Sprintf("round %d approve", round), errs[1], service.ErrSlipChanged)
+		if (errs[0] == nil) == (errs[1] == nil) {
+			t.Errorf("round %d: re-upload %v, approve %v - want exactly one to win", round, errs[0], errs[1])
+		}
+	}
+	time.Sleep(200 * time.Millisecond) // the statistics collector is a moment behind
+	if d := deadlocks() - before; d > 0 {
+		t.Errorf("%d deadlock(s) between re-upload and approve", d)
+	}
+}

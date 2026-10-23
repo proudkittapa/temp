@@ -15,6 +15,13 @@ import (
 // active booking on the same court or a conflicting mutex-group sibling.
 var ErrSlotTaken = errors.New("slot already booked")
 
+// ErrCourtRegrouped: an admin added or removed a half court while a booking
+// was locking the court - retryable (answered as "busy, try again").
+var ErrCourtRegrouped = errors.New("the court's grouping changed during the booking - please try again")
+
+// ErrCourtGone: the court asked for doesn't exist (a bad request).
+var ErrCourtGone = errors.New("the selected court does not exist")
+
 // LiveSlotIndex is the database backstop against double booking: one
 // booking that still holds the court (not cancelled, not a no-show) per
 // court, date and start hour (see ensureIndexes
@@ -70,7 +77,7 @@ func (r *BookingRepository) LockCourtGroupTx(tx *gorm.DB, court model.Court) ([]
 		var cur model.Court
 		if err := tx.Select("id", "mutex_group_id").Take(&cur, "id = ?", court.ID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, errors.New("boundary error: selected court does not exist")
+				return nil, ErrCourtGone
 			}
 			return nil, fmt.Errorf("failed to read court group: %w", err)
 		}
@@ -97,7 +104,7 @@ func (r *BookingRepository) LockCourtGroupTx(tx *gorm.DB, court model.Court) ([]
 			return group, nil
 		}
 	}
-	return nil, errors.New("the court's grouping changed during the booking - please try again")
+	return nil, ErrCourtRegrouped
 }
 
 func sameGroup(a, b *string) bool {

@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Full code recheck, part 2 (booking core)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck every codes. no bug")
+- **Commit(s):** this commit (on `main`, parent `c605993`)
+- **Changed** (each confirmed in the code first; DB tests fail without the fix where noted):
+  - **Partial refund of an approved payment** (`booking_admin.go`
+    RefundPayment): refunding part of a VERIFIED payment whose hours were
+    all cancelled marked it REFUNDED, so the rest then needed a bank check
+    (wrong for cash) and it read as fully refunded. The close-as-refunded
+    step now only applies to slips nobody approved. Test
+    `TestPartialRefundKeepsApprovedPayment` (failed before: REFUNDED after
+    100 of 440).
+  - **Audit "before" was the after-state** (VerifyPayment, RejectPayment,
+    MarkPaidInCash): GORM writes new values into the struct; old status /
+    method are captured first. Test `TestAuditBeforeStateIsTheOldState`.
+  - **Undo no-show onto a closed court** (`UndoNoShow`): takes the date's
+    closure lock (order: customer, closure, court group, row, as
+    CreateBookings) and refuses while the court is closed at that hour.
+    Test `TestUndoNoShowRespectsClosures`.
+  - **Deadlock slip re-upload vs approve/cancel/cash** (`SaveSlip`): now
+    locks payment then customer like the staff actions. New race test
+    `TestConcurrencySlipReuploadVersusApprove` counts Postgres deadlocks:
+    26 in 60 rounds (28 s) before, 0 (1 s) after.
+  - **Third "half" of a full court** (`court_admin_service.go`): at most
+    two halves, counted under the full court's row lock. Test
+    `TestFullCourtHasTwoHalvesAtMost`.
+  - **500s for expected cases** (`repository/booking.go`, `booking_api.go`):
+    court regrouped mid-booking -> 409 "busy, try again"; unknown court ->
+    400; a late payment on a court closed since -> "slot gone, refund
+    instead" (was "slot already booked").
+  - **Walk-in customer name/phone** length-checked (200/30 characters).
+  - Thai texts for the new messages; tests in `recheck_db_test.go` (new).
+- **Verified:** `go vet`, `go test ./...`, `go test -race` with all DB
+  tests (incl. 13 race tests), `tsc`, vitest 64/64.
+- **Not done / follow-ups:** part 3 = staff, admin and customer screen
+  findings.
+
+---
+
 ## 2026-10-23 — Full code recheck, part 1 (backend + customer screen fixes)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck every codes. no bug")
