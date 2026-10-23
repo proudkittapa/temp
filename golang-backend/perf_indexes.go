@@ -26,7 +26,7 @@ type perfIndex struct {
 }
 
 // perfIndexLockKey: one instance builds the indexes at a time
-// (pg_try_advisory_lock; 4201-4203 are taken, see main.go).
+// (pg_try_advisory_lock; 4201-4203 and 4205 are taken, see main.go).
 const perfIndexLockKey = 4204
 
 var perfIndexes = []perfIndex{

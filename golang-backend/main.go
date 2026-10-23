@@ -1022,11 +1022,33 @@ func normalizePhones(db *gorm.DB) {
 	}
 }
 
+// schemaLockKey is held (session advisory lock) for the whole schema setup.
+const schemaLockKey = 4205
+
 // setupSchema brings the database to the current schema: tables
 // (AutoMigrate), data migrations, indexes, constraints and the default rows
 // the pricing engine needs. Every step is idempotent, so it runs on every
 // start; the concurrency tests build their database with it too.
+//
+// One server at a time: two starting together (two replicas, a rolling
+// update) used to both run AutoMigrate and one failed ("duplicate key ...
+// pg_type", "column already exists") and exited. The lock is taken on one
+// connection, which the whole setup uses; the others wait for it, then
+// find nothing left to do. It is released when the setup ends (or the
+// process exits).
 func setupSchema(setupDB *gorm.DB) error {
+	return setupDB.Connection(func(conn *gorm.DB) error {
+		if err := conn.Exec("SELECT pg_advisory_lock(?)", schemaLockKey).Error; err != nil {
+			return err
+		}
+		defer conn.Exec("SELECT pg_advisory_unlock(?)", schemaLockKey)
+		// A fresh statement per call on the same connection (conn itself
+		// carries one statement, which chained calls would pile up on).
+		return setupSchemaLocked(conn.Session(&gorm.Session{NewDB: true}))
+	})
+}
+
+func setupSchemaLocked(setupDB *gorm.DB) error {
 	if err := convertMoneyColumns(setupDB); err != nil {
 		return err
 	}

@@ -176,12 +176,12 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 ### Scaling to 2+ servers
 - [ ] Slip images are on the server's own disk - move to shared storage (S3/GCS or a shared volume) before a second server.
 - [ ] Background jobs run in every server - elect one with `pg_try_advisory_lock` per tick; batch `CompleteFinishedBookings`.
-- [ ] Startup migrations/indexes run unlocked - wrap in one advisory lock or run as a one-shot job.
+- [x] Startup migrations/indexes run unlocked - done 2026-10-22/23: the whole `setupSchema` holds one session advisory lock (4205) on one connection; two servers starting together on an empty database used to crash one of them in AutoMigrate (3 of 3 tries), now both start (5 of 5).
 - [ ] Cash-drawer attribution uses each server's clock (`ReturnRentalItem` now takes its time after the drawer lock - fixed 2026-10-21): stamp `shift_id` on payments/orders/deposit settlements under the drawer lock and compute expected cash by shift.
 
 ### Correctness
 - [x] Booking cancel / no-show now cancel unused rewards bought with those points (shared `coverPointsWithRewards` with VoidOrder); a reward already handed over is reported (`points_short`), the cancel still goes ahead. Done 2026-10-21. (Browser-only mode doesn't do the clawback.)
-- [x] Lock order: rental return now locks order → item → drawer → stock, void locks its items and restocks in checkout's sorted order. Done 2026-10-21. (MarkPaidInCash drawer-before-closure vs CreateBookings closure-before-drawer is still open; both shared locks, only matters with a queued close + day-off.)
+- [x] Lock order: rental return now locks order → item → drawer → stock, void locks its items and restocks in checkout's sorted order. Done 2026-10-21. (MarkPaidInCash now takes the closure lock before the drawer for an expired booking, the order CreateBookings uses; race test with a closure and a shift close at the same moment passes, 2026-10-23.)
 - [x] `CancelBookings` (and the expiry job's counter) reset per retry attempt. Done 2026-10-21.
 - [x] `SaveSlip` takes the customer's lock first (as CreateBookings); the expiry job closes orphan payments (booking rows gone) instead of re-picking them forever. Done 2026-10-21.
 - [x] `LockCourtGroupTx` re-reads the court's group inside the transaction and re-checks it on the locked row (retries if regrouped meanwhile). Done 2026-10-21.

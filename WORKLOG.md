@@ -18,6 +18,39 @@ Entry format:
 
 ---
 
+## 2026-10-23 — More race tests; schema setup under one lock
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("what do we do next" -> group 3, "sure")
+- **Commit(s):** this commit (on `main`, parent `65471d8`)
+- **Changed:**
+  - `concurrency_test.go`: 3 more races (12 in all). Closure vs booking
+    (refused as closed, or got in first and listed in the closure's
+    affected bookings; odd rounds close court B full while its left half is
+    booked). Rental return vs void (stock back once, deposit settled once,
+    drawer deposits add up to 0). Cash payment vs shift close (in the
+    closed shift's frozen cash total, or refused "no open shift"; odd rounds
+    on an expired booking with a closure created on that date at the same
+    moment - the lock order TODO section 11 had left open). Extra random
+    pauses on the faster side so both orders happen.
+  - `main.go`: `setupSchema` takes a session advisory lock (4205) on one
+    connection (`Connection` + `Session{NewDB: true}`) for the whole setup;
+    the body is `setupSchemaLocked`. Found by test first: two servers
+    started together on an empty database -> one failed in AutoMigrate
+    ("duplicate key ... pg_type_typname_nsp_index") and exited, 3 of 3
+    tries. `perf_indexes.go` comment: lock keys taken.
+  - `TODO.md`: two items ticked.
+- **Verified:** `go vet ./...`, `go test ./...`; with `TEST_DATABASE_URL`
+  all DB tests pass at 40 and 50 rounds; outcome mix checked in the test
+  database (closure: 30 booked first / 10 refused; cash: recorded and
+  refused, both with and without expiry; rental: 10 settled by return /
+  30 by void). Two servers on a new empty database: 5 of 5 tries both
+  `/readyz` 200, no errors in either log, default rows complete (25 courts,
+  20 prices, 4 discounts, 4 roles). Dev database restart: ready, no errors.
+- **Not done / follow-ups:** small cleanup (unused packages, 7-9 px text)
+  is next.
+
+---
+
 ## 2026-10-22 — Money columns numeric(12,2)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1", item 4)

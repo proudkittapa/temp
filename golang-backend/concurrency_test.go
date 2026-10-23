@@ -46,6 +46,7 @@ type raceEnv struct {
 	pos      *service.POSService
 	rewards  *service.RewardService
 	shifts   *service.ShiftService
+	closures *service.DayOffService
 }
 
 var (
@@ -118,6 +119,7 @@ func newRaceEnv(dsn string) (*raceEnv, error) {
 		pos:      service.NewPOSService(db, usrRepo),
 		rewards:  service.NewRewardService(db, usrRepo),
 		shifts:   service.NewShiftService(db),
+		closures: service.NewDayOffService(db),
 	}, nil
 }
 
@@ -694,6 +696,224 @@ func TestConcurrencyVoidVersusShiftClose(t *testing.T) {
 		}
 		if closed.CashOrdersAtClose == nil || *closed.CashOrdersAtClose != nowSum || nowSum != want {
 			t.Errorf("round %d: counted at close %v, sales now add up to %.2f, want %.2f (void error %v)", round, closed.CashOrdersAtClose, nowSum, want, errs[0])
+		}
+	}
+}
+
+// openTestShift opens the drawer (closing one left open), with a note so
+// the float needn't match the last count.
+func (e *raceEnv) openTestShift(t *testing.T) *service.ShiftView {
+	t.Helper()
+	ctx := context.Background()
+	if cur, err := e.shifts.Current(ctx); err != nil {
+		t.Fatal(err)
+	} else if cur != nil {
+		if _, err := e.shifts.Close(ctx, 0, "race test cleanup", "staff-a", "Staff A", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sh, err := e.shifts.Open(ctx, 500, "race test: float reset", "staff-a", "Staff A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sh
+}
+
+// A manager closes a court for an hour while a customer books that hour:
+// either the booking is refused (closed), or it got in first and the
+// closure lists it among the affected bookings - never a booking in the
+// closed window that nobody was told about. Odd rounds close court B's full
+// court while the left half is booked (a closure covers its halves).
+func TestConcurrencyClosureVersusBooking(t *testing.T) {
+	e := raceSetup(t)
+	sl := newSlots()
+	ctx := context.Background()
+	for round := 0; round < raceRounds(); round++ {
+		date, times := sl.take(t, 1)
+		closeCourt, bookCourt := "bad-8", "bad-8"
+		if round%2 == 1 {
+			closeCourt, bookCourt = "bb-b-full", "bb-b-left"
+		}
+		hour, _ := strconv.Atoi(times[0][:2])
+		end := hour + 1
+		u := e.newCustomer(t, 0)
+		var booked *service.CreateBookingResult
+		var closure *service.CreateDayOffResult
+		errs := together(
+			func() (err error) {
+				booked, err = e.bookings.CreateBookings(ctx, onlineBooking(u.ID, date, bookCourt, times[0]))
+				return err
+			},
+			func() (err error) {
+				// The booking does more work before it reaches the lock;
+				// a longer pause lets it win some rounds too.
+				time.Sleep(time.Duration(rand.IntN(8000)) * time.Microsecond)
+				closure, err = e.closures.Create(ctx, service.CreateDayOffInput{
+					Date: date, CourtID: &closeCourt, Reason: "race test closure", StartHour: &hour, EndHour: &end,
+				}, "mgr-a", "Manager A")
+				return err
+			},
+		)
+		expectOnly(t, fmt.Sprintf("round %d booking", round), errs[0], service.ErrSlotUnavailable)
+		if errs[1] != nil {
+			t.Fatalf("round %d closure: %v", round, errs[1])
+		}
+		listed := false
+		for _, b := range closure.AffectedBookings {
+			if b.CourtID == bookCourt && b.StartTime == times[0] {
+				listed = true
+			}
+		}
+		held := e.activeOn(t, date, times[0], bookCourt)[bookCourt]
+		switch {
+		case errs[0] == nil:
+			if !listed || held != 1 || booked == nil {
+				t.Errorf("round %d: booking went through but the closure listed it %v (held %d)", round, listed, held)
+			}
+		case listed || held != 0:
+			t.Errorf("round %d: booking refused but listed %v, held %d", round, listed, held)
+		}
+	}
+}
+
+// A rental is returned while a manager voids it: the item comes back into
+// stock once, and the deposit is settled once (given back by the return or
+// by the void) - the drawer's deposits add up to zero.
+func TestConcurrencyRentalReturnVersusVoid(t *testing.T) {
+	e := raceSetup(t)
+	ctx := context.Background()
+	e.openTestShift(t)
+	prod := model.Product{ID: "prd-race-rent", Name: "Race racket", Category: model.ProductEquipment, Price: 50, IsRental: true,
+		Deposit: 100, Stock: 1000, IsActive: true, CreatedAt: time.Now()}
+	if err := e.db.Create(&prod).Error; err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < raceRounds(); round++ {
+		var before int
+		e.db.Model(&model.Product{}).Select("stock").Where("id = ?", prod.ID).Scan(&before)
+		out, err := e.pos.ProcessCheckout(ctx, service.CheckoutInput{
+			Type: model.OrderEquipmentRent, PaymentMeth: model.PaymentCash, CreatedBy: "staff-a", CreatedByName: "Staff A",
+			Items: []service.POSOrderItemInput{{ProductID: prod.ID, Qty: 1}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var item model.OrderItem
+		if err := e.db.First(&item, "order_id = ?", out.Order.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		errs := together(
+			func() error {
+				_, err := e.pos.ReturnRentalItem(ctx, item.ID, 0, "", "staff-a", "Staff A")
+				return err
+			},
+			func() error {
+				_, err := e.pos.VoidOrder(ctx, out.Order.ID, "wrong racket", "mgr-a", "Manager A")
+				return err
+			},
+		)
+		expectOnly(t, fmt.Sprintf("round %d return", round), errs[0], service.ErrInvalidState)
+		expectOnly(t, fmt.Sprintf("round %d void", round), errs[1], service.ErrInvalidState)
+		if errs[1] != nil {
+			t.Errorf("round %d: void refused: %v", round, errs[1])
+		}
+		var after int
+		e.db.Model(&model.Product{}).Select("stock").Where("id = ?", prod.ID).Scan(&after)
+		var o model.Order
+		if err := e.db.First(&o, "id = ?", out.Order.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if after != before {
+			t.Errorf("round %d: stock %d before the rental, %d after return + void", round, before, after)
+		}
+		if o.DepositSettledAt == nil || o.DepositReturned+o.DepositKept != o.DepositAmount || o.DepositAmount != 100 {
+			t.Errorf("round %d: deposit %.2f, returned %.2f, kept %.2f, settled %v", round, o.DepositAmount, o.DepositReturned, o.DepositKept, o.DepositSettledAt)
+		}
+	}
+	cur, err := e.shifts.Current(ctx)
+	if err != nil || cur == nil {
+		t.Fatalf("shift: %v", err)
+	}
+	if cur.CashDeposits != 0 {
+		t.Errorf("drawer deposits add up to %.2f, want 0 (each taken and given back once)", cur.CashDeposits)
+	}
+}
+
+// A manager records a booking as paid in cash while the shift is being
+// closed: the cash is either in the closed shift's count or refused (no
+// shift open) - never paid into a shift after it was counted. Odd rounds
+// use an expired booking (booked again under the date's closure lock) and
+// add a closure created on that date at the same moment, the lock order the
+// three share.
+func TestConcurrencyCashPaymentVersusShiftClose(t *testing.T) {
+	e := raceSetup(t)
+	sl := newSlots()
+	ctx := context.Background()
+	for round := 0; round < raceRounds(); round++ {
+		date, times := sl.take(t, 1)
+		u := e.newCustomer(t, 0)
+		res, err := e.bookings.CreateBookings(ctx, onlineBooking(u.ID, date, "bad-9", times[0]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expired := round%2 == 1
+		if expired {
+			old := time.Now().Add(-service.PaymentHoldDuration - time.Minute)
+			e.db.Model(&model.Payment{}).Where("id = ?", res.Payment.ID).Update("created_at", old)
+			if _, err := e.bookings.ExpireUnpaidBookings(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		sh := e.openTestShift(t)
+		fns := []func() error{
+			func() error {
+				_, err := e.bookings.MarkPaidInCash(ctx, res.Payment.ID, "mgr-a", "Manager A")
+				return err
+			},
+			func() error {
+				time.Sleep(time.Duration(rand.IntN(4000)) * time.Microsecond) // as above: both orders
+				_, err := e.shifts.Close(ctx, 500, "race test", "staff-a", "Staff A", false)
+				return err
+			},
+		}
+		if expired {
+			other := "bad-10"
+			fns = append(fns, func() error {
+				_, err := e.closures.Create(ctx, service.CreateDayOffInput{Date: date, CourtID: &other, Reason: "race test", IsFullDay: true}, "mgr-b", "Manager B")
+				return err
+			})
+		}
+		errs := together(fns...)
+		expectOnly(t, fmt.Sprintf("round %d cash", round), errs[0], service.ErrNoOpenShift)
+		if errs[1] != nil {
+			t.Fatalf("round %d close: %v", round, errs[1])
+		}
+		if expired && errs[2] != nil {
+			t.Errorf("round %d closure: %v", round, errs[2])
+		}
+		var closed model.Shift
+		if err := e.db.First(&closed, "id = ?", sh.Shift.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		var nowSum float64
+		e.db.Model(&model.Payment{}).Select("COALESCE(SUM(amount), 0)").
+			Where("method = ? AND verified_at >= ? AND verified_at < ? AND status IN ?", model.PaymentCash, closed.OpenedAt, *closed.ClosedAt,
+				[]model.PaymentStatus{model.PaymentVerified, model.PaymentRefunded}).Scan(&nowSum)
+		var p model.Payment
+		if err := e.db.First(&p, "id = ?", res.Payment.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		want := 0.0
+		if errs[0] == nil {
+			want = p.Amount
+			if p.Status != model.PaymentVerified || p.Method != model.PaymentCash {
+				t.Errorf("round %d: recorded but payment is %s %s", round, p.Status, p.Method)
+			}
+		} else if p.Status == model.PaymentVerified {
+			t.Errorf("round %d: refused but payment is VERIFIED", round)
+		}
+		if closed.CashBookingsAtClose == nil || *closed.CashBookingsAtClose != nowSum || nowSum != want {
+			t.Errorf("round %d: cash bookings at close %v, now add up to %.2f, want %.2f (cash error %v)", round, closed.CashBookingsAtClose, nowSum, want, errs[0])
 		}
 	}
 }
