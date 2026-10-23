@@ -18,6 +18,41 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Cleanup: unused packages, larger small text
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (group 3, "sure")
+- **Commit(s):** this commit (on `main`, parent `c0568b6`)
+- **Changed:**
+  - `package.json` / `package-lock.json`: removed `@google/genai`,
+    `express`, `@types/express`, `dotenv`, `motion`, `tsx`, `autoprefixer`
+    (nothing imports them: searched src, scripts, configs; Tailwind 4 needs
+    no autoprefixer). `esbuild` kept (Vite uses it). The lock was updated
+    with `npm uninstall --package-lock-only`; the `xlsx` entry (0.20.3 from
+    cdn.sheetjs.com) is unchanged. `clean` script no longer mentions
+    `server.js`.
+  - `.env.example`: removed the AI Studio `GEMINI_API_KEY` and `APP_URL`
+    blocks (read by nothing). `metadata.json` left alone (the template
+    platform's file).
+  - Text sizes: `text-[7px]`/`[8px]` -> `[10px]`, `[9px]`/`[9.5px]` ->
+    `[11px]` in 76 places (walk-in grid, day total, slips, shop, rentals,
+    admin dashboard/users/discounts/products/pricing/audit, App).
+  - `TODO.md` updated.
+- **Verified:** `npm ls --package-lock-only` consistent; a fresh install of
+  the new list (150 packages instead of 199) -> `tsc --noEmit` ok, vitest
+  61/61, `vite build` ok (customer page 122.7 KB gzip, as before). Dev web
+  server restarted on it: Playwright counter flow (cash walk-in + sale) ok,
+  no page errors; `node dev-runner.js` (browser-only mode) serves the page.
+  Text sizes: screenshots before/after at 1024 px and 390 px (walk-in grid,
+  day total, slips, admin dashboard) - same number of clipped elements (1
+  each, already there before), no page-wide sideways scroll, grid cells
+  still fit.
+- **Not done / follow-ups:** this sandbox's proxy blocks cdn.sheetjs.com,
+  so a full `npm ci` with the real `xlsx` tarball couldn't run here (the
+  checks used `xlsx` 0.18.5 from npm in a local folder, not committed). The
+  Docker web build on a normal server downloads it as before.
+
+---
+
 ## 2026-10-23 — More race tests; schema setup under one lock
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("what do we do next" -> group 3, "sure")

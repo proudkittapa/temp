@@ -57,25 +57,25 @@ export default function DashboardTab() {
           <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 text-xs shadow-xs">
             <span className="text-emerald-800 block font-bold text-[10px]">รายได้ค่าคอร์ทวันนี้ (Booking Revenue)</span>
             <span className="text-2xl font-extrabold text-emerald-900 mt-1 block">{formatBaht(dashStats.dailyBookingsRevenue)} บาท</span>
-            <p className="text-[9px] text-emerald-700 font-bold mt-1">จำนวนจองอนุมัติสำเร็จ: {dashStats.dailyBookingsCount} รายการ</p>
+            <p className="text-[11px] text-emerald-700 font-bold mt-1">จำนวนจองอนุมัติสำเร็จ: {dashStats.dailyBookingsCount} รายการ</p>
           </div>
 
           <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-xs shadow-xs">
             <span className="text-amber-800 block font-bold text-[10px]">รายรับสินค้า/เช่าแร็กวันนี้ (Today F&B)</span>
             <span className="text-2xl font-extrabold text-amber-900 mt-1 block">{formatBaht(dashStats.dailyOrderRevenue)} บาท</span>
-            <p className="text-[9px] text-amber-700 mt-1">จากระบบ Walkin และ POS เคาเตอร์</p>
+            <p className="text-[11px] text-amber-700 mt-1">จากระบบ Walkin และ POS เคาเตอร์</p>
           </div>
 
           <div className="bg-sky-50 p-4 rounded-xl border border-sky-200 text-xs shadow-xs">
             <span className="text-sky-800 block font-bold text-[10px]">รายรับรวมสุทธิของวันนี้</span>
             <span className="text-2xl font-extrabold text-sky-950 mt-1 block">{formatBaht(dashStats.dailyTotalRevenue)} บาท</span>
-            <p className="text-[9px] text-sky-700 mt-1">สรุปรวมลิ้นชักการรับเงินสองทางวันนี้</p>
+            <p className="text-[11px] text-sky-700 mt-1">สรุปรวมลิ้นชักการรับเงินสองทางวันนี้</p>
           </div>
 
           <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-200 text-xs shadow-xs">
             <span className="text-indigo-800 block font-bold text-[10px]">อัตราเข้าใช้สนามประจำวัน (Occupancy)</span>
             <span className="text-2xl font-extrabold text-indigo-950 mt-1 block">{dashStats.occupancyRate}%</span>
-            <p className="text-[9px] text-indigo-700 mt-1">ชั่วโมงสนามที่ขายได้ จาก {physicalCourtCount()} สนาม × {api.USE_BACKEND ? dash?.hoursPerDay ?? hoursPerDay() : hoursPerDay()} ชั่วโมง</p>
+            <p className="text-[11px] text-indigo-700 mt-1">ชั่วโมงสนามที่ขายได้ จาก {physicalCourtCount()} สนาม × {api.USE_BACKEND ? dash?.hoursPerDay ?? hoursPerDay() : hoursPerDay()} ชั่วโมง</p>
           </div>
         </div>
       </div>
@@ -88,24 +88,24 @@ export default function DashboardTab() {
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
             <span className="text-slate-400 block font-bold text-[10px]">รายรับรวมประเวศทุกก๊วน (All-Time Revenue)</span>
             <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{formatBaht(dashStats.allTimeRevenue)} บาท</span>
-            <div className="flex gap-2 text-[9px] text-slate-500 mt-1.5 font-mono">
+            <div className="flex gap-2 text-[11px] text-slate-500 mt-1.5 font-mono">
               <span>จากคอร์ท: {formatBaht(dashStats.bookingSales)}</span>
               <span>|</span>
               <span>ตู้ POS: {formatBaht(dashStats.fbSales)}</span>
             </div>
-            <p className="text-[9px] text-slate-500 mt-1">รอชำระ (ยังไม่นับ): {formatBaht(dashStats.pendingRevenue)} · คืนเงินแล้ว: {formatBaht(dashStats.refunds)} บาท</p>
+            <p className="text-[11px] text-slate-500 mt-1">รอชำระ (ยังไม่นับ): {formatBaht(dashStats.pendingRevenue)} · คืนเงินแล้ว: {formatBaht(dashStats.refunds)} บาท</p>
           </div>
 
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
             <span className="text-slate-400 block font-bold text-[10px]">จำนวนสมาชิกจองในก๊วนคัพ (Registered Accounts)</span>
             <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{dashStats.customerCount} บัญชี</span>
-            <p className="text-[9px] text-slate-500 mt-1.5">ลูกค้าระดับ MOU องค์กร / สโมสร และนักซ้อมอิสระ</p>
+            <p className="text-[11px] text-slate-500 mt-1.5">ลูกค้าระดับ MOU องค์กร / สโมสร และนักซ้อมอิสระ</p>
           </div>
 
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
             <span className="text-slate-400 block font-bold text-[10px]">รวมมูลค่าเคาน์เตอร์สะสม (Total POS Products)</span>
             <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{formatBaht(dashStats.fbSales)} บาท</span>
-            <p className="text-[9px] text-slate-500 mt-1.5">เครื่องดื่ม น้ำเกลือแร่ สนับเข่า ดรายไอซ์ และเช่าแร็กเก็ต</p>
+            <p className="text-[11px] text-slate-500 mt-1.5">เครื่องดื่ม น้ำเกลือแร่ สนับเข่า ดรายไอซ์ และเช่าแร็กเก็ต</p>
           </div>
         </div>
       </div>
@@ -162,7 +162,7 @@ export default function DashboardTab() {
             </ResponsiveContainer>
             {/* Total indicator overlay */}
             <div className="absolute text-center">
-              <p className="text-[9px] text-slate-400 uppercase font-bold tracking-tight">รวม</p>
+              <p className="text-[11px] text-slate-400 uppercase font-bold tracking-tight">รวม</p>
               <p className="font-extrabold text-slate-800 text-sm">{formatBaht(dashStats.fbSales)} บ.</p>
             </div>
           </div>
@@ -185,7 +185,7 @@ export default function DashboardTab() {
       {/* Peak Hours Occupancy trend chart */}
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/60">
         <div className="mb-4">
-          <span className="text-xs bg-amber-100 text-amber-800 font-extrabold px-2.5 py-1 rounded-full uppercase text-[9px]">Peak / Off-Peak Rate Analysis</span>
+          <span className="text-xs bg-amber-100 text-amber-800 font-extrabold px-2.5 py-1 rounded-full uppercase text-[11px]">Peak / Off-Peak Rate Analysis</span>
           <h4 className="text-xs font-bold text-slate-800 mt-2">อัตราการใช้สนามเฉลี่ยรายชั่วโมง (%) ช่วง 30 วันถึงวันที่เลือก</h4>
           <p className="text-[10px] text-slate-400 mt-0.5">ใช้ดูว่าช่วงไหนคนเต็ม เพื่อกำหนดช่วง Peak / Off-Peak</p>
         </div>
@@ -245,7 +245,7 @@ export default function DashboardTab() {
               <tr className="bg-slate-100 text-[10px] uppercase font-black text-slate-500 border-b border-slate-200">
                 <th className="p-3 bg-slate-100 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-36">สนาม (Court Name)</th>
                 {openSlotHours().map((time) => (
-                  <th key={time} className="p-2 text-center text-[9px] min-w-[70px] border-l border-slate-200">
+                  <th key={time} className="p-2 text-center text-[11px] min-w-[70px] border-l border-slate-200">
                     {time} น.
                   </th>
                 ))}
@@ -296,14 +296,14 @@ export default function DashboardTab() {
                             isPending ? 'bg-amber-100 text-amber-900 border-l-amber-200' : 'bg-emerald-50 text-emerald-950 border-l-emerald-200 font-bold'
                           }`}
                         >
-                          <div className="font-bold truncate max-w-[70px] text-[9.5px]">
+                          <div className="font-bold truncate max-w-[70px] text-[11px]">
                             👤 {matchedBooking.userName}
                           </div>
-                          <span className="absolute bottom-0.5 right-1 text-[8px] opacity-70 font-mono scale-[0.8]">
+                          <span className="absolute bottom-0.5 right-1 text-[10px] opacity-70 font-mono scale-[0.8]">
                             {isPending ? '⏳ รอชำระ' : '✓ ชำระแล้ว'}
                           </span>
                           {/* Hover interactive tooltip */}
-                          <div className="absolute hidden group-hover:block bg-slate-900 text-slate-50 text-[9.5px] p-2.5 rounded-lg shadow-md z-30 w-44 left-1/2 -translate-x-1/2 -top-16 border border-slate-700 bg-[#0f172a] text-[#f8fafc] leading-tight text-left">
+                          <div className="absolute hidden group-hover:block bg-slate-900 text-slate-50 text-[11px] p-2.5 rounded-lg shadow-md z-30 w-44 left-1/2 -translate-x-1/2 -top-16 border border-slate-700 bg-[#0f172a] text-[#f8fafc] leading-tight text-left">
                             <p className="font-bold text-emerald-400">🚨 รายละเอียดคอร์ทจอง</p>
                             <p>ผู้จอง: <span className="font-extrabold">{matchedBooking.userName}</span></p>
                             <p className="font-mono">เบอร์โทร: {matchedBooking.userPhone || 'ไม่ระบุ'}</p>
@@ -319,7 +319,7 @@ export default function DashboardTab() {
                           className="p-1 border-l border-slate-200 bg-rose-100/75 text-rose-900 text-center min-h-[44px] select-none font-bold"
                           title={`ปิดให้บริการ: ${closureItem.reason}`}
                         >
-                          <span className="block text-[8px] text-rose-700">⚠️ ปิดสนาม</span>
+                          <span className="block text-[10px] text-rose-700">⚠️ ปิดสนาม</span>
                           <span className="text-[7.5px] text-rose-900 block max-w-[65px] truncate mx-auto">
                             {closureItem.reason}
                           </span>
@@ -332,15 +332,15 @@ export default function DashboardTab() {
                           className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] select-none"
                           title="เฉพาะช่วงเวลาเพื่อสุขภาพ (Off-peak) เท่านั้น"
                         >
-                          <span className="block text-[8px] font-semibold text-slate-500 leading-none">🚫 ปิดช่วง Peak</span>
-                          <span className="text-[7px] text-slate-400 block scale-[0.95]">ครึ่งสนาม</span>
+                          <span className="block text-[10px] font-semibold text-slate-500 leading-none">🚫 ปิดช่วง Peak</span>
+                          <span className="text-[10px] text-slate-400 block scale-[0.95]">ครึ่งสนาม</span>
                         </td>
                       );
                     } else {
                       return (
                         <td key={time} className="p-1.5 border-l border-slate-200 text-emerald-800 text-center bg-emerald-50/5 hover:bg-emerald-100/10 transition cursor-default">
-                          <span className="font-mono text-[9px] font-bold block text-emerald-600">🟢 ว่าง</span>
-                          <span className="text-[8px] text-slate-400 mt-0.5 block scale-90 leading-tight">ว่างเปล่า</span>
+                          <span className="font-mono text-[11px] font-bold block text-emerald-600">🟢 ว่าง</span>
+                          <span className="text-[10px] text-slate-400 mt-0.5 block scale-90 leading-tight">ว่างเปล่า</span>
                         </td>
                       );
                     }

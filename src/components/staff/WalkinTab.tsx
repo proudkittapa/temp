@@ -223,15 +223,15 @@ export default function WalkinTab() {
                 <div>
                   <p className="font-bold text-slate-800">{courts.find(c => c.id === b.courtId)?.name}</p>
                   <p className="text-[10px] text-slate-500">ผู้จอง: {b.userName} | เวลา: <span className="font-bold text-slate-700">{b.startTime} - {b.endTime} น.</span></p>
-                  <p className="text-[9px] text-slate-400">รหัสจอง: <span className="font-mono">{b.bookingCode}</span> | ยอด: {formatBaht(b.totalAmount)} บ.</p>
+                  <p className="text-[11px] text-slate-400">รหัสจอง: <span className="font-mono">{b.bookingCode}</span> | ยอด: {formatBaht(b.totalAmount)} บ.</p>
                 </div>
                 <div className="flex flex-col gap-1 items-end">
                   {b.status === BookingStatus.PENDING_PAYMENT ? (
-                    <span className="text-[9px] bg-amber-100 text-amber-800 font-extrabold px-1.5 py-0.5 rounded-md">รอชำระเงิน</span>
+                    <span className="text-[11px] bg-amber-100 text-amber-800 font-extrabold px-1.5 py-0.5 rounded-md">รอชำระเงิน</span>
                   ) : b.status === BookingStatus.NO_SHOW ? (
-                    <span className="text-[9px] bg-violet-100 text-violet-800 font-extrabold px-1.5 py-0.5 rounded-md">ไม่มา · สนามว่างแล้ว</span>
+                    <span className="text-[11px] bg-violet-100 text-violet-800 font-extrabold px-1.5 py-0.5 rounded-md">ไม่มา · สนามว่างแล้ว</span>
                   ) : (
-                    <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded-md">ยืนยันแล้ว</span>
+                    <span className="text-[11px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded-md">ยืนยันแล้ว</span>
                   )}
                   <button
                     type="button"
@@ -239,7 +239,7 @@ export default function WalkinTab() {
                       setSelectedReceiptBooking(b);
                       setSelectedReceiptOrder(null);
                     }}
-                    className="text-[9px] bg-slate-800 hover:bg-slate-700 text-white font-bold py-1 px-2 rounded-md flex items-center gap-1 transition-all mt-1"
+                    className="text-[11px] bg-slate-800 hover:bg-slate-700 text-white font-bold py-1 px-2 rounded-md flex items-center gap-1 transition-all mt-1"
                   >
                     <Receipt className="h-3 w-3" /> ออกใบเสร็จ
                   </button>
@@ -298,7 +298,7 @@ export default function WalkinTab() {
             <tr className="bg-[#f8fafc] text-[10px] uppercase font-black text-slate-500 border-b border-slate-200">
               <th className="p-3 bg-[#f8fafc] sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-36 border-r border-slate-200">สนาม</th>
               {openSlotHours().map((time) => (
-                <th key={time} className="p-2 text-center text-[9px] min-w-[75px] border-l border-slate-200">
+                <th key={time} className="p-2 text-center text-[11px] min-w-[75px] border-l border-slate-200">
                   {time} น.
                 </th>
               ))}
@@ -311,7 +311,7 @@ export default function WalkinTab() {
                 <td className="p-2.5 font-bold text-slate-800 bg-[#f8fafc]/95 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] border-r border-slate-200">
                   <span className="block text-[11px] font-black">{court.name}</span>
                   {court.offPeakOnly && (
-                    <span className="text-[8px] text-[#0f5132] font-semibold bg-[#d1e7dd] px-1 py-0.2 rounded w-max mt-0.5 inline-block">Off-Peak เท่านั้น</span>
+                    <span className="text-[10px] text-[#0f5132] font-semibold bg-[#d1e7dd] px-1 py-0.2 rounded w-max mt-0.5 inline-block">Off-Peak เท่านั้น</span>
                   )}
                 </td>
 
@@ -349,8 +349,8 @@ export default function WalkinTab() {
                         className="p-1 border-l border-slate-200 text-center bg-rose-50 hover:bg-rose-100 text-rose-800 font-bold min-h-[44px] cursor-pointer"
                         title="คลิกเพื่อออกใบเสร็จภาษี"
                       >
-                        <span className="block text-[8px] font-black text-rose-600">🔴 จองแล้ว</span>
-                        <span className="block text-[9px] text-[#0f172a] whitespace-nowrap overflow-hidden text-ellipsis max-w-[70px] mx-auto font-black" title={bItem.userName}>
+                        <span className="block text-[10px] font-black text-rose-600">🔴 จองแล้ว</span>
+                        <span className="block text-[11px] text-[#0f172a] whitespace-nowrap overflow-hidden text-ellipsis max-w-[70px] mx-auto font-black" title={bItem.userName}>
                           {bItem.userName}
                         </span>
                         <span className="text-[7.5px] text-slate-500 font-mono scale-[0.9]">
@@ -370,8 +370,8 @@ export default function WalkinTab() {
                         className="p-1 border-l border-slate-200 bg-rose-100/70 text-rose-800 text-center min-h-[44px] cursor-not-allowed select-none font-medium"
                         title={`ปิดให้บริการ: ${closureItem.reason}`}
                       >
-                        <span className="block text-[8px] font-black text-rose-700">⚠️ ปิดสนาม</span>
-                        <span className="text-[7px] text-rose-900 block max-w-[65px] truncate mx-auto">
+                        <span className="block text-[10px] font-black text-rose-700">⚠️ ปิดสนาม</span>
+                        <span className="text-[10px] text-rose-900 block max-w-[65px] truncate mx-auto">
                           {closureItem.reason}
                         </span>
                       </td>
@@ -387,7 +387,7 @@ export default function WalkinTab() {
                         className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] cursor-not-allowed select-none"
                         title="ช่วงเวลานี้ผ่านไปแล้ว"
                       >
-                        <span className="block text-[8px] font-semibold text-slate-500">⌛ ผ่านไปแล้ว</span>
+                        <span className="block text-[10px] font-semibold text-slate-500">⌛ ผ่านไปแล้ว</span>
                       </td>
                     );
                   }
@@ -399,8 +399,8 @@ export default function WalkinTab() {
                         className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] cursor-not-allowed select-none"
                         title="เฉพาะช่วงนิกาเพื่อสุขภาพ (Off-peak) เท่านั้น"
                       >
-                        <span className="block text-[8px] font-semibold text-slate-500">🚫 ปิดช่วง Peak</span>
-                        <span className="text-[7px] text-slate-400 block">บาสเกตบอลครึ่งสนาม</span>
+                        <span className="block text-[10px] font-semibold text-slate-500">🚫 ปิดช่วง Peak</span>
+                        <span className="text-[10px] text-slate-400 block">บาสเกตบอลครึ่งสนาม</span>
                       </td>
                     );
                   }
@@ -422,8 +422,8 @@ export default function WalkinTab() {
                         className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] cursor-not-allowed select-none"
                         title="นอกเวลาเปิดให้บริการ"
                       >
-                        <span className="block text-[8px] font-semibold text-slate-500">🚫 ปิดบริการ</span>
-                        <span className="text-[7px] text-slate-400 block">นอกเวลาทำการ</span>
+                        <span className="block text-[10px] font-semibold text-slate-500">🚫 ปิดบริการ</span>
+                        <span className="text-[10px] text-slate-400 block">นอกเวลาทำการ</span>
                       </td>
                     );
                   }
@@ -440,7 +440,7 @@ export default function WalkinTab() {
                         title="เลือกช่องสนามและชั่วโมงเวลานี้อยู่!"
                       >
                         <span className="block text-[8.5px] font-black uppercase text-white">⭐ จะจองคิว</span>
-                        <span className="block text-[9px] font-mono leading-none">{shownPrice}฿</span>
+                        <span className="block text-[11px] font-mono leading-none">{shownPrice}฿</span>
                       </td>
                     );
                   }
@@ -459,8 +459,8 @@ export default function WalkinTab() {
                           : 'bg-emerald-50/15 hover:bg-[#34d399]/20 text-slate-700'
                       }`}
                     >
-                      <span className="block text-[8px] font-bold text-slate-500">🟢 ว่าง</span>
-                      <span className="block text-[9.5px] font-mono font-black text-[#1e293b]">{shownPrice}฿</span>
+                      <span className="block text-[10px] font-bold text-slate-500">🟢 ว่าง</span>
+                      <span className="block text-[11px] font-mono font-black text-[#1e293b]">{shownPrice}฿</span>
                       {resale !== undefined
                         ? <span className="noshow-resale text-[7.5px] text-violet-700 font-bold block">ลูกค้าไม่มา · ราคาพิเศษ</span>
                         : <span className="text-[7.5px] text-slate-400 italic block font-mono">{isPeak ? '⚡ Peak' : 'Off-Peak'}</span>}

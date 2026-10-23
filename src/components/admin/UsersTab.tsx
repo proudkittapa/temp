@@ -180,7 +180,7 @@ export default function UsersTab() {
                       <td className="p-3">
                         <div className="font-bold text-slate-900 text-xs">{item.name}</div>
                         <div className="text-[10px] text-slate-500 font-mono mt-0.5">เบอร์: {item.phone || 'ไม่ระบุ'}</div>
-                        <div className="text-[9px] text-slate-400 mt-0.5">{item.email || 'ไม่มีอีเมล'}</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">{item.email || 'ไม่มีอีเมล'}</div>
                       </td>
 
                       {/* Member type dropdown */}
@@ -199,7 +199,7 @@ export default function UsersTab() {
                           ))}
                         </select>
                         {userPendingChanges[item.id]?.memberType !== undefined && userPendingChanges[item.id]?.memberType !== (item.memberType ?? MemberType.NORMAL) && (
-                          <span className="block text-[8px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
+                          <span className="block text-[10px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
                         )}
                       </td>
 
@@ -220,7 +220,7 @@ export default function UsersTab() {
                           {!roles.some(r => r.id === item.role) && <option value={item.role}>{item.role}</option>}
                         </select>
                         {userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role && (
-                          <span className="block text-[8px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
+                          <span className="block text-[10px] font-black text-amber-700 mt-1 uppercase animate-pulse">⚠️ รอยืนยันเซฟ</span>
                         )}
                       </td>
 
@@ -259,13 +259,13 @@ export default function UsersTab() {
                           <div className="flex flex-col gap-1 w-full p-1 bg-amber-50/50 rounded border border-amber-200 shadow-xs">
                             <button
                               disabled={busy} onClick={guarded(() => handleSaveUserPermissions(item.id))}
-                              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-1 px-2 rounded text-[9px] shadow-sm transition duration-150 flex items-center justify-center gap-1 active:scale-95"
+                              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-1 px-2 rounded text-[11px] shadow-sm transition duration-150 flex items-center justify-center gap-1 active:scale-95"
                             >
                               💾 เซฟบันทึกสิทธิ์
                             </button>
                             <button
                               onClick={() => handleCancelUserStage(item.id)}
-                              className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-0.5 px-2 rounded text-[8px] transition duration-150 text-center"
+                              className="w-full bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-0.5 px-2 rounded text-[10px] transition duration-150 text-center"
                             >
                               ยกเลิก
                             </button>
@@ -276,20 +276,20 @@ export default function UsersTab() {
                           canManageAccounts && item.id !== adminUser?.id ? (
                             <button
                               disabled={busy} onClick={guarded(() => handleToggleUserActive(item.id, item.isActive))}
-                              className={`px-2.5 py-1 text-[9px] rounded-lg font-bold shadow-xs transition ${
+                              className={`px-2.5 py-1 text-[11px] rounded-lg font-bold shadow-xs transition ${
                                 item.isActive ? 'bg-emerald-100 text-emerald-800 hover:bg-amber-100 hover:text-amber-800' : 'bg-rose-100 text-rose-800 hover:bg-slate-200'
                               }`}
                             >
                               {item.isActive ? 'ใช้งาน' : 'ระงับชั่วคราว'}
                             </button>
                           ) : (
-                            <span className="text-[9px] text-slate-400">{item.isActive ? 'ใช้งาน' : 'ระงับ'}</span>
+                            <span className="text-[11px] text-slate-400">{item.isActive ? 'ใช้งาน' : 'ระงับ'}</span>
                           )
                         ) : (
                           <div className="flex items-center gap-1">
                             <button
                               disabled={busy} onClick={guarded(() => handleToggleUserActive(item.id, item.isActive))}
-                              className={`px-2.5 py-1 text-[9px] rounded-lg font-bold shadow-xs transition ${
+                              className={`px-2.5 py-1 text-[11px] rounded-lg font-bold shadow-xs transition ${
                                 item.isActive ? 'bg-emerald-100 text-emerald-800 hover:bg-amber-100 hover:text-amber-800' : 'bg-rose-100 text-rose-800 hover:bg-slate-200'
                               }`}
                             >

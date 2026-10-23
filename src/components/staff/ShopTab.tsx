@@ -55,7 +55,7 @@ export default function ShopTab() {
               className="bg-slate-50 border border-slate-200 hover:border-slate-300 hover:bg-slate-100/50 p-3.5 rounded-xl text-left flex flex-col justify-between cursor-pointer transition select-none h-32"
             >
               <div className="space-y-1">
-                <span className={`inline-block text-[8px] font-bold px-1.5 py-0.5 rounded ${prod.category === ProductCat.EQUIPMENT ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'}`}>
+                <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded ${prod.category === ProductCat.EQUIPMENT ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'}`}>
                   {prod.category === ProductCat.EQUIPMENT ? 'อุปกรณ์กีฬา' : 'อาหารและเครื่องดื่ม'}
                 </span>
                 <p className="font-bold text-slate-800 text-xs line-clamp-2 leading-snug">{prod.name}</p>
@@ -63,7 +63,7 @@ export default function ShopTab() {
 
               <div className="flex justify-between items-center border-t border-slate-200/50 pt-2">
                 <p className="font-extrabold text-slate-900 text-xs">{formatBaht(prod.price)} บาท</p>
-                <p className={`text-[9.5px] font-semibold ${prod.stock > 10 ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
+                <p className={`text-[11px] font-semibold ${prod.stock > 10 ? 'text-slate-500' : 'text-rose-600 font-bold'}`}>
                   คลัง: {prod.stock}
                 </p>
               </div>
@@ -86,7 +86,7 @@ export default function ShopTab() {
               <div key={item.product.id} className="bg-slate-800/80 p-3 rounded-lg flex items-center justify-between text-xs border border-slate-700/50">
                 <div>
                   <p className="font-bold text-slate-100">{item.product.name}</p>
-                  <p className="text-[9.5px] text-slate-400">{formatBaht(item.product.price)} บาท / หน่วย</p>
+                  <p className="text-[11px] text-slate-400">{formatBaht(item.product.price)} บาท / หน่วย</p>
                 </div>
 
                 {/* Qty edit actions */}

@@ -110,7 +110,7 @@ export default function MemberDiscountsTab() {
                         placeholder="เช่น ลูกค้าทัวร์นาเมนต์ VIP"
                       />
                       {isStaged && staged.name !== tier.name && (
-                        <span className="block text-[9px] text-amber-600 font-bold mt-1">
+                        <span className="block text-[11px] text-amber-600 font-bold mt-1">
                           (เดิม: {tier.name})
                         </span>
                       )}
@@ -132,7 +132,7 @@ export default function MemberDiscountsTab() {
                         <span className="text-slate-500 font-bold">%</span>
                       </div>
                       {isStaged && staged.discountPercent !== tier.discountPercent && (
-                        <span className="block text-[9px] text-amber-600 font-bold mt-1">
+                        <span className="block text-[11px] text-amber-600 font-bold mt-1">
                           (เดิม: {tier.discountPercent}%)
                         </span>
                       )}
@@ -170,7 +170,7 @@ export default function MemberDiscountsTab() {
                         <div className="flex flex-col gap-1 items-center">
                           <button
                             disabled={busy} onClick={guarded(() => handleSaveDiscountTier(tier.id))}
-                            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-1 px-2.5 rounded-lg text-[9px] shadow-sm transition flex items-center justify-center gap-1"
+                            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-1 px-2.5 rounded-lg text-[11px] shadow-sm transition flex items-center justify-center gap-1"
                           >
                             💾 เซฟส่วนลดใหม่
                           </button>
@@ -182,7 +182,7 @@ export default function MemberDiscountsTab() {
                                 return copy;
                               });
                             }}
-                            className="text-[8px] text-slate-500 hover:underline block"
+                            className="text-[10px] text-slate-500 hover:underline block"
                           >
                             ยกเลิก
                           </button>

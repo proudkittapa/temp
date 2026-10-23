@@ -218,11 +218,11 @@ export default function StaffPOS(props: StaffPOSProps) {
                 {shop.phone && <p className="text-[8.5px] text-slate-500 font-mono">โทร {shop.phone}</p>}
                 {shop.vatRegistered && shop.taxId && <p className="text-[8.5px] text-slate-500">เลขประจำตัวผู้เสียภาษี (TAX ID): <span className="font-mono">{formatTaxId(shop.taxId)}</span></p>}
                 <p id="receipt-title" className="text-[10px] font-bold text-slate-800 underline uppercase mt-2">{shop.vatRegistered ? 'ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ' : 'ใบเสร็จรับเงิน'}</p>
-                <p className="text-[9px] font-semibold text-slate-600 bg-slate-200/60 inline-block px-1.5 py-0.5 rounded mt-0.5 font-mono">{shop.vatRegistered ? 'RECEIPT / TAX INVOICE (ABB.)' : 'RECEIPT'}</p>
+                <p className="text-[11px] font-semibold text-slate-600 bg-slate-200/60 inline-block px-1.5 py-0.5 rounded mt-0.5 font-mono">{shop.vatRegistered ? 'RECEIPT / TAX INVOICE (ABB.)' : 'RECEIPT'}</p>
               </div>
 
               {/* Receipt metadata info */}
-              <div className="space-y-1 text-[9.5px] text-slate-600 bg-white p-2 rounded border border-slate-100">
+              <div className="space-y-1 text-[11px] text-slate-600 bg-white p-2 rounded border border-slate-100">
                 <div className="flex justify-between">
                   <span className="font-semibold text-slate-500">เลขที่ใบเสร็จ (No.):</span>
                   <span className="font-mono font-bold text-slate-800">
@@ -290,7 +290,7 @@ export default function StaffPOS(props: StaffPOSProps) {
                           <td className="py-1">
                             <span className="font-medium text-slate-800">{prodName}</span>
                             {it.shoeSize && (
-                              <span className="text-[8px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-1 rounded ml-1">
+                              <span className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-1 rounded ml-1">
                                 Size {it.shoeSize} ({it.shoeGender === 'M' ? 'ชาย' : 'หญิง'})
                               </span>
                             )}
@@ -305,7 +305,7 @@ export default function StaffPOS(props: StaffPOSProps) {
               </div>
 
               {/* Financial Calculation footer */}
-              <div className="space-y-0.5 text-[9.5px] text-slate-700">
+              <div className="space-y-0.5 text-[11px] text-slate-700">
                 {shop.vatRegistered && (() => {
                   const total = receipt?.total || 0;
                   const vat = Math.round(total * 7 / 107 * 100) / 100;

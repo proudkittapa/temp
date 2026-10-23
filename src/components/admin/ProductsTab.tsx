@@ -152,7 +152,7 @@ export default function ProductsTab() {
             {products.map((p) => (
               <div key={p.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between text-xs hover:border-slate-300 transition">
                 <div>
-                  <span className={`text-[8px] font-black px-1.5 py-0.5 rounded ${p.isRental ? 'bg-[#93c5fd] text-sky-950' : 'bg-amber-100 text-amber-800'}`}>
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${p.isRental ? 'bg-[#93c5fd] text-sky-950' : 'bg-amber-100 text-amber-800'}`}>
                     {p.isRental ? 'ปล่อยเช่าเก็บคืน' : 'กระปุกแบ่งขายขาด'}
                   </span>
                   <p className="font-bold text-slate-800 mt-1">{p.name || 'สินค้า'}</p>

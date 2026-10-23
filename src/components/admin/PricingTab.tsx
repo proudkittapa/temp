@@ -290,7 +290,7 @@ export default function PricingTab() {
                     </td>
                     <td className="px-4 py-3 font-mono">{rule.startHour.toString().padStart(2, '0')}:00 - {rule.endHour.toString().padStart(2, '0')}:00 น.</td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold whitespace-nowrap ${
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap ${
                         rule.dayType === DayType.WEEKDAY ? 'bg-slate-100 text-slate-700' : 'bg-emerald-100 text-emerald-800'
                       }`}>
                         {rule.dayType === DayType.WEEKDAY ? 'วันธรรมดา จ-ศ' : 'เสาร์ - อาทิตย์'}

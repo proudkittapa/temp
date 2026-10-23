@@ -167,7 +167,7 @@ export default function AuditLogTab() {
                     <div className="space-y-3 mt-2">
                   {changedProperties.length > 0 && (
                     <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 text-[10.5px] space-y-1.5 font-sans">
-                      <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
+                      <span className="text-[11px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
                         🔍 ตรวจทุจริตเปลี่ยนค่าที่แสตมป์ (Property Changes):
                       </span>
                       <div className="divide-y divide-slate-800">
@@ -196,10 +196,10 @@ export default function AuditLogTab() {
                   {/* Raw snap expander details */}
                   {(log.before || log.after) && (
                     <details className="group">
-                      <summary className="text-[9px] text-slate-500 hover:text-slate-400 cursor-pointer select-none font-bold uppercase tracking-wider flex items-center gap-1 focus:outline-none">
+                      <summary className="text-[11px] text-slate-500 hover:text-slate-400 cursor-pointer select-none font-bold uppercase tracking-wider flex items-center gap-1 focus:outline-none">
                         <span>📁 คลิกเพื่อดูฐานข้อมูลดิบ (Toggle Raw Snapshot Metadata)</span>
                       </summary>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 bg-slate-950 p-2.5 rounded border border-slate-900 text-[9px] group-open:animate-fadeIn">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 bg-slate-950 p-2.5 rounded border border-slate-900 text-[11px] group-open:animate-fadeIn">
                         <div>
                           <p className="text-slate-500 font-extrabold mb-1">📋 SNAPSHOT [ก่อนหน้า] (BEFORE):</p>
                           <pre className="text-rose-400 bg-rose-950/10 p-1.5 rounded border border-rose-950/30 max-h-32 overflow-y-auto pr-1">{JSON.stringify(log.before || {}, null, 1)}</pre>

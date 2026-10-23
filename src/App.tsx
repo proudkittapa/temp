@@ -158,7 +158,7 @@ export default function App() {
       <div className="bg-slate-900 text-white py-3 sm:py-6 border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-800 pb-2.5">
-            <span className="bg-emerald-600 text-[9px] font-black tracking-widest px-2.5 py-1 rounded-md uppercase">Simulator Controls</span>
+            <span className="bg-emerald-600 text-[11px] font-black tracking-widest px-2.5 py-1 rounded-md uppercase">Simulator Controls</span>
             <p className="hidden sm:block text-xs text-slate-400 font-semibold">คุณกำลังอยู่ในการจำลองระบบ คุณสามารถกดสลับบทบาทด้านล่างเพื่อทดสอบระบบหน้า-หลังได้อย่างอิสระ:</p>
           </div>
 

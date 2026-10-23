@@ -190,8 +190,8 @@ export default function DayTotalTab() {
                 <div key={b.id} className="bg-white p-2.5 rounded-lg border border-slate-200 text-[10.5px] flex items-center justify-between hover:bg-slate-50 transition">
                   <div>
                     <p className="font-bold text-slate-800">{courts.find(c => c.id === b.courtId)?.name || 'สนามกีฬาทั่วไป'}</p>
-                    <p className="text-[9.5px] text-slate-500">ผู้จอง: {b.userName} | ยอด: {formatBaht(b.totalAmount)} บ.</p>
-                    <p className="text-[9px] text-[#475569]">เวลา: {b.startTime} น. | รหัส {b.bookingCode}</p>
+                    <p className="text-[11px] text-slate-500">ผู้จอง: {b.userName} | ยอด: {formatBaht(b.totalAmount)} บ.</p>
+                    <p className="text-[11px] text-[#475569]">เวลา: {b.startTime} น. | รหัส {b.bookingCode}</p>
                   </div>
                   <button
                     type="button"
@@ -199,14 +199,14 @@ export default function DayTotalTab() {
                       setSelectedReceiptBooking(b);
                       setSelectedReceiptOrder(null);
                     }}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1 px-2.5 rounded text-[9.5px] shadow-xs flex items-center gap-1 shrink-0"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-1 px-2.5 rounded text-[11px] shadow-xs flex items-center gap-1 shrink-0"
                   >
                     <Receipt className="h-3 w-3" /> ใบเสร็จ
                   </button>
                 </div>
               ))}
               {todayBookingList.filter(isPaidBooking).length === 0 && (
-                <p className="text-[9.5px] text-slate-400 text-center py-6">ไม่มีรายการจองสนามเวลานี้</p>
+                <p className="text-[11px] text-slate-400 text-center py-6">ไม่มีรายการจองสนามเวลานี้</p>
               )}
             </div>
           </div>
@@ -221,8 +221,8 @@ export default function DayTotalTab() {
                     <p className="font-bold text-slate-800">
                       {o.type === OrderType.FB ? '🥤 ออเดอร์ F&B' : o.type === OrderType.EQUIPMENT_SALE ? '🏸 ขายอุปกรณ์กีฬา' : '👟 เช่ารองเท้า/ไม้เล่น'}
                     </p>
-                    <p className="text-[9.5px] text-slate-500">ลูกค้า: {o.customerName} | ยอด: {formatBaht(o.totalAmount)} บ.</p>
-                    <p className="text-[9.5px] text-[#475569]">รหัสธุรกรรม (Order): {o.orderCode}</p>
+                    <p className="text-[11px] text-slate-500">ลูกค้า: {o.customerName} | ยอด: {formatBaht(o.totalAmount)} บ.</p>
+                    <p className="text-[11px] text-[#475569]">รหัสธุรกรรม (Order): {o.orderCode}</p>
                   </div>
                   <button
                     type="button"
@@ -230,7 +230,7 @@ export default function DayTotalTab() {
                       setSelectedReceiptOrder(o);
                       setSelectedReceiptBooking(null);
                     }}
-                    className="bg-sky-600 hover:bg-sky-500 text-white font-bold py-1 px-2.5 rounded text-[9.5px] shadow-xs flex items-center gap-1 shrink-0"
+                    className="bg-sky-600 hover:bg-sky-500 text-white font-bold py-1 px-2.5 rounded text-[11px] shadow-xs flex items-center gap-1 shrink-0"
                   >
                     <Receipt className="h-3 w-3" /> ใบเสร็จ
                   </button>
@@ -238,7 +238,7 @@ export default function DayTotalTab() {
                     <button
                       type="button"
                       disabled={busy} onClick={guarded(() => handleVoidOrder(o))}
-                      className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1 px-2 rounded text-[9.5px] shrink-0 ml-1"
+                      className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold py-1 px-2 rounded text-[11px] shrink-0 ml-1"
                     >
                       ✖ ยกเลิกบิล
                     </button>
@@ -246,7 +246,7 @@ export default function DayTotalTab() {
                 </div>
               ))}
               {todaysOrders().length === 0 && (
-                <p className="text-[9.5px] text-slate-400 text-center py-6">ยังไม่มีผลงานออเดอร์ F&B วันนี้</p>
+                <p className="text-[11px] text-slate-400 text-center py-6">ยังไม่มีผลงานออเดอร์ F&B วันนี้</p>
               )}
             </div>
           </div>

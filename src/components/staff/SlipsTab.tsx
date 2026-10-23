@@ -69,10 +69,10 @@ export default function SlipsTab() {
 
                     <div className="text-right">
                       {pay.expiredAt && (
-                        <p className="text-[9.5px] font-black text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 mb-1">⚠️ ส่งสลิปหลังหมดเวลา</p>
+                        <p className="text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 mb-1">⚠️ ส่งสลิปหลังหมดเวลา</p>
                       )}
                       <p className="font-extrabold text-emerald-700 text-sm">{formatBaht(pay.amount)} บาท</p>
-                      <p className="text-[9px] text-slate-400">อัพโหลดเมื่อ: {pay.slipUploadedAt ? formatDateTime(pay.slipUploadedAt) : 'ไม่ระบุ'}</p>
+                      <p className="text-[11px] text-slate-400">อัพโหลดเมื่อ: {pay.slipUploadedAt ? formatDateTime(pay.slipUploadedAt) : 'ไม่ระบุ'}</p>
                     </div>
                   </div>
 
@@ -220,7 +220,7 @@ export default function SlipsTab() {
             <div className="text-center py-20 text-slate-400 font-sans space-y-2">
               <CheckCircle2 className="h-10 w-10 text-slate-300 mx-auto" />
               <p className="text-xs font-bold">ยังไม่ได้เลือกรายการที่จะปฏิเสธ</p>
-              <p className="text-[9.5px] text-slate-400">เลือกกด 'ปฏิเสธ (Reject)' เพื่อเปิดแผงสาเหตุที่นี่</p>
+              <p className="text-[11px] text-slate-400">เลือกกด 'ปฏิเสธ (Reject)' เพื่อเปิดแผงสาเหตุที่นี่</p>
             </div>
           )}
         </div>

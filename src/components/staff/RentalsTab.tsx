@@ -154,7 +154,7 @@ export default function RentalsTab() {
             {activeRentalOrders.flatMap(order => order.items.filter(it => !it.returnedAt).map(item => (
               <div key={item.id} className="bg-white p-3.5 rounded-xl border border-slate-300 flex justify-between items-center text-xs">
                 <div>
-                  <span className="text-[9px] bg-sky-100 text-sky-800 font-bold px-1.5 rounded uppercase font-mono">{order.orderCode}</span>
+                  <span className="text-[11px] bg-sky-100 text-sky-800 font-bold px-1.5 rounded uppercase font-mono">{order.orderCode}</span>
                   <p className="font-bold text-slate-800 mt-1">{order.customerName}</p>
                   <p className="text-[10px] text-slate-400">
                     อุปกรณ์: {item.productName || products.find(p => p.id === item.productId)?.name || 'อุปกรณ์เช่า'}
