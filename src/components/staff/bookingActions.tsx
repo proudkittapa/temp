@@ -6,7 +6,7 @@ import { StorageService, calculatePrice, findConflictingBooking, bookingGroupOf,
 import * as api from '../../api';
 import { notify, ask, dialog } from '../Dialog';
 import type { StaffPOSCore } from './useStaffPOS';
-import { LocalVoucher } from './shared';
+import { LocalVoucher, planPointsCover, applyPointsCover } from './shared';
 import type { useShiftActions } from './shiftActions';
 
 // Actions on one booking from its detail dialog: cancel/refund, cash payment, no-show and its undo.
@@ -43,7 +43,9 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
       ] : undefined,
       checkbox: groupPaid > 0 ? {
         label: `บันทึกว่าคืนเงินค่าสนามที่${slipIn ? 'ลูกค้าโอนมา — สลิปยังไม่ได้อนุมัติ: ติ๊กเมื่อตรวจแล้วว่าเงินเข้าบัญชีจริง' : 'ชำระแล้ว'} (โอนคืนลูกค้าเอง) — ${group.length > 1 ? `ทั้งหมด ${formatBaht(groupPaid)} / ชั่วโมงนี้ ${formatBaht(hourPaid)}` : formatBaht(groupPaid)} บาท`,
-        defaultChecked: true
+        // Ticking it for a slip nobody approved says "I checked the bank
+        // account" (sent as bank_checked) - so it starts unticked then.
+        defaultChecked: !slipIn
       } : undefined,
       okLabel: 'ยืนยันยกเลิก',
       cancelLabel: 'ไม่ยกเลิก',
@@ -102,11 +104,15 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
     StorageService.set('redemptions', StorageService.get<LocalVoucher[]>('redemptions', []).map(r => r.bookingId && ids.has(r.bookingId)
       ? { ...r, status: 'ACTIVE', dispensedAt: undefined, bookingId: undefined } : r));
     const paidPointRows = paidRows.filter(b => b.totalAmount > 0);
+    // As the server's reversePoints: unused rewards bought with these points
+    // are cancelled to cover them; what still can't be covered is reported.
+    const cover = paidPointRows.length ? planPointsCover(booking.userId, paidPointRows.length) : { cancel: [], short: 0 };
+    const coverCodes = applyPointsCover(booking.userId, cover.cancel, `${booking.bookingCode} cancelled`, 'manager');
     const reversed = paidPointRows.length ? StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -paidPointRows.length, 'manager', { note: `${paidPointRows.length}h of ${booking.bookingCode} cancelled: ${reason}` }) : 0;
     onAddAuditLog('BOOKING_CANCELLED_BY_MANAGER', 'Booking', booking.id, null, { cancelled: target.length, refund, refundAmount: refund ? refundAmount : 0, reason });
     closeBookingDetail();
     onRefreshAll();
-    notify(`ยกเลิก ${target.length} ชั่วโมงแล้ว${refund ? ` · บันทึกคืนเงิน ${formatBaht(refundAmount)} บาท` : ''}${reversed ? ` · หักแต้มคืน ${-reversed}` : ''}`);
+    notify(`ยกเลิก ${target.length} ชั่วโมงแล้ว${refund ? ` · บันทึกคืนเงิน ${formatBaht(refundAmount)} บาท` : ''}${reversed ? ` · หักแต้มคืน ${-reversed}` : ''}${coverCodes.length ? `\nยกเลิกคูปองที่แลกด้วยแต้มนี้: ${coverCodes.join(', ')}` : ''}${cover.short ? `\n⚠️ ลูกค้าใช้แต้ม ${cover.short} แต้มแลกของรางวัลที่รับไปแล้ว หักคืนไม่ได้` : ''}`);
   };
 
   // Manager/admin: the customer paid this unpaid booking in cash at the
@@ -183,6 +189,7 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
     }
     StorageService.set('bookings', stored.map(b => b.id === booking.id ? { ...b, status: BookingStatus.NO_SHOW } : b));
     if (booking.totalAmount > 0) { // a free (voucher) hour earned no point to take back
+      applyPointsCover(booking.userId, planPointsCover(booking.userId, 1).cancel, `no-show ${booking.bookingCode}`, 'staff');
       StorageService.addLedgerEntry(booking.userId, LedgerEntryType.REVERSE_BOOKING, -1, 'staff', { refType: 'Booking', refId: booking.id, note: `No-show ${booking.date} ${booking.startTime}` });
     }
     done();

@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, Payment, LineMessage, DayOff,
   User
 } from '../../types';
-import { StorageService, normalizePhone, getTodayDateStr, formatDate } from '../../mockData';
+import { StorageService, normalizePhone, getTodayDateStr, formatDate, expireUnpaidLocal } from '../../mockData';
 import { useLiveLoad, useLiveTick } from '../../useLiveTick';
 import * as api from '../../api';
 import { notify } from '../Dialog';
@@ -130,6 +130,7 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
 
   // Load everything
   useEffect(() => {
+    if (!api.USE_BACKEND) expireUnpaidLocal();
     const rawCourts = StorageService.get<Court[]>('courts', []);
     const rawBookings = StorageService.get<Booking[]>('bookings', []);
     const rawPayments = StorageService.get<Payment[]>('payments', []);
@@ -212,6 +213,7 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
         setLoggedInUser(null);
         clearCustomerScreen();
         setAuthError('⏰ เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
+        onRefreshAll(); // the nav bar re-reads the (now empty) session
         return; // loggedInUserId changes, so this effect re-runs logged out
       }
       if (me) setLoggedInUser(me);
@@ -252,7 +254,7 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
       }
       if (vouchers.status === 'fulfilled') {
         setRedemptions(vouchers.value.map(v => ({
-          id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId,
+          id: v.id, status: v.status, userId: me?.id || '', userName: me?.name || '', rewardId: v.rewardId, rewardKind: v.rewardKind,
           rewardName: `${v.rewardEmoji} ${v.rewardName}`, pointsSpent: v.pointsSpent, claimCode: v.code,
           redeemedAt: formatDate(v.createdAt)
         })));

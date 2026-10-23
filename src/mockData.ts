@@ -687,6 +687,46 @@ export function findClosure(daysOff: DayOff[], date: string, courtId: string, ho
 // owner and date and are paid by one payment (attached to the first row).
 // Same rule as the backend's bookingGroup, which also matches owner and date
 // so a code collision can never pull in someone else's booking.
+// Browser-only mode's payment hold (the server's PaymentHoldDuration) and
+// unpaid cap (MaxUnpaidGroupsPerUser).
+export const LOCAL_PAYMENT_HOLD_MS = 30 * 60000;
+export const LOCAL_MAX_UNPAID_GROUPS = 3;
+const madeOnline = (b: Booking) => b.createdBy === 'customer' || b.createdBy === b.userId;
+
+// The server's ExpireUnpaidBookings for browser-only mode, run when a
+// screen loads: an online booking still unpaid (no slip) after the hold is
+// cancelled and its payment EXPIRED, so the courts free up as the screen
+// says. A walk-in waiting for a transfer is left to staff, as on the server.
+export function expireUnpaidLocal(now = Date.now()): number {
+  const payments = StorageService.get<Payment[]>('payments', []);
+  const bookings = StorageService.get<Booking[]>('bookings', []);
+  const byId = new Map(bookings.map(b => [b.id, b]));
+  const stale = payments.filter(p => {
+    const root = byId.get(p.bookingId);
+    return p.status === PaymentStatus.PENDING && p.method === PaymentMethod.PROMPTPAY && !!root && madeOnline(root) &&
+      now - new Date(p.createdAt).getTime() > LOCAL_PAYMENT_HOLD_MS;
+  });
+  if (!stale.length) return 0;
+  const at = new Date(now).toISOString();
+  const cancelIds = new Set(stale.flatMap(p => bookingGroupOf(byId.get(p.bookingId)!, bookings)
+    .filter(b => b.status === BookingStatus.PENDING_PAYMENT).map(b => b.id)));
+  const staleIds = new Set(stale.map(p => p.id));
+  StorageService.set('bookings', bookings.map(b => cancelIds.has(b.id)
+    ? { ...b, status: BookingStatus.CANCELLED, cancellationReason: 'Expired: no payment slip within 30 minutes' } : b));
+  StorageService.set('payments', payments.map(p => staleIds.has(p.id) ? { ...p, status: PaymentStatus.EXPIRED, expiredAt: at } : p));
+  return stale.length;
+}
+
+// How many online booking groups the customer has awaiting payment or slip
+// review (the server's countUnpaidGroups).
+export function unpaidGroupsLocal(userId: string): number {
+  const byId = new Map(StorageService.get<Booking[]>('bookings', []).map(b => [b.id, b]));
+  return StorageService.get<Payment[]>('payments', []).filter(p => {
+    const root = byId.get(p.bookingId);
+    return (p.status === PaymentStatus.PENDING || p.status === PaymentStatus.SLIP_UPLOADED) && !!root && root.userId === userId && madeOnline(root);
+  }).length;
+}
+
 export function bookingGroupOf(root: Booking, bookings: Booking[]): Booking[] {
   return bookings.filter(b => b.bookingCode === root.bookingCode && b.userId === root.userId && b.date === root.date);
 }

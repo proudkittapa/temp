@@ -44,6 +44,14 @@ Nothing High was found.
 | R3 | 11 of the new server messages appeared in English on the Thai screens; three became a generic "no permission". | Thai texts for all of them in `errorText.ts` (tested). |
 | R4 | (from #14) The documented dev setup with `VITE_API_BASE_URL=http://localhost:8080/api/v1` stopped working (no CORS headers by default). | README and `.env.example`: set `CORS_ALLOWED_ORIGINS` to the page's address in that setup. |
 
+## Found in the full code recheck (fixed 2026-10-23)
+
+| Severity | Problem | Fix |
+|---|---|---|
+| High | **Role editing could escalate:** creating or editing a role never compared its permissions with the editor's, so an account whose role held only "manage roles" could give its own role every permission (or strip the Admin role). | A role can only hold permissions its editor has, and nobody edits a role with permissions they lack (`role_service.go` checkRoleEditable); the admin screen offers only roles the admin may grant. Live: 403 for all three attempts. |
+| Low | Admin user search with a digit in a name ("somchai1") matched every phone containing that digit. | Phone matching only for phone-like searches. |
+| Low | Blind cash count: staff without `view_reports` can still add up today's cash from the order and booking lists they need for their work. | Not changed - a limit of the blind count (hiding sales from the counter would break it). |
+
 ## Not fixed — need a decision or a bigger change (listed in TODO.md)
 
 | Sev | Finding | Options |

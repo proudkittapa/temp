@@ -1,8 +1,8 @@
 import {
   Payment, PaymentStatus,
-  PaymentMethod, Order, OrderStatus, UserRole, Shift, AddAuditLog
+  PaymentMethod, Order, OrderStatus, UserRole, Shift, AddAuditLog, User, LedgerEntryType
 } from '../../types';
-import { roundBaht } from '../../mockData';
+import { roundBaht, StorageService } from '../../mockData';
 import * as api from '../../api';
 
 export interface StaffPOSProps {
@@ -30,3 +30,32 @@ export function localShiftView(sh: Shift, payments: Payment[], orders: Order[]):
 
 // Browser-only mode keeps reward vouchers in localStorage ("redemptions").
 export interface LocalVoucher { id: string; claimCode: string; rewardId: string; rewardName: string; userId: string; userName: string; pointsSpent?: number; status?: string; bookingId?: string; dispensedAt?: string }
+
+// Browser-only mode's coverPointsWithRewards (pos.go): before taking `need`
+// points back from a customer who has fewer, their unused rewards are
+// cancelled, newest first, until the points cover it. plan says which and
+// what still can't be covered (short); applyPointsCover does it.
+export function planPointsCover(userId: string, need: number): { cancel: LocalVoucher[]; short: number } {
+  const balance = StorageService.get<User[]>('users', []).find(u => u.id === userId)?.points ?? 0;
+  let short = need - balance;
+  const cancel: LocalVoucher[] = [];
+  if (short <= 0) return { cancel, short: 0 };
+  const usable = StorageService.get<LocalVoucher[]>('redemptions', [])
+    .filter(v => v.userId === userId && (v.status || 'ACTIVE') === 'ACTIVE').reverse();
+  for (const v of usable) {
+    if (short <= 0) break;
+    cancel.push(v);
+    short -= v.pointsSpent || 0;
+  }
+  return { cancel, short: Math.max(0, short) };
+}
+
+export function applyPointsCover(userId: string, cancel: LocalVoucher[], why: string, actor: string): string[] {
+  if (!cancel.length) return [];
+  const ids = new Set(cancel.map(v => v.id));
+  StorageService.set('redemptions', StorageService.get<LocalVoucher[]>('redemptions', []).map(v => ids.has(v.id) ? { ...v, status: 'CANCELLED' } : v));
+  for (const v of cancel) {
+    StorageService.addLedgerEntry(userId, LedgerEntryType.VOUCHER_CANCELLED, v.pointsSpent || 0, actor, { refType: 'Voucher', refId: v.id, note: `Voucher ${v.claimCode} cancelled: ${why}` });
+  }
+  return cancel.map(v => v.claimCode);
+}

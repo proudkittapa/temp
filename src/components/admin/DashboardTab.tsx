@@ -1,5 +1,5 @@
-import { CourtType, BookingStatus } from '../../types';
-import { findClosure, isHourOffPeak, courtsConflict, openSlotHours, formatBaht } from '../../mockData';
+import { CourtType, BookingStatus, MemberType } from '../../types';
+import { findClosure, isHourOffPeak, courtsConflict, openSlotHours, formatBaht, calculatePrice } from '../../mockData';
 import * as api from '../../api';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line
@@ -323,6 +323,15 @@ export default function DashboardTab() {
                           <span className="text-[7.5px] text-rose-900 block max-w-[65px] truncate mx-auto">
                             {closureItem.reason}
                           </span>
+                        </td>
+                      );
+                    } else if (!calculatePrice(court.type, dashboardSelectedDate, time, MemberType.NORMAL, court).isOpen) {
+                      // No pricing rule covers this hour: the server refuses
+                      // it (as the walk-in grid shows), so it isn't free.
+                      return (
+                        <td key={time} className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] select-none" title="นอกเวลาเปิดให้บริการ">
+                          <span className="block text-[10px] font-semibold text-slate-500 leading-none">🚫 ปิดบริการ</span>
+                          <span className="text-[10px] text-slate-400 block">นอกเวลาทำการ</span>
                         </td>
                       );
                     } else if (isRestrictedPeakBasketball) {

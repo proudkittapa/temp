@@ -76,7 +76,13 @@ export function useVoucherActions(deps: StaffPOSCore) {
       return api.dispenseVoucher(code).then(done).catch(err => setVoucherError(err.message));
     }
     const list = StorageService.get<LocalVoucher[]>('redemptions', []);
-    if (list.find(r => r.claimCode === code)?.status === 'REDEEMED') { setVoucherError('รหัสนี้รับของไปแล้ว'); return; }
+    // As the server: only an ACTIVE voucher (not handed out, cancelled by
+    // a void or cancel since it was looked up), and not a free court hour.
+    const stored = list.find(r => r.claimCode === code);
+    const status = stored ? (stored.status || 'ACTIVE') : 'ไม่พบ';
+    if (status === 'REDEEMED') { setVoucherError('รหัสนี้รับของไปแล้ว'); return; }
+    if (status !== 'ACTIVE') { setVoucherError(`คูปอง ${code} ใช้ไม่ได้ (${status})`); return; }
+    if (FREE_HOUR_REWARD_IDS.includes(stored!.rewardId)) { setVoucherError('คูปองนี้เป็นชั่วโมงฟรี ใช้จองที่ฟอร์ม Walk-in'); return; }
     StorageService.set('redemptions', list.map(r => r.claimCode === code ? { ...r, status: 'REDEEMED', dispensedAt: new Date().toISOString() } : r));
     done();
   };

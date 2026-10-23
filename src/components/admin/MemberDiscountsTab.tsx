@@ -1,4 +1,5 @@
-import { MemberType } from '../../types';
+import { MemberType, UserRole } from '../../types';
+import * as api from '../../api';
 import { Settings, Users } from 'lucide-react';
 import { useAdminPanelContext } from './useAdminPanel';
 
@@ -11,8 +12,15 @@ export default function MemberDiscountsTab() {
     handleStageDiscountField,
     memberDiscounts,
     setEditingDiscounts,
-    users
+    userSearchQuery,
+    users,
+    usersHasMore
   } = useAdminPanelContext();
+  // API mode loads one page of users (searched on the server), so the
+  // counts are of that page: "N+" when more exist, none while a search
+  // narrows the list.
+  const countsPartial = api.USE_BACKEND && usersHasMore;
+  const countsHidden = api.USE_BACKEND && !!userSearchQuery.trim();
   return (
     <div className="space-y-6">
       <div>
@@ -77,7 +85,8 @@ export default function MemberDiscountsTab() {
                 );
 
                 // Calculate how many users currently belong to this Membership Type
-                const userCount = users.filter(u => {
+                // Customers only: staff accounts have no tier.
+                const userCount = users.filter(u => u.role === UserRole.CUSTOMER).filter(u => {
                   if (tier.id === MemberType.NORMAL) {
                     return !u.memberType || u.memberType === MemberType.NORMAL;
                   }
@@ -159,7 +168,7 @@ export default function MemberDiscountsTab() {
                       <div className="flex items-center justify-center gap-1">
                         <Users className="h-3.5 w-3.5 text-slate-400" />
                         <span className="font-extrabold text-slate-800 font-mono">
-                          {userCount} บัญชี
+                          {countsHidden ? '—' : `${userCount}${countsPartial ? '+' : ''}`} บัญชี
                         </span>
                       </div>
                     </td>

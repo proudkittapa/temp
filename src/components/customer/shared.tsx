@@ -29,6 +29,7 @@ export interface Redemption {
   userId: string;
   userName: string;
   rewardId: string;
+  rewardKind?: string; // FREE_OFFPEAK_HOUR for a free court hour (API mode)
   rewardName: string;
   pointsSpent: number;
   claimCode: string;

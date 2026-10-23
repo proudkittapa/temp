@@ -18,6 +18,56 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Full code recheck, part 3 (staff, admin and customer screens)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck every codes. no bug")
+- **Commit(s):** this commit (on `main`, parent `59749a6`)
+- **Changed** (each finding confirmed in the code first):
+  - **Staff screen (API mode):** PromptPay walk-in wait box no longer
+    vanishes after switching the date away and back (compares the loaded
+    date); the booking pool prefers the open tab's (fresh) copy of a row (a
+    stale "unpaid" copy hid the refund when cancelling); loads only what the
+    role may read (one 403 used to blank the screen for custom roles; a role
+    without "shifts" is no longer told to open a shift - the server
+    decides); blind count follows the server rule (no view_reports) also
+    with no shift open, and its "doesn't match" answer now asks for the note;
+    the cancel dialog's refund box starts unticked for a slip nobody approved
+    (ticked = "bank checked"); the count box resets when the shift changes;
+    the cart is frozen while a checkout is on its way (and its retry key kept).
+  - **Staff screen (browser-only mode, same rules as the server):** void
+    takes back only points the sale earned (none today) and can't run twice;
+    cancel / no-show cancel unused rewards bought with the points (shared
+    `planPointsCover`/`applyPointsCover`, also used by void); dispense refuses
+    cancelled / free-hour vouchers; rental and checkout use stored stock and
+    the current price; blind staff aren't shown the difference.
+  - **Admin screens:** user search results are no longer filtered again in
+    the browser (hid "081-234-5678" matches); closure hours snap to offered
+    options (a 09:00-10:00 closure was saved as 07:00-22:00 with 09-21
+    opening hours); Excel import skips unreadable cells with the reason
+    instead of defaults (blank stock 50, unknown category F&B, ...); the
+    dashboard grid shows unpriced hours as closed; tier counts customers
+    only and say when partial; role pickers / suspend only where the server
+    allows (`permissions.outranks`); tier not offered for staff accounts;
+    audit search finds ids; browser-only occupancy counts active courts and
+    the report groups payments by code + customer + date.
+  - **Customer screen:** free-hour hint by reward kind (any free-hour reward
+    an admin adds); nav bar updates after a silent session expiry;
+    browser-only mode now expires unpaid online bookings after 30 minutes
+    and enforces the 3-unpaid cap (`expireUnpaidLocal`, `unpaidGroupsLocal`).
+  - `SECURITY_REVIEW.md`: section for the recheck (role escalation etc.).
+- **Verified:** `go vet`, `go test ./...`, DB tests, `tsc`, vitest 65/65
+  (new: demo expiry/cap test), `vite build`. Playwright (API mode): custom
+  "cashier" role (sell_rent + shifts) sees 8 products, no 403, no errors;
+  customer on the payment step signs out from the nav bar -> booking code
+  and QR gone, login form back; opening hours 09-21 -> closure dropdowns
+  show and hold 09:00 / 21:00; open-shift flow and counter walk-in + sale
+  still work.
+- **Not done / follow-ups:** none from the recheck. The browser-only
+  changes were checked by type check and unit test, not all clicked
+  through.
+
+---
+
 ## 2026-10-23 — Full code recheck, part 2 (booking core)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck every codes. no bug")

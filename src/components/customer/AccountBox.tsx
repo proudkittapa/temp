@@ -190,7 +190,9 @@ export default function AccountBox() {
                             {voucher.claimCode}
                           </span>
                         </div>
-                        {FREE_HOUR_REWARD_IDS.includes(voucher.rewardId) && (voucher.status || 'ACTIVE') === 'ACTIVE' && (
+                        {/* By kind (any free-hour reward an admin adds); the
+                            browser-only seed's rewards have no kind - by id. */}
+                        {(voucher.rewardKind === 'FREE_OFFPEAK_HOUR' || FREE_HOUR_REWARD_IDS.includes(voucher.rewardId)) && (voucher.status || 'ACTIVE') === 'ACTIVE' && (
                           <p className="text-xs text-emerald-300/80">🏸 แจ้งรหัสนี้ที่เคาน์เตอร์เพื่อจองสนามช่วง Off-Peak ฟรี 1 ชั่วโมง</p>
                         )}
                       </div>

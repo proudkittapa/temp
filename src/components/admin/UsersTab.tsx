@@ -1,6 +1,7 @@
 import { UserRole, MemberType } from '../../types';
-import { memberTierLabel } from '../../mockData';
+import { memberTierLabel, normalizePhone } from '../../mockData';
 import * as api from '../../api';
+import { outranks, permissionsOf } from '../../permissions';
 import { useAdminPanelContext } from './useAdminPanel';
 
 export default function UsersTab() {
@@ -32,6 +33,10 @@ export default function UsersTab() {
     userTierFilter,
     users
   } = useAdminPanelContext();
+  // An account whose role has rights the admin lacks: the server refuses
+  // changing it, so the controls aren't offered.
+  const higherThanMe = (u: { role: string; permissions?: string[] }) =>
+    outranks(roles.find(r => r.id === u.role)?.permissions ?? permissionsOf(u as Parameters<typeof permissionsOf>[0]), adminUser);
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -86,7 +91,7 @@ export default function UsersTab() {
                 onChange={(e) => setNewUserRole(e.target.value as UserRole)}
                 className="w-full bg-white border border-slate-200 py-2 px-3 rounded-lg text-slate-800"
               >
-                {roles.filter(r => r.id !== UserRole.CUSTOMER).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                {roles.filter(r => r.id !== UserRole.CUSTOMER && !outranks(r.permissions, adminUser)).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </div>
 
@@ -164,10 +169,15 @@ export default function UsersTab() {
               <tbody className="divide-y divide-slate-100 font-sans">
                 {users
                   .filter(item => {
-                    const matchesSearch = !userSearchQuery || 
-                      item.name.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
-                      (item.phone || '').includes(userSearchQuery) ||
-                      (item.email || '').toLowerCase().includes(userSearchQuery.toLowerCase());
+                    // API mode: the server already searched (phone digits
+                    // normalised, "081-234-5678" finds 0812345678) - filtering
+                    // its results again by plain text hid real matches.
+                    const q = userSearchQuery.trim().toLowerCase();
+                    const qDigits = /^[\d\s\-.()+]+$/.test(q) ? q.replace(/\D/g, '') : '';
+                    const matchesSearch = api.USE_BACKEND || !q ||
+                      item.name.toLowerCase().includes(q) ||
+                      (!!qDigits && normalizePhone(item.phone).includes(normalizePhone(qDigits))) ||
+                      (item.email || '').toLowerCase().includes(q);
 
                     const matchesRole = !userRoleFilter || item.role === userRoleFilter;
                     // Tiers apply to customers; an account with none is NORMAL.
@@ -188,6 +198,10 @@ export default function UsersTab() {
                         <select 
                           value={userPendingChanges[item.id]?.memberType ?? item.memberType ?? MemberType.NORMAL}
                           onChange={(e) => handleStageUserMemberType(item.id, e.target.value as MemberType)}
+                          // Tiers are for customers; a staff account's tier
+                          // change was dropped on save (API mode) - not offered.
+                          disabled={item.role !== UserRole.CUSTOMER}
+                          title={item.role !== UserRole.CUSTOMER ? 'ระดับสมาชิกใช้กับบัญชีลูกค้าเท่านั้น' : undefined}
                           className={`border rounded py-1 px-1.5 text-[11px] font-medium text-slate-800 focus:outline-none focus:border-emerald-600 transition duration-150 ${
                             userPendingChanges[item.id]?.memberType !== undefined && userPendingChanges[item.id]?.memberType !== (item.memberType ?? MemberType.NORMAL)
                               ? 'bg-amber-50 border-amber-300 font-bold text-amber-900 ring-2 ring-amber-100'
@@ -208,15 +222,15 @@ export default function UsersTab() {
                         <select 
                           value={userPendingChanges[item.id]?.role ?? item.role}
                           onChange={(e) => handleStageUserRole(item.id, e.target.value as UserRole)}
-                          disabled={!canManageAccounts || item.id === adminUser?.id}
-                          title={!canManageAccounts ? 'เปลี่ยนบทบาทได้เฉพาะผู้ดูแลระบบ (Admin)' : item.id === adminUser?.id ? 'เปลี่ยนบทบาทของตัวเองไม่ได้' : undefined}
+                          disabled={!canManageAccounts || item.id === adminUser?.id || higherThanMe(item)}
+                          title={!canManageAccounts ? 'เปลี่ยนบทบาทได้เฉพาะผู้ดูแลระบบ (Admin)' : item.id === adminUser?.id ? 'เปลี่ยนบทบาทของตัวเองไม่ได้' : higherThanMe(item) ? 'บัญชีนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)' : undefined}
                           className={`border rounded py-1 px-1.5 text-[11px] font-mono font-bold transition duration-150 ${
                             userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role
                               ? 'bg-amber-50 border-amber-300 text-amber-900 ring-2 ring-amber-100'
                               : 'bg-slate-50 border-slate-200 text-slate-800'
                           }`}
                         >
-                          {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          {roles.filter(r => r.id === item.role || !outranks(r.permissions, adminUser)).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                           {!roles.some(r => r.id === item.role) && <option value={item.role}>{item.role}</option>}
                         </select>
                         {userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role && (
@@ -273,7 +287,7 @@ export default function UsersTab() {
                         ) : api.USE_BACKEND ? (
                           // No delete through the API: suspending keeps the
                           // account's bookings and points history.
-                          canManageAccounts && item.id !== adminUser?.id ? (
+                          canManageAccounts && item.id !== adminUser?.id && !higherThanMe(item) ? (
                             <button
                               disabled={busy} onClick={guarded(() => handleToggleUserActive(item.id, item.isActive))}
                               className={`px-2.5 py-1 text-[11px] rounded-lg font-bold shadow-xs transition ${

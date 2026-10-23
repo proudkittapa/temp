@@ -2,12 +2,14 @@ import { Shift } from '../../types';
 import { StorageService, formatBaht, roundBaht } from '../../mockData';
 import * as api from '../../api';
 import { notify, ask, askText } from '../Dialog';
+import { can } from '../../permissions';
 import type { StaffPOSCore } from './useStaffPOS';
 
 
 // Cash-drawer shift: open, count and close; the cash-without-shift prompt.
 export function useShiftActions(deps: StaffPOSCore) {
   const {
+    actingUser,
     blindCount,
     countLocked,
     lastShiftCount,
@@ -41,6 +43,9 @@ export function useShiftActions(deps: StaffPOSCore) {
   };
   const confirmCashWithoutShift = async (): Promise<boolean> => {
     if (shift) return true;
+    // A role without "shifts" can't see the drawer: the server decides
+    // (it refuses cash with no shift open).
+    if (api.USE_BACKEND && !can(actingUser, 'shifts')) return true;
     if (await ask('ต้องเปิดกะลิ้นชักก่อนรับเงินสด\nนับเงินทอนในลิ้นชัก แล้วกด "เปิดกะ" ที่แท็บ "ยอดลิ้นชักวันนี้"',
       { title: '⚠️ ยังไม่ได้เปิดกะ', okLabel: 'ไปเปิดกะ', cancelLabel: 'ปิด' })) {
       goOpenShift();
@@ -137,14 +142,19 @@ export function useShiftActions(deps: StaffPOSCore) {
       try {
         done(await api.closeShift(counted, note));
       } catch (err) {
-        if (err instanceof api.ApiError && /the count is .* off/i.test(err.serverMessage)) return askNote(err.message);
+        // Managers get the difference, blind staff only "doesn't match".
+        if (err instanceof api.ApiError && /the count is .* off|the count doesn't match/i.test(err.serverMessage)) return askNote(err.message);
         notify(`ปิดกะไม่สำเร็จ: ${err instanceof Error ? err.message : err}`);
       }
       return;
     }
     const variance = roundBaht(counted - shift.expected);
     if (variance !== 0 && !note) {
-      return askNote(`ยอดนับ${variance > 0 ? 'เกิน' : 'ขาด'} ${formatBaht(Math.abs(variance))} บาท กรุณาใส่หมายเหตุอธิบาย`);
+      // Blind staff aren't told by how much (as the server answers them):
+      // the figure gives the expected cash away.
+      return askNote(blindCount
+        ? 'ยอดเงินที่นับไม่ตรง — ใส่หมายเหตุอธิบายส่วนต่าง'
+        : `ยอดนับ${variance > 0 ? 'เกิน' : 'ขาด'} ${formatBaht(Math.abs(variance))} บาท กรุณาใส่หมายเหตุอธิบาย`);
     }
     const closedAt = new Date().toISOString();
     const closed: Shift = { ...shift, closedAt, countedCash: roundBaht(counted), expectedCash: shift.expected, varianceCash: variance, notes: note || undefined, closedByName: 'คุณ กิตติ (เดโม)' };

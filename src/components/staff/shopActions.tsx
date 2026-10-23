@@ -1,16 +1,17 @@
 import {
-  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, User, LedgerEntryType, Shift
+  PaymentMethod, Product, ProductCat, Order, OrderStatus, OrderType, UserRole, LedgerEntryType, Shift, PointsLedgerEntry
 } from '../../types';
 import { StorageService, getTodayDateStr, normalizePhone, formatBaht, roundBaht, localDateOf } from '../../mockData';
 import * as api from '../../api';
 import { notify, askText } from '../Dialog';
 import type { StaffPOSCore } from './useStaffPOS';
-import { LocalVoucher } from './shared';
+import { planPointsCover, applyPointsCover } from './shared';
 import type { useShiftActions } from './shiftActions';
 
 // Counter sales (F&B and equipment): cart, checkout, void.
 export function useShopActions(deps: StaffPOSCore & ReturnType<typeof useShiftActions>) {
   const {
+    busy,
     cartActionId,
     cartCourtId,
     cartCustomerName,
@@ -29,7 +30,10 @@ export function useShopActions(deps: StaffPOSCore & ReturnType<typeof useShiftAc
     users
   } = deps;
   // F&B Add to Receipt Cart
+  // The cart is frozen while a checkout is on its way: an item added then
+  // would vanish when the cart clears, and the retry key would change.
   const handleAddToCart = (product: Product) => {
+    if (busy) return;
     if (product.stock <= 0) {
       notify('ขออภัยค่ะ! สินค้าชิ้นนี้หมดคลังชั่วคราว ขัดข้องการเช็กเอาท์');
       return;
@@ -50,6 +54,7 @@ export function useShopActions(deps: StaffPOSCore & ReturnType<typeof useShiftAc
   };
 
   const handleUpdateCartQty = (productId: string, val: number) => {
+    if (busy) return;
     const matched = cartItems.find(item => item.product.id === productId);
     if (!matched) return;
     
@@ -112,7 +117,10 @@ export function useShopActions(deps: StaffPOSCore & ReturnType<typeof useShiftAc
         return;
       }
     }
-    const totalAmount = roundBaht(cartItems.reduce((acc, current) => acc + (current.product.price * current.qty), 0));
+    // The catalog's current price (as the server charges), not the copy
+    // the cart took when the item was added.
+    const priceOf = (id: string) => rawProducts.find(p => p.id === id)?.price ?? 0;
+    const totalAmount = roundBaht(cartItems.reduce((acc, current) => acc + (priceOf(current.product.id) * current.qty), 0));
     const orderId = 'o-' + Date.now();
     const orderCode = `OD${getTodayDateStr().replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
     const customer = cartCustomerPhone.trim()
@@ -137,7 +145,7 @@ export function useShopActions(deps: StaffPOSCore & ReturnType<typeof useShiftAc
         orderId,
         productId: item.product.id,
         qty: item.qty,
-        unitPrice: item.product.price
+        unitPrice: priceOf(item.product.id)
       }))
     };
     StorageService.set('products', rawProducts.map(p => {
@@ -162,6 +170,11 @@ export function useShopActions(deps: StaffPOSCore & ReturnType<typeof useShiftAc
         })
         .catch(err => notify(`ยกเลิกบิลไม่สำเร็จ: ${err.message}`));
     }
+    // The list on screen may be old (voided meanwhile in another tab):
+    // voiding twice would restock and take points twice.
+    if (StorageService.get<Order[]>('orders', []).find(o => o.id === order.id)?.status === OrderStatus.CANCELLED) {
+      notify(`บิล ${order.orderCode} ถูกยกเลิกไปแล้ว`); onRefreshAll(); return;
+    }
     if (localDateOf(order.createdAt) !== getTodayDateStr()) { notify('ยกเลิกได้เฉพาะบิลของวันนี้'); return; }
     // A cash sale counted in an already-closed shift can't leave that count.
     if (order.paymentMethod === PaymentMethod.CASH && StorageService.get<Shift[]>('shifts', []).some(sh =>
@@ -169,33 +182,21 @@ export function useShopActions(deps: StaffPOSCore & ReturnType<typeof useShiftAc
       notify('บิลเงินสดนี้อยู่ในกะที่ปิดไปแล้ว ยกเลิกไม่ได้');
       return;
     }
-    const pts = Math.floor(order.totalAmount / 100);
-    const cancelledCodes: string[] = [];
+    // Only the points this sale really earned (its ledger entries), as on
+    // the server - counter sales earn none today, so usually nothing.
+    const pts = StorageService.get<PointsLedgerEntry[]>('points_ledger', [])
+      .filter(e => e.refType === 'Order' && e.refId === order.id).reduce((n, e) => n + e.points, 0);
+    let cancelledCodes: string[] = [];
     if (order.userId && pts > 0) {
       // Points already spent: cancel unused rewards (newest first) to cover
       // them, as on the server; a reward already handed over blocks the void.
-      const balance = StorageService.get<User[]>('users', []).find(u => u.id === order.userId)?.points ?? 0;
-      let short = pts - balance;
-      if (short > 0) {
-        const vouchers = StorageService.get<LocalVoucher[]>('redemptions', []);
-        const usable = vouchers.filter(v => v.userId === order.userId && (v.status || 'ACTIVE') === 'ACTIVE').reverse();
-        const cancelIds = new Set<string>();
-        for (const v of usable) {
-          if (short <= 0) break;
-          cancelIds.add(v.id);
-          cancelledCodes.push(v.claimCode);
-          short -= v.pointsSpent || 0;
-        }
-        if (short > 0) {
-          notify('ลูกค้านำแต้มจากบิลนี้ไปแลกของรางวัลและรับของไปแล้ว — ยกเลิกบิลไม่ได้');
-          return;
-        }
-        StorageService.set('redemptions', vouchers.map(v => cancelIds.has(v.id) ? { ...v, status: 'CANCELLED' } : v));
-        for (const v of usable.filter(x => cancelIds.has(x.id))) {
-          StorageService.addLedgerEntry(order.userId, LedgerEntryType.VOUCHER_CANCELLED, v.pointsSpent || 0, 'manager', { refType: 'Voucher', refId: v.id, note: `Voucher ${v.claimCode} cancelled: sale ${order.orderCode} voided` });
-        }
+      const plan = planPointsCover(order.userId, pts);
+      if (plan.short > 0) {
+        notify('ลูกค้านำแต้มจากบิลนี้ไปแลกของรางวัลและรับของไปแล้ว — ยกเลิกบิลไม่ได้');
+        return;
       }
-      StorageService.addLedgerEntry(order.userId, LedgerEntryType.REVERSE_PURCHASE, -pts, 'manager', { note: `Sale ${order.orderCode} voided: ${reason}` });
+      cancelledCodes = applyPointsCover(order.userId, plan.cancel, `sale ${order.orderCode} voided`, 'manager');
+      StorageService.addLedgerEntry(order.userId, LedgerEntryType.REVERSE_PURCHASE, -pts, 'manager', { refType: 'Order', refId: order.id, note: `Sale ${order.orderCode} voided: ${reason}` });
     }
     StorageService.set('products', StorageService.get<Product[]>('products', []).map(p => {
       const lines = order.items.filter(it => it.productId === p.id && !it.returnedAt);

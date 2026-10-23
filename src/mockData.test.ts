@@ -19,11 +19,13 @@ import {
   findClosure,
   initializeState,
   StorageService,
+  expireUnpaidLocal,
+  unpaidGroupsLocal,
   parseCourtCounts,
   buildDefaultCourts,
   DEFAULT_COURT_COUNTS,
 } from './mockData';
-import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType, DayOff } from './types';
+import { Court, CourtType, Booking, BookingStatus, PriceType, MemberType, DayType, DayOff, Payment, PaymentStatus, PaymentMethod } from './types';
 
 function makeCourt(overrides: Partial<Court>): Court {
   return {
@@ -427,5 +429,34 @@ describe('court counts (BASKETBALL_COURT_COUNT etc.)', () => {
       expect(parseCourtCounts({ basketball: bad }).basketball).toBe(3);
     }
     expect(parseCourtCounts({ badminton: '51' }).badminton).toBe(12);
+  });
+});
+
+describe('browser-only payment hold (as the server)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const booking = (id: string, createdBy: string): Booking => ({
+    id, bookingCode: 'BK-' + id, courtId: 'bad-1', userId: 'u1', date: '2026-11-02', startTime: '10:00', endTime: '11:00',
+    isHalfCourt: false, priceType: PriceType.OFFPEAK, totalAmount: 180, status: BookingStatus.PENDING_PAYMENT,
+    isEventBlock: false, createdAt: '2026-10-23T00:00:00Z', createdBy,
+  } as Booking);
+  const payment = (id: string, bookingId: string, createdAt: string, status = PaymentStatus.PENDING): Payment => ({
+    id, bookingId, amount: 180, method: PaymentMethod.PROMPTPAY, status, createdAt,
+  } as Payment);
+
+  it('expires an online booking unpaid past 30 minutes, not a walk-in or a fresh one', () => {
+    stubLocalStorage();
+    const now = Date.parse('2026-10-23T10:00:00Z');
+    StorageService.set('bookings', [booking('old', 'customer'), booking('fresh', 'customer'), booking('walkin', 'u-staff-1')]);
+    StorageService.set('payments', [
+      payment('p-old', 'old', '2026-10-23T09:00:00Z'), payment('p-fresh', 'fresh', '2026-10-23T09:50:00Z'), payment('p-walkin', 'walkin', '2026-10-23T09:00:00Z'),
+    ]);
+    expect(expireUnpaidLocal(now)).toBe(1);
+    const pays = Object.fromEntries(StorageService.get<Payment[]>('payments', []).map(p => [p.id, p.status]));
+    expect(pays).toEqual({ 'p-old': PaymentStatus.EXPIRED, 'p-fresh': PaymentStatus.PENDING, 'p-walkin': PaymentStatus.PENDING });
+    const rows = Object.fromEntries(StorageService.get<Booking[]>('bookings', []).map(b => [b.id, b.status]));
+    expect(rows.old).toBe(BookingStatus.CANCELLED);
+    expect(rows.fresh).toBe(BookingStatus.PENDING_PAYMENT);
+    // The cap counts the customer's own online groups waiting (pending or slip sent).
+    expect(unpaidGroupsLocal('u1')).toBe(1);
   });
 });

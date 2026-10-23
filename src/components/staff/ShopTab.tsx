@@ -133,7 +133,7 @@ export default function ShopTab() {
                 <input 
                   type="text" 
                   value={cartCustomerName}
-                  onChange={(e) => setCartCustomerName(e.target.value)}
+                  onChange={(e) => setCartCustomerName(e.target.value)} disabled={busy}
                   placeholder="เช่น โต๊ะแบดสนาม 3, พี่แดงซอย 5"
                   readOnly={!!cartMember}
                   title={cartMember ? 'ชื่อจากข้อมูลสมาชิก (แก้ไม่ได้)' : undefined}
@@ -145,7 +145,7 @@ export default function ShopTab() {
                 <label className="block text-[10px] text-slate-400 mb-1">อ้างอิงเลขสนามที่มาซื้อ (เว้นได้):</label>
                 <select 
                   value={cartCourtId} 
-                  onChange={(e) => setCartCourtId(e.target.value)}
+                  onChange={(e) => setCartCourtId(e.target.value)} disabled={busy}
                   className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs text-white"
                 >
                   <option value="">-- ไม่เชื่อมสนาม --</option>
@@ -160,7 +160,7 @@ export default function ShopTab() {
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setCartPayMethod(PaymentMethod.CASH)}
+                    disabled={busy} onClick={() => setCartPayMethod(PaymentMethod.CASH)}
                     className={`p-2 rounded text-[11px] font-bold text-center transition ${
                       cartPayMethod === PaymentMethod.CASH 
                         ? 'bg-emerald-600 text-white' 
@@ -171,7 +171,7 @@ export default function ShopTab() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCartPayMethod(PaymentMethod.PROMPTPAY)}
+                    disabled={busy} onClick={() => setCartPayMethod(PaymentMethod.PROMPTPAY)}
                     className={`p-2 rounded text-[11px] font-bold text-center transition ${
                       cartPayMethod === PaymentMethod.PROMPTPAY 
                         ? 'bg-emerald-600 text-white' 

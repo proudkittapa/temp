@@ -3,7 +3,7 @@ import {
   Court, CourtType, Booking, Payment, PaymentStatus,
   PaymentMethod, Product, Order, OrderStatus, OrderType, DayOff, User, Shift, LineMessage
 } from '../../types';
-import { StorageService, getTodayDateStr, normalizePhone } from '../../mockData';
+import { StorageService, getTodayDateStr, normalizePhone, expireUnpaidLocal } from '../../mockData';
 import * as api from '../../api';
 import { useLiveLoad, useLiveTick } from '../../useLiveTick';
 import { can, canUseCounter, Permission } from '../../permissions';
@@ -98,7 +98,8 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   // Reset only when what is being sold changes (a refresh rebuilds the
   // cart's objects without changing it).
   const cartSig = JSON.stringify([cartItems.map(i => [i.product.id, i.qty]), cartPayMethod, cartCustomerPhone, cartCustomerName, cartCourtId]);
-  useEffect(() => { cartActionId.current = ''; }, [cartSig]);
+  // Not while a checkout is running: its retry must reuse the same key.
+  useEffect(() => { if (!busyRef.current) cartActionId.current = ''; }, [cartSig]);
   useEffect(() => { rentalActionId.current = ''; }, [selectedProductId, rentalVariantId, rentalCustomerPhone, rentalCourtId]);
   // Rentals still out (any day); in browser-only mode derived from orders.
   const [activeRentalOrders, setActiveRentalOrders] = useState<Order[]>([]);
@@ -181,14 +182,17 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     const tab = activePosTab;
     const onDay = tab === 'todays_total';
     const skip = Promise.resolve(null);
+    // Only what the role may read: one refused call would fail the whole
+    // load (a custom role without verify_slips saw no products, no shift).
+    const may = (...p: Permission[]) => can(staffUser, ...p);
     return Promise.all([
-      api.listPaymentsForReview(),
-      api.shiftState(),
-      onDay ? api.daySummary(today) : skip,
-      tab === 'slips' && can(staffUser, 'cancel_refund') ? api.listRefundChecks() : skip,
-      tab === 'fb' || tab === 'rentals' ? api.listProducts() : skip,
-      onDay ? api.listOrders(today) : skip,
-      tab === 'rentals' ? api.activeRentals() : skip,
+      may('verify_slips') ? api.listPaymentsForReview() : Promise.resolve([] as api.PaymentForReview[]),
+      may('shifts') ? api.shiftState() : Promise.resolve({ shift: null, lastCount: null }),
+      onDay && may('day_summary') ? api.daySummary(today) : skip,
+      tab === 'slips' && may('cancel_refund') ? api.listRefundChecks() : skip,
+      (tab === 'fb' || tab === 'rentals') && may('sell_rent') ? api.listProducts() : skip,
+      onDay && may('sell_rent', 'cancel_refund') ? api.listOrders(today) : skip,
+      tab === 'rentals' && may('sell_rent') ? api.activeRentals() : skip,
       onDay ? (isManager ? api.listShifts() : Promise.resolve([] as api.ShiftView[])) : skip,
       onDay ? api.listBookingsByDate(today, 'staff') : skip
     ])
@@ -255,6 +259,7 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
 
   // Load everything
   useEffect(() => {
+    if (!api.USE_BACKEND) expireUnpaidLocal();
     const rawCourts = StorageService.get<Court[]>('courts', []);
     const rawBookings = StorageService.get<Booking[]>('bookings', []);
     const rawPayments = StorageService.get<Payment[]>('payments', []);
@@ -310,7 +315,10 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     let status: PaymentStatus | undefined;
     let present: boolean;
     if (api.USE_BACKEND) {
-      if (walkinDate !== pendingWalkin.date) return;
+      // The list on hand is loadedDate's: after switching the date picker
+      // away and back, `bookings` still holds the other date until the
+      // reload, and the waiting walk-in would look gone.
+      if (loadedDate !== pendingWalkin.date) return;
       // Cancelled rows are left out of the list.
       const row = bookings.find(b => b.bookingCode === pendingWalkin.bookingCode);
       present = !!row;
@@ -322,7 +330,7 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
     }
     if (present) pendingSeen.current = true;
     if ((pendingSeen.current && !present) || (status && status !== PaymentStatus.PENDING)) setPendingWalkin(null);
-  }, [bookings, payments, pendingWalkin, walkinDate]);
+  }, [bookings, payments, pendingWalkin, loadedDate]);
 
   // Standard line push simulation
   const pushLineMessage = (phone: string, text: string, type: "CREATED" | "CONFIRMED" | "REMINDER" | "CANCELLED") => {
@@ -358,10 +366,20 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   }, [activePosTab, firstAllowedTab]);
   // Blind cash count (owner decision 2026-10-21): counter staff count the
   // drawer without seeing what it should hold; managers/admins see it. In
-  // API mode the server withholds the figures (shift.blind).
-  const blindCount = api.USE_BACKEND ? !!shift?.blind : !can(actingUser, 'view_reports');
+  // API mode the server withholds the figures. The same rule as the
+  // server's (no view_reports = blind), not shift.blind: with no shift
+  // open that flag is missing, and the zeroed totals looked like 0 THB.
+  const blindCount = !can(actingUser, 'view_reports');
   // Once a blind count is confirmed it can't be changed (only explained).
   const [countLocked, setCountLocked] = useState(false);
+  // A different shift (this one closed at another counter, a new one
+  // opened) starts with an empty, editable count.
+  const openShiftId = shift?.id;
+  useEffect(() => {
+    setCountLocked(false);
+    setShiftCountInput('');
+    setShiftNote('');
+  }, [openShiftId]);
 
   const closeBookingDetail = () => {
     setSelectedReceiptBooking(null);
@@ -384,10 +402,15 @@ function useStaffPOSCore({ currentUserRole, onAddAuditLog, triggerRefresh, onRef
   // optionally recording a refund of what was paid. Reason required.
   // Every booking row this screen has loaded: in API mode the walk-in
   // tab's date plus today's (the day report); a booking opened from either
-  // list finds its whole group here.
-  const bookingPool = (): Booking[] => api.USE_BACKEND
-    ? [...new Map([...bookings, ...todayBookingsApi].map(x => [x.id, x])).values()]
-    : StorageService.get<Booking[]>('bookings', []);
+  // list finds its whole group here. Each list reloads only while its tab
+  // is open, so the open tab's copy of a row wins (a stale "unpaid" copy
+  // used to hide the refund when cancelling a booking paid since).
+  const bookingPool = (): Booking[] => {
+    if (!api.USE_BACKEND) return StorageService.get<Booking[]>('bookings', []);
+    const fresh = activePosTab === 'todays_total' ? todayBookingsApi : bookings;
+    const other = activePosTab === 'todays_total' ? bookings : todayBookingsApi;
+    return [...new Map([...other, ...fresh].map(x => [x.id, x])).values()];
+  };
 
   // Slips verification target list
   const pendingSlipPayments = api.USE_BACKEND

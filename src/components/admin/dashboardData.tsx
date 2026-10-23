@@ -77,7 +77,9 @@ export function useDashboardData(deps: AdminPanelCore) {
 
   // Physical courts: a full court and its half-court sides share one
   // mutex group and count once.
-  const physicalCourtCount = () => api.USE_BACKEND ? dash?.physicalCourts ?? 0 : new Set(courts.map(c => c.mutexGroupId || c.id)).size;
+  // Active courts only, as the server counts them (a closed court has no
+  // hours to fill).
+  const physicalCourtCount = () => api.USE_BACKEND ? dash?.physicalCourts ?? 0 : new Set(courts.filter(c => c.isActive).map(c => c.mutexGroupId || c.id)).size;
   // A no-show hour that a later paid booking re-used (same or conflicting
   // court) is filled by that booking: counted once, as the server's report.
   const occupiedShare = (list: Booking[]) => {

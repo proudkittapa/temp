@@ -61,6 +61,14 @@ export function can(user: Pick<User, 'role' | 'permissions'> | null | undefined,
   return perms.some(p => mine.includes(p));
 }
 
+// True if perms hold a right the user lacks (book_online aside - every
+// customer has it): the server's missingPermissions. Nobody grants such a
+// role, or changes / suspends an account that has one.
+export function outranks(perms: readonly string[], user: Pick<User, 'role' | 'permissions'> | null | undefined): boolean {
+  const mine = permissionsOf(user);
+  return perms.some(p => p !== 'book_online' && !mine.includes(p as Permission));
+}
+
 // Which screens a user may open: the counter (Staff POS) and settings (Admin).
 export const COUNTER_PERMISSIONS: Permission[] = ['counter_bookings', 'verify_slips', 'sell_rent', 'shifts', 'day_summary', 'cancel_refund'];
 export const SETTINGS_PERMISSIONS: Permission[] = ['manage_products', 'manage_members', 'adjust_points', 'manage_closures', 'view_reports', 'manage_courts', 'edit_pricing', 'manage_staff', 'manage_roles', 'view_audit_log'];

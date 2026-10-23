@@ -3,7 +3,7 @@ import {
   Booking, BookingStatus,
   Payment, PaymentStatus, PaymentMethod, MemberType, LineMessage, DayOff
 } from '../../types';
-import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, normalizePhone, formatBaht, isCourtSlotAvailable } from '../../mockData';
+import { StorageService, findClosure, calculatePrice, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, slotTiming, normalizePhone, formatBaht, isCourtSlotAvailable, expireUnpaidLocal, unpaidGroupsLocal, LOCAL_MAX_UNPAID_GROUPS } from '../../mockData';
 import { prepareSlipImage, SlipImageError } from '../../slipImage';
 import * as api from '../../api';
 import { notify } from '../Dialog';
@@ -115,6 +115,12 @@ export function useBookingFlow(deps: CustomerPanelCore & ReturnType<typeof useSl
 
     // Browser-only mode: the server's checks, on fresh data - the customer
     // may have waited on step 2 while someone else booked or the hour began.
+    expireUnpaidLocal();
+    const unpaid = unpaidGroupsLocal(loggedInUser.id);
+    if (unpaid >= LOCAL_MAX_UNPAID_GROUPS) {
+      notify(`คุณมีการจองที่รอชำระ/รอตรวจสลิปอยู่ ${unpaid} รายการแล้ว กรุณารอให้ยืนยันก่อนจองเพิ่ม`);
+      return;
+    }
     const freshBookings = StorageService.get<Booking[]>('bookings', []);
     const freshClosures = StorageService.get<DayOff[]>('days_off', []);
     for (const sl of selectedSlots) {

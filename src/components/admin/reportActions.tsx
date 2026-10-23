@@ -1,5 +1,5 @@
 import { Order } from '../../types';
-import { roundBaht, localDateOf, bangkokStamp } from '../../mockData';
+import { roundBaht, localDateOf, bangkokStamp, bookingGroupOf } from '../../mockData';
 import * as api from '../../api';
 import { notify } from '../Dialog';
 import type { AdminPanelCore } from './useAdminPanel';
@@ -53,8 +53,9 @@ export function useReportActions(deps: AdminPanelCore) {
       return { rows: r.bookings, monthOrders: r.orders };
     }
     const rows = bookings.filter(b => b.date.startsWith(month)).map(b => {
-      // A group's payment hangs off one of its rows.
-      const groupIds = new Set(bookings.filter(x => x.bookingCode === b.bookingCode).map(x => x.id));
+      // A group's payment hangs off one of its rows. Same code, customer
+      // and date (browser-only codes can repeat between customers).
+      const groupIds = new Set(bookingGroupOf(b, bookings).map(x => x.id));
       const pay = payments.find(p => groupIds.has(p.bookingId));
       // The group's refund is listed once, on the row the payment hangs off
       // (as the server's report does), so summing the column is right.
@@ -92,10 +93,12 @@ export function useReportActions(deps: AdminPanelCore) {
 
   // Filtering Audit Logs (Module 4 search spec)
   const filteredAuditLogs = auditLogs.filter(log => {
-    const term = auditSearch.toLowerCase();
+    const term = auditSearch.trim().toLowerCase();
+    // The box says "...or ID": the target's id is searched too.
     const matchTerm = log.userName.toLowerCase().includes(term) ||
                       log.action.toLowerCase().includes(term) ||
-                      log.targetType.toLowerCase().includes(term);
+                      log.targetType.toLowerCase().includes(term) ||
+                      (log.targetId || '').toLowerCase().includes(term);
     const matchType = auditTypeFilter === 'ALL' || log.targetType === auditTypeFilter;
     return matchTerm && matchType;
   });

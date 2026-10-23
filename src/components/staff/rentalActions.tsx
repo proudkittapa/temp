@@ -76,6 +76,15 @@ export function useRentalActions(deps: StaffPOSCore & ReturnType<typeof useShift
         .catch(err => { notify(`ปล่อยเช่าไม่สำเร็จ: ${err.message}`); onRefreshAll(); });
     }
 
+    // Browser-only mode: stock and price as stored now (the list on screen
+    // may be old - another tab may have rented the last one).
+    const live = StorageService.get<Product[]>('products', []).find(p => p.id === prodObj.id);
+    const liveVariant = variant ? live?.variants?.find(v => v.id === variant.id) : undefined;
+    if (!live || live.stock <= 0 || (variant && (!liveVariant || liveVariant.stock <= 0))) {
+      notify('ของเช่าชิ้นนี้หมดชั่วคราว กรุณาติดต่อฝั่งสนาม');
+      onRefreshAll();
+      return;
+    }
     const orderId = 'o-rental-' + Date.now();
     const orderCode = `OD-RENT-${getTodayDateStr().replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
     const customer = rentalCustomerPhone.trim()
@@ -89,9 +98,9 @@ export function useRentalActions(deps: StaffPOSCore & ReturnType<typeof useShift
       courtId: rentalCourtId || undefined,
       type: OrderType.EQUIPMENT_RENT,
       status: OrderStatus.PREPARING, // out on rent until returned
-      totalAmount: prodObj.price,
-      paidAmount: prodObj.price,
-      depositAmount: prodObj.deposit ?? 0,
+      totalAmount: live.price,
+      paidAmount: live.price,
+      depositAmount: live.deposit ?? 0,
       paymentMethod: PaymentMethod.CASH,
       createdAt: new Date().toISOString(),
       createdBy: 'u-staff-1',
@@ -101,7 +110,7 @@ export function useRentalActions(deps: StaffPOSCore & ReturnType<typeof useShift
         productId: prodObj.id,
         variantId: variant?.id,
         qty: 1,
-        unitPrice: prodObj.price,
+        unitPrice: live.price,
         shoeSize: variant?.label,
         shoeGender: variant?.gender === 'U' ? undefined : variant?.gender
       }]
@@ -113,7 +122,7 @@ export function useRentalActions(deps: StaffPOSCore & ReturnType<typeof useShift
     }));
     StorageService.set('orders', [...StorageService.get<Order[]>('orders', []), newOrder]);
     onAddAuditLog('RENTAL_CREATED_BY_STAFF', 'Order', orderId, null, newOrder);
-    done(orderCode);
+    done(orderCode, live.price, roundBaht(live.deposit ?? 0));
   };
 
   // A rented item is back: restock it (its size, for shoes); the rental

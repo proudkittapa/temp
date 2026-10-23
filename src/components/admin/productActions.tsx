@@ -229,27 +229,48 @@ export function useProductActions(deps: AdminPanelCore) {
 
           const cleanName = String(name ?? '').trim();
           const price = Number(priceVal);
-          const stock = stockVal === undefined ? 50 : Number(stockVal);
+          const stock = Number(stockVal);
           // The server's limits, so browser-only mode accepts the same rows.
-          if (!cleanName || cleanName.length > 200 || priceVal === undefined || !Number.isFinite(price) || price < 0 || price > 100000 ||
-              !Number.isInteger(stock) || stock < 0 || stock > 100000) {
-            if (cleanName) skipped.push(`${cleanName} (ข้อมูลไม่ถูกต้อง)`);
+          // A cell that can't be read skips the row with the reason - it used
+          // to become a default (blank stock 50, unknown category F&B,
+          // "Yes" in เช่า not a rental, a bad deposit 0) without a word.
+          const reject = (why: string) => { if (cleanName) skipped.push(`${cleanName} (${why})`); };
+          if (!cleanName || cleanName.length > 200 || priceVal === undefined || !Number.isFinite(price) || price < 0 || price > 100000) {
+            reject('ราคาไม่ถูกต้อง');
+            return;
+          }
+          if (stockVal === undefined || !Number.isInteger(stock) || stock < 0 || stock > 100000) {
+            reject('จำนวนสต็อกไม่ถูกต้องหรือไม่ได้กรอก');
             return;
           }
           if (knownNames.has(cleanName.toLowerCase())) {
-            skipped.push(`${cleanName} (มีอยู่แล้ว)`);
+            reject('มีอยู่แล้ว');
+            return;
+          }
+
+          const cat = String(categoryVal ?? '').trim();
+          const category = cat === '' || /^(fb|f&b|food|อาหาร|เครื่องดื่ม|อาหาร\/เครื่องดื่ม)$/i.test(cat) ? ProductCat.FB
+            : /^(equipment|อุปกรณ์.*|เช่า)$/i.test(cat) ? ProductCat.EQUIPMENT
+            : null;
+          if (!category) {
+            reject(`หมวดหมู่ "${cat}" ไม่รู้จัก ใช้ FB หรือ EQUIPMENT`);
+            return;
+          }
+          const rentalText = String(isRentalVal).trim().toLowerCase();
+          const rentalYes = isRentalVal === true || ['true', 'yes', 'y', '1', 'ใช่', 'เช่า'].includes(rentalText);
+          const rentalNo = isRentalVal === false || ['false', 'no', 'n', '0', 'ไม่', 'ไม่ใช่', ''].includes(rentalText);
+          if (!rentalYes && !rentalNo) {
+            reject(`ช่องเช่า "${isRentalVal}" ไม่เข้าใจ ใช้ TRUE หรือ FALSE`);
+            return;
+          }
+          // The template's เช่า column decides; F&B is never rented.
+          const isRental = category === ProductCat.EQUIPMENT && rentalYes;
+          if (isRental && (!Number.isFinite(depositVal) || depositVal < 0 || depositVal > 100000)) {
+            reject('ค่ามัดจำไม่ถูกต้อง');
             return;
           }
           knownNames.add(cleanName.toLowerCase());
-
-          const category = String(categoryVal).toUpperCase() === 'EQUIPMENT' || String(categoryVal).includes('อุปกรณ์') || String(categoryVal).includes('เช่า')
-            ? ProductCat.EQUIPMENT
-            : ProductCat.FB;
-
-          // The template's เช่า column decides; F&B is never rented.
-          const isRental = category === ProductCat.EQUIPMENT && (isRentalVal === true || String(isRentalVal).toLowerCase() === 'true');
-
-          const deposit = isRental && Number.isFinite(depositVal) && depositVal > 0 && depositVal <= 100000 ? depositVal : 0;
+          const deposit = isRental && depositVal > 0 ? depositVal : 0;
           apiRows.push({
             name: cleanName, category, price, isRental, deposit, stock, subCategory: subCategoryVal ? String(subCategoryVal) : undefined
           });

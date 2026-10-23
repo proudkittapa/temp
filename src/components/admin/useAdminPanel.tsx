@@ -3,7 +3,7 @@ import {
   Court, CourtType, PricingRule, DayType, PriceType,
   User, UserRole, MemberType, Booking, Payment, Product, ProductCat, Order, AuditLog, DayOff, MemberDiscountRule, PricingConfig
 } from '../../types';
-import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, openingHours } from '../../mockData';
+import { StorageService, getTodayDateStr, DEFAULT_MEMBER_DISCOUNTS, openingHours, expireUnpaidLocal } from '../../mockData';
 import * as api from '../../api';
 import { can, canUseSettings, BUILTIN_ROLES } from '../../permissions';
 import { useAdminSession } from './sessionActions';
@@ -102,6 +102,7 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
   // Load state from localStorage on triggerRefresh
   useEffect(() => {
     // In API mode courts, like the rest below, come from the backend.
+    if (!api.USE_BACKEND) expireUnpaidLocal();
     if (!api.USE_BACKEND) setCourts(StorageService.get<Court[]>('courts', []));
     if (!api.USE_BACKEND) setPricingRules(StorageService.get<PricingRule[]>('pricing_rules', []));
     if (!api.USE_BACKEND) setProducts(StorageService.get<Product[]>('products', []));

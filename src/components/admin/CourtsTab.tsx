@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { CourtType } from '../../types';
 import { openSlotHours } from '../../mockData';
 import { useAdminPanelContext } from './useAdminPanel';
@@ -35,6 +36,19 @@ export default function CourtsTab() {
     setNewDayOffReason,
     setNewDayOffStartHour
   } = useAdminPanelContext();
+  // A partial closure's hours as the dropdowns offer them (opening hours).
+  // A remembered hour outside them (the default 7-22, or hours changed
+  // since) is shown by the browser as the first option while the old value
+  // would be saved - a 09:00-10:00 closure saved as the whole day. Snap to
+  // a real option: start the first, end closing time.
+  const startHours = openSlotHours().map(t => parseInt(t, 10));
+  const endHours = startHours.map(h => h + 1);
+  const startHour = startHours.includes(newDayOffStartHour) ? newDayOffStartHour : startHours[0];
+  const endHour = endHours.includes(newDayOffEndHour) ? newDayOffEndHour : endHours[endHours.length - 1];
+  useEffect(() => {
+    if (startHour !== undefined && startHour !== newDayOffStartHour) setNewDayOffStartHour(startHour);
+    if (endHour !== undefined && endHour !== newDayOffEndHour) setNewDayOffEndHour(endHour);
+  }, [startHour, endHour]);
   return (
     <div className="space-y-6 animate-fade-in text-xs">
       <div>
@@ -175,11 +189,11 @@ export default function CourtsTab() {
                   <div>
                     <label className="block text-slate-700 font-bold mb-1 text-[10px]">ตั้งแต่ (Start):</label>
                     <select
-                      value={newDayOffStartHour}
+                      value={startHour}
                       onChange={(e) => setNewDayOffStartHour(Number(e.target.value))}
                       className="w-full bg-white border border-slate-200 py-1 px-1.5 rounded text-xs font-bold text-slate-800"
                     >
-                      {openSlotHours().map(t => parseInt(t, 10)).map(h => (
+                      {startHours.map(h => (
                         <option key={h} value={h}>{String(h).padStart(2, '0')}:00 น.</option>
                       ))}
                     </select>
@@ -187,11 +201,11 @@ export default function CourtsTab() {
                   <div>
                     <label className="block text-slate-700 font-bold mb-1 text-[10px]">ถึงเวลา (End):</label>
                     <select
-                      value={newDayOffEndHour}
+                      value={endHour}
                       onChange={(e) => setNewDayOffEndHour(Number(e.target.value))}
                       className="w-full bg-white border border-slate-200 py-1 px-1.5 rounded text-xs font-bold text-slate-800"
                     >
-                      {openSlotHours().map(t => parseInt(t, 10) + 1).map(h => (
+                      {endHours.map(h => (
                         <option key={h} value={h}>{String(h).padStart(2, '0')}:00 น.</option>
                       ))}
                     </select>
