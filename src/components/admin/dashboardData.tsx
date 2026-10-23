@@ -44,7 +44,12 @@ export function useDashboardData(deps: AdminPanelCore) {
       const orderDate = localDateOf(o.createdAt);
       return orderDate === targetDateStr && o.status !== OrderStatus.CANCELLED;
     });
-    const dailyOrderRevenue = dailyOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0);
+    // Kept rental deposits are income, on the day they were kept (as the
+    // server's dashboard).
+    const keptOn = (match: (day: string) => boolean) => orders
+      .filter(o => o.status !== OrderStatus.CANCELLED && o.depositKept && o.depositSettledAt && match(localDateOf(o.depositSettledAt)))
+      .reduce((n, o) => n + (o.depositKept || 0), 0);
+    const dailyOrderRevenue = dailyOrders.reduce((sum, o) => sum + Number(o.totalAmount), 0) + keptOn(d => d === targetDateStr);
 
     // Occupancy on dashboardSelectedDate: share of physical court-hours sold
     // (a half-court booking fills half of its court).
@@ -55,7 +60,7 @@ export function useDashboardData(deps: AdminPanelCore) {
     const totalBookingsRevenue = confirmedBookings.reduce((sum, b) => sum + Number(b.totalAmount), 0);
 
     // All time F&B products sale receipt amount
-    const totalOrderRevenue = orders.filter(o => o.status !== OrderStatus.CANCELLED).reduce((sum, o) => sum + Number(o.totalAmount), 0);
+    const totalOrderRevenue = orders.filter(o => o.status !== OrderStatus.CANCELLED).reduce((sum, o) => sum + Number(o.totalAmount) + (o.depositKept || 0), 0);
 
     // Total active registered member accounts count
     const activeMembersCount = users.filter(u => u.role === UserRole.CUSTOMER).length;
@@ -110,7 +115,9 @@ export function useDashboardData(deps: AdminPanelCore) {
       return {
         name: `${monthNames[d.getMonth()]} ${d.getFullYear()}`,
         'รายได้ค่าคอร์ท': roundBaht(bookings.filter(b => b.date.startsWith(key) && isPaidBooking(b)).reduce((s, b) => s + Number(b.totalAmount), 0)),
-        'รายได้เครื่องดื่ม/เช่าแร็ก': roundBaht(orders.filter(o => localDateOf(o.createdAt).startsWith(key) && o.status !== OrderStatus.CANCELLED).reduce((s, o) => s + Number(o.totalAmount), 0))
+        'รายได้เครื่องดื่ม/เช่าแร็ก': roundBaht(orders.filter(o => localDateOf(o.createdAt).startsWith(key) && o.status !== OrderStatus.CANCELLED).reduce((s, o) => s + Number(o.totalAmount), 0)
+          // kept deposits in the month they were kept
+          + orders.filter(o => o.status !== OrderStatus.CANCELLED && o.depositKept && o.depositSettledAt && localDateOf(o.depositSettledAt).startsWith(key)).reduce((s, o) => s + (o.depositKept || 0), 0))
       };
     });
   };
@@ -143,6 +150,8 @@ export function useDashboardData(deps: AdminPanelCore) {
       else if (prod?.category === ProductCat.EQUIPMENT) equipment += amount;
       else food += amount;
     }));
+    // Kept deposits count as rental income (as the server's split).
+    if (!api.USE_BACKEND) rental += orders.filter(o => o.status !== OrderStatus.CANCELLED).reduce((n, o) => n + (o.depositKept || 0), 0);
     return [
       { name: 'อาหารและเครื่องดื่ม', value: roundBaht(food) },
       { name: 'อุปกรณ์กีฬา (ขาย)', value: roundBaht(equipment) },

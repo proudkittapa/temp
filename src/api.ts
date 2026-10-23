@@ -800,7 +800,8 @@ export interface DaySummary {
   ordersPromptpay: number;
   fbSales: number;
   equipmentSales: number;
-  rentalIncome: number;
+  rentalIncome: number; // rental fees + kept deposits
+  keptDeposits: number; // rental deposits kept today (income, part of rentalIncome)
   ordersCount: number;
 }
 
@@ -810,13 +811,13 @@ export async function daySummary(date: string): Promise<DaySummary> {
   const r = await request<{
     date: string; cash_received: number; promptpay_verified: number; refunded: number; paid_bookings: number;
     refunded_cash: number; refunded_promptpay: number; refunded_not_received: number;
-    orders_cash: number; orders_promptpay: number; fb_sales: number; equipment_sales: number; rental_income: number; orders_count: number;
+    orders_cash: number; orders_promptpay: number; fb_sales: number; equipment_sales: number; rental_income: number; kept_deposits?: number; orders_count: number;
   }>(`/staff/summary?date=${encodeURIComponent(date)}`, { session: 'staff' });
   return {
     date: r.date, cashReceived: r.cash_received, promptpayVerified: r.promptpay_verified, refunded: r.refunded, paidBookings: r.paid_bookings,
     refundedCash: r.refunded_cash ?? 0, refundedPromptpay: r.refunded_promptpay ?? 0, refundedNotReceived: r.refunded_not_received ?? 0,
     ordersCash: r.orders_cash, ordersPromptpay: r.orders_promptpay, fbSales: r.fb_sales, equipmentSales: r.equipment_sales,
-    rentalIncome: r.rental_income, ordersCount: r.orders_count
+    rentalIncome: r.rental_income, keptDeposits: r.kept_deposits ?? 0, ordersCount: r.orders_count
   };
 }
 

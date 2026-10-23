@@ -1,4 +1,4 @@
-import { Order } from '../../types';
+import { Order, OrderStatus } from '../../types';
 import { roundBaht, localDateOf, bangkokStamp, bookingGroupOf } from '../../mockData';
 import * as api from '../../api';
 import { notify } from '../Dialog';
@@ -82,11 +82,19 @@ export function useReportActions(deps: AdminPanelCore) {
       const productName = (id: string, fallback?: string) => fallback || products.find(p => p.id === id)?.name || id;
       downloadCsv(`SportsComplex_CounterSales_${tag}.csv`,
         ['OrderCode', 'DateTime', 'Type', 'Customer', 'PaymentMethod', 'Status', 'Item', 'Size', 'Qty', 'UnitPrice', 'LineTotal', 'Returned'],
-        data.monthOrders.flatMap(o => o.items.map(it => [
-          o.orderCode, bangkokStamp(o.createdAt), o.type, o.customerName, o.paymentMethod || '', o.status,
-          productName(it.productId, it.productName), it.shoeSize ? `${it.shoeSize}${it.shoeGender || ''}` : '', it.qty, it.unitPrice,
-          roundBaht(it.qty * it.unitPrice), it.returnedAt ? bangkokStamp(it.returnedAt) : ''
-        ])));
+        data.monthOrders.flatMap(o => [
+          ...o.items.map(it => [
+            o.orderCode, bangkokStamp(o.createdAt), o.type, o.customerName, o.paymentMethod || '', o.status,
+            productName(it.productId, it.productName), it.shoeSize ? `${it.shoeSize}${it.shoeGender || ''}` : '', it.qty, it.unitPrice,
+            roundBaht(it.qty * it.unitPrice), it.returnedAt ? bangkokStamp(it.returnedAt) : ''
+          ]),
+          // A kept rental deposit is income (owner 2026-10-23): its own row,
+          // dated when it was kept, so LineTotal adds up to the income.
+          ...(o.depositKept && o.status !== OrderStatus.CANCELLED ? [[
+            o.orderCode, o.depositSettledAt ? bangkokStamp(o.depositSettledAt) : bangkokStamp(o.createdAt), o.type, o.customerName, 'CASH', o.status,
+            `มัดจำที่ยึด (kept deposit)${o.depositNote ? `: ${o.depositNote}` : ''}`, '', 1, o.depositKept, o.depositKept, ''
+          ]] : [])
+        ]));
     }
     onAddAuditLog('REPORT_CSV_EXPORTED', 'Report', 'csv-gen', null, { kind, month: reportsMonth, year: reportsYear });
   };

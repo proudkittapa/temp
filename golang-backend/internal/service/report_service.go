@@ -116,7 +116,7 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 	}
 	res := db.Raw("SELECT c.open_hour, c.close_hour, "+
 		"(SELECT COUNT(DISTINCT COALESCE(mutex_group_id, id)) FROM courts WHERE is_active) AS physical_courts, "+
-		"(SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status <> ?) AS all_time_order_sales, "+
+		"(SELECT COALESCE(SUM(total_amount + deposit_kept), 0) FROM orders WHERE status <> ?) AS all_time_order_sales, "+ // kept deposits are income
 		"(SELECT COALESCE(SUM(amount), 0) FROM refunds) AS all_time_refunds, "+
 		"(SELECT COUNT(*) FROM users WHERE role = ?) AS customer_count "+
 		"FROM pricing_configs c WHERE c.id = ?", model.OrderCancelled, model.RoleCustomer, "global").Scan(&head)
@@ -198,6 +198,25 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		default:
 			food += r.Total
 		}
+	}
+	// Kept rental deposits are income (owner 2026-10-23), in the month and
+	// on the day they were kept.
+	var kept []struct {
+		Month    string
+		Total    float64
+		DayTotal float64
+	}
+	if err := db.Raw("SELECT to_char(deposit_settled_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM') AS month, "+
+		"COALESCE(SUM(deposit_kept), 0) AS total, "+
+		"COALESCE(SUM(deposit_kept) FILTER (WHERE deposit_settled_at >= ? AND deposit_settled_at < ?), 0) AS day_total "+
+		"FROM orders WHERE deposit_kept > 0 AND deposit_settled_at IS NOT NULL AND status <> ? GROUP BY 1",
+		from, to, model.OrderCancelled).Scan(&kept).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range kept {
+		ordersByMonth[r.Month] += r.Total
+		dayOrders += r.DayTotal
+		rental += r.Total
 	}
 	d.SalesSplit = SalesSplit{Food: RoundBaht(food), Equipment: RoundBaht(equipment), Rental: RoundBaht(rental)}
 	d.DailyOrderRevenue = RoundBaht(dayOrders)

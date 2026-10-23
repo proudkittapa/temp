@@ -65,7 +65,14 @@ export function useDayReport(deps: StaffPOSCore) {
     const sumOf = (list: Order[]) => list.reduce((sum, o) => sum + Number(o.totalAmount), 0);
     const fbIncome = roundBaht(api.USE_BACKEND ? (daySummary?.fbSales ?? 0) + (daySummary?.equipmentSales ?? 0)
       : sumOf(dayOrders.filter(o => o.type !== OrderType.EQUIPMENT_RENT)));
-    const rentalIncome = roundBaht(api.USE_BACKEND ? daySummary?.rentalIncome ?? 0 : sumOf(dayOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT)));
+    // Rental deposits kept today (damage, loss) are income (owner
+    // 2026-10-23) and stay in the drawer as cash - counted on the day they
+    // were kept, whenever the rental was made.
+    const keptDeposits = roundBaht(api.USE_BACKEND ? daySummary?.keptDeposits ?? 0
+      : orders.filter(o => o.status !== OrderStatus.CANCELLED && o.depositSettledAt && localDateOf(o.depositSettledAt) === todayStr)
+        .reduce((n, o) => n + (o.depositKept || 0), 0));
+    const rentalIncome = roundBaht(api.USE_BACKEND ? daySummary?.rentalIncome ?? 0
+      : sumOf(dayOrders.filter(o => o.type === OrderType.EQUIPMENT_RENT)) + keptDeposits);
     const cashSumFromOrders = api.USE_BACKEND ? daySummary?.ordersCash ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.CASH));
     const qrSumFromOrders = api.USE_BACKEND ? daySummary?.ordersPromptpay ?? 0 : sumOf(dayOrders.filter(o => o.paymentMethod === PaymentMethod.PROMPTPAY));
 
@@ -105,7 +112,8 @@ export function useDayReport(deps: StaffPOSCore) {
       bookingIncome,
       fbIncome,
       rentalIncome,
-      cashExpected: roundBaht(cashFromBookings + cashSumFromOrders),
+      keptDeposits,
+      cashExpected: roundBaht(cashFromBookings + cashSumFromOrders + keptDeposits),
       qrExpected: roundBaht(qrFromBookings + qrSumFromOrders),
       refunded: roundBaht(refundedCash + refundedQr),
       refundedCash: roundBaht(refundedCash),

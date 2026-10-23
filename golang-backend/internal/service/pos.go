@@ -1094,8 +1094,11 @@ type OrderTotals struct {
 	PromptPay      float64 `json:"orders_promptpay"`
 	FB             float64 `json:"fb_sales"`
 	EquipmentSales float64 `json:"equipment_sales"`
-	Rentals        float64 `json:"rental_income"`
-	Count          int64   `json:"orders_count"`
+	Rentals        float64 `json:"rental_income"` // rental fees + kept deposits
+	// KeptDeposits: rental deposits kept (damage, loss) and settled in the
+	// period - income (owner 2026-10-23), included in Rentals.
+	KeptDeposits float64 `json:"kept_deposits"`
+	Count        int64   `json:"orders_count"`
 }
 
 // TotalsBetween sums the non-cancelled orders made in [from, to): money by
@@ -1147,6 +1150,15 @@ func (s *POSService) TotalsBetween(ctx context.Context, from, to time.Time) (*Or
 			t.FB += r.Total
 		}
 	}
+	// Kept deposits count on the day they were kept (settled), not the day
+	// the rental was made.
+	if err := db.Model(&model.Order{}).Select("COALESCE(SUM(deposit_kept), 0)").
+		Where("deposit_settled_at >= ? AND deposit_settled_at < ? AND status <> ?", from, to, model.OrderCancelled).
+		Scan(&t.KeptDeposits).Error; err != nil {
+		return nil, err
+	}
+	t.Rentals += t.KeptDeposits
 	t.Cash, t.PromptPay, t.FB, t.EquipmentSales, t.Rentals = RoundBaht(t.Cash), RoundBaht(t.PromptPay), RoundBaht(t.FB), RoundBaht(t.EquipmentSales), RoundBaht(t.Rentals)
+	t.KeptDeposits = RoundBaht(t.KeptDeposits)
 	return t, nil
 }

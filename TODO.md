@@ -188,7 +188,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [x] Database backstops: CHECK constraints (points, stock, variant stock ≥ 0; refund within the payment; deposit settled within what was taken) and a unique "one open shift" index (`ensureConstraints`, main.go); a violation answers 409. Done 2026-10-21.
 - [x] Money columns `numeric(12,2)` (done 2026-10-22, `golang-backend/money_columns.go`): the 20 amount columns (bookings, payments, refunds, orders, order items, products, pricing rules, shifts) are converted at start, one ALTER per table under the migration lock, values rounded to the satang (they already were; any that weren't are counted in the log). They had been GORM's `numeric` without a scale (exact, but any number of decimals). Go keeps `float64` rounded with `RoundBaht`; switching Go to `shopspring/decimal` would remove that last float step but touches every amount in the services - not done.
 
-- [ ] Kept rental deposits (`orders.deposit_kept`) are not in any income report or CSV, and the staff day ledger's expected cash leaves out deposits still held (the shift count includes them) - decide whether kept deposits are income, then add them.
+- [x] Kept rental deposits are income (owner 2026-10-23): in the day summary (`kept_deposits`, inside `rental_income`), the dashboard (day, month chart, sales split, all-time), the day ledger (also its expected cash) and the sales CSV (own row), on the day they were kept.
 
 ### Performance (beyond indexes)
 - [x] Admin dashboard: ~33 sequential queries -> 6 grouped ones (done 2026-10-22; output compared identical with the old code on 11 dates incl. month boundaries). A daily rollup / cache for all-time totals only if the tables get very large.

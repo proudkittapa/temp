@@ -144,7 +144,7 @@ export default function DayTotalTab() {
           <span className="font-extrabold text-emerald-700 text-3xl mt-1 block">{blindCount ? '—' : `${formatBaht(calculateLedger().totalExpected)} บาท`}</span>
           {blindCount
             ? <p id="day-report-blind" className="text-[10px] text-slate-400 mt-2">ยอดเงินแสดงให้ผู้จัดการเท่านั้น (นับลิ้นชักแบบไม่เห็นยอด)</p>
-            : <p className="text-[10px] text-slate-400 mt-2">ค่าสนาม: {formatBaht(calculateLedger().bookingIncome)} (รวมเงินจองล่วงหน้าของวันอื่น) | ขายของ: {formatBaht(calculateLedger().fbIncome)} | ค่าเช่า: {formatBaht(calculateLedger().rentalIncome)}</p>}
+            : <p className="text-[10px] text-slate-400 mt-2">ค่าสนาม: {formatBaht(calculateLedger().bookingIncome)} (รวมเงินจองล่วงหน้าของวันอื่น) | ขายของ: {formatBaht(calculateLedger().fbIncome)} | ค่าเช่า: {formatBaht(calculateLedger().rentalIncome)}{calculateLedger().keptDeposits > 0 ? ` (รวมมัดจำที่ยึด ${formatBaht(calculateLedger().keptDeposits)})` : ''}</p>}
           {(() => {
             const l = calculateLedger();
             return (<>

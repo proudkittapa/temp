@@ -18,6 +18,31 @@ Entry format:
 
 ---
 
+## 2026-10-23 — Kept rental deposits count as income
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (decision 6: "sure")
+- **Commit(s):** this commit (on `main`, parent `f8f659b`)
+- **Changed:** a deposit kept at return (damage, loss) is income on the
+  day it was kept (`deposit_settled_at`), not the day of the rental:
+  - `POSService.TotalsBetween`: `kept_deposits`, added to `rental_income`
+    (day summary / staff day total).
+  - `ReportService.Dashboard`: daily order revenue, monthly chart, sales
+    split (rental) and all-time order sales include them.
+  - Staff day ledger (`dayReport.tsx`): rental income and expected cash
+    include them (the kept cash stays in the drawer); the breakdown says
+    "รวมมัดจำที่ยึด"; browser-only mode computes the same.
+  - Sales CSV: one row per kept deposit ("มัดจำที่ยึด (kept deposit)",
+    dated when kept), so LineTotal adds up to income.
+  - Admin dashboard in browser-only mode: same rules.
+- **Verified:** `go vet`, `go test ./...`, DB tests (new
+  `TestKeptDepositIsIncome`: 100 deposit, 40 kept -> kept_deposits +40,
+  rental income +90 = 50 fee + 40), `tsc`, vitest.
+- **Not done / follow-ups:** the sales CSV lists orders by the month they
+  were made; a deposit kept in the following month appears in the rental
+  month's file (dated when kept).
+
+---
+
 ## 2026-10-23 — Owner decisions: cancel after start logged, no-show rules in Admin, audit retention
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (answers to the 8 open decisions; this commit: 3, 7, 8)

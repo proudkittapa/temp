@@ -160,3 +160,41 @@ func TestNoShowResaleIsAdminSetting(t *testing.T) {
 		t.Errorf("re-sold no-show hour costs %.2f, want 144 (80 %% of 180)", again.TotalAmount)
 	}
 }
+
+// A kept rental deposit is income on the day it was kept.
+func TestKeptDepositIsIncome(t *testing.T) {
+	e := raceSetup(t)
+	ctx := context.Background()
+	e.openTestShift(t)
+	prod := model.Product{ID: "prd-kept", Name: "Kept racket", Category: model.ProductEquipment, Price: 50, IsRental: true, Deposit: 100, Stock: 10, IsActive: true, CreatedAt: time.Now()}
+	if err := e.db.Create(&prod).Error; err != nil {
+		t.Fatal(err)
+	}
+	day := time.Now().In(service.Bangkok)
+	from := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, service.Bangkok)
+	to := from.AddDate(0, 0, 1)
+	before, err := e.pos.TotalsBetween(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.pos.ProcessCheckout(ctx, service.CheckoutInput{Type: model.OrderEquipmentRent, PaymentMeth: model.PaymentCash,
+		CreatedBy: "staff-a", CreatedByName: "Staff A", Items: []service.POSOrderItemInput{{ProductID: prod.ID, Qty: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item model.OrderItem
+	e.db.First(&item, "order_id = ?", out.Order.ID)
+	if _, err := e.pos.ReturnRentalItem(ctx, item.ID, 40, "broken grip", "staff-a", "Staff A"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := e.pos.TotalsBetween(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.KeptDeposits - before.KeptDeposits; got != 40 {
+		t.Errorf("kept deposits went up by %.2f, want 40", got)
+	}
+	if got := after.Rentals - before.Rentals; got != 90 {
+		t.Errorf("rental income went up by %.2f, want 90 (50 fee + 40 kept)", got)
+	}
+}
