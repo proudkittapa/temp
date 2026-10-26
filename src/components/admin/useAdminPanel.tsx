@@ -196,13 +196,12 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
           return;
         }
         setAdminUser(me);
-        const [closures, pricing, apiProducts, apiCourts, logs] = await Promise.all([
+        const [closures, pricing, apiProducts, apiCourts] = await Promise.all([
           // Each list only if the role may read it - a custom role missing
           // one permission must still get the rest of the panel.
           api.listDaysOff(getTodayDateStr()), api.syncPricingCache(),
           can(me, 'manage_products') ? api.adminListProducts() : Promise.resolve([] as Product[]),
-          can(me, 'manage_closures', 'manage_courts') ? api.adminListCourts() : api.listCourts(),
-          can(me, 'view_audit_log') ? api.auditLogs({ limit: 500 }) : Promise.resolve([] as AuditLog[])
+          can(me, 'manage_closures', 'manage_courts') ? api.adminListCourts() : api.listCourts()
         ]);
         if (cancelled) return;
         if (can(me, 'manage_roles', 'manage_staff')) {
@@ -213,7 +212,6 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
         setCourts(apiCourts);
         setOpenHourSetting(pricing.config.openHour ?? 7);
         setCloseHourSetting(pricing.config.closeHour ?? 23);
-        setAuditLogs(logs);
         setMaxAdvanceDays(pricing.config.maxAdvanceDays ?? 30);
         setNoShowResaleSetting(pricing.config.noShowResalePercent ?? 50);
         setNoShowGraceSetting(pricing.config.noShowGraceMinutes ?? 15);
@@ -242,6 +240,38 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
     }, search ? 300 : 0);
     return () => { cancelled = true; clearTimeout(t); };
   }, [triggerRefresh, adminUserId, adminRole, userSearchQuery]);
+
+  // API mode: the audit log is searched and filtered on the server, one
+  // page at a time (newest first); "load more" asks for the page after the
+  // last entry shown.
+  const [auditHasMore, setAuditHasMore] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const auditQuery = () => ({ search: auditSearch.trim(), targetType: auditTypeFilter === 'ALL' ? '' : auditTypeFilter });
+  useEffect(() => {
+    if (!api.USE_BACKEND || !adminUserId || !can(adminUser, 'view_audit_log')) return;
+    let cancelled = false;
+    const q = auditQuery();
+    const t = setTimeout(() => {
+      api.auditLogs(q)
+        .then(r => { if (!cancelled) { setAuditLogs(r.logs); setAuditHasMore(r.hasMore); } })
+        .catch(err => { if (!cancelled) setAdminApiError(err instanceof Error ? err.message : String(err)); });
+    }, q.search ? 300 : 0);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [triggerRefresh, adminUserId, adminRole, auditSearch, auditTypeFilter]);
+  const loadMoreAuditLogs = async () => {
+    const last = auditLogs[auditLogs.length - 1];
+    if (!api.USE_BACKEND || !last || auditLoading) return;
+    setAuditLoading(true);
+    try {
+      const r = await api.auditLogs({ ...auditQuery(), beforeId: last.id });
+      setAuditLogs(prev => [...prev, ...r.logs.filter(l => !prev.some(p => p.id === l.id))]);
+      setAuditHasMore(r.hasMore);
+    } catch (err) {
+      setAdminApiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAuditLoading(false);
+    }
+  };
 
   // The dashboard's date: its numbers, bookings and closures (the list
   // above has closures from today on only, so a past date needs its own).
@@ -296,6 +326,9 @@ function useAdminPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll }: Admi
     setAuditSearch,
     auditTypeFilter,
     setAuditTypeFilter,
+    auditHasMore,
+    auditLoading,
+    loadMoreAuditLogs,
     reportsMonth,
     setReportsMonth,
     reportsYear,

@@ -18,6 +18,34 @@ Entry format:
 
 ---
 
+## 2026-10-26 — Audit log screen searches on the server
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")
+- **Commit(s):** this commit (on `main`, parent `1994ced`)
+- **Changed:** the admin audit tab used to load the newest 500 entries
+  once and search/filter only those in the browser, so anything older was
+  invisible. In API mode it now:
+  - asks `GET /admin/audit-logs` with `search` / `target_type` (the server
+    already supported both, with the trigram index) after a 300 ms pause
+    in typing, 200 entries per page;
+  - shows "N+ รายการ" and a "โหลดรายการก่อนหน้าเพิ่ม" button while
+    `has_more`, which fetches the next page with `before_id` (keyset paging);
+  - no longer loads the log with the rest of the panel (one request less
+    on every admin refresh).
+  - `api.auditLogs` returns `{ logs, hasMore }` and takes `beforeId`.
+    Browser-only mode keeps filtering its local list.
+  - Files: `src/api.ts`, `admin/useAdminPanel.tsx`, `admin/reportActions.tsx`,
+    `admin/AuditLogTab.tsx`, TODO.
+- **Verified:** `tsc` clean, vitest 66/66. Live (Playwright, API mode,
+  303 entries in the DB): first page "200+" with the button → after "load
+  more" 303, button gone; type Booking → 115; + search "cash refund" → 1;
+  nonsense search → 0 with the empty message - each matches a direct SQL
+  count. Requests seen: `limit=200`, `before_id=…`, `target_type=Booking`,
+  `search=cash+refund&target_type=Booking`. No page errors.
+- **Not done / follow-ups:** the rest of the cleanup list (TODO 11).
+
+---
+
 ## 2026-10-23 — Cash refunds from the drawer
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (decision 5: "yes staff could")

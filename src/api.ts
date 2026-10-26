@@ -1107,16 +1107,22 @@ const asRecord = (v: unknown): Record<string, unknown> | undefined => {
   return typeof v === 'object' ? v as Record<string, unknown> : { value: v };
 };
 
-// Admins: the server's audit trail, newest first.
-export async function auditLogs(opts: { search?: string; targetType?: string; limit?: number } = {}): Promise<AuditLog[]> {
+// Admins: one page of the server's audit trail, newest first, searched and
+// filtered there. beforeId: the last entry of the page shown, for the next.
+export async function auditLogs(opts: { search?: string; targetType?: string; limit?: number; beforeId?: string } = {}): Promise<{ logs: AuditLog[]; hasMore: boolean }> {
   const q = new URLSearchParams();
   if (opts.search) q.set('search', opts.search);
   if (opts.targetType) q.set('target_type', opts.targetType);
-  q.set('limit', String(opts.limit ?? 500));
-  return (await request<ApiAuditLog[]>(`/admin/audit-logs?${q}`, { session: 'admin' })).map(l => ({
-    id: l.id, userId: l.user_id, userName: l.user_name, action: l.action, targetType: l.target_type as AuditLog['targetType'],
-    targetId: l.target_id, before: asRecord(l.before_state), after: asRecord(l.after_state), reason: l.reason, createdAt: l.created_at
-  }));
+  if (opts.beforeId) q.set('before_id', opts.beforeId);
+  q.set('limit', String(opts.limit ?? 200));
+  const r = await request<{ data: ApiAuditLog[]; has_more?: boolean }>(`/admin/audit-logs?${q}`, { session: 'admin', withMeta: true });
+  return {
+    logs: r.data.map(l => ({
+      id: l.id, userId: l.user_id, userName: l.user_name, action: l.action, targetType: l.target_type as AuditLog['targetType'],
+      targetId: l.target_id, before: asRecord(l.before_state), after: asRecord(l.after_state), reason: l.reason, createdAt: l.created_at
+    })),
+    hasMore: !!r.has_more
+  };
 }
 
 // Managers (staff session of a manager): cancel today's counter sale.

@@ -6,6 +6,9 @@ export default function AuditLogTab() {
   const {
     auditSearch,
     auditTypeFilter,
+    auditHasMore,
+    auditLoading,
+    loadMoreAuditLogs,
     filteredAuditLogs,
     setAuditSearch,
     setAuditTypeFilter
@@ -55,7 +58,7 @@ export default function AuditLogTab() {
       </div>
 
       {/* Logs loop */}
-      <p className="text-xs text-slate-500">{filteredAuditLogs.length} รายการ (ล่าสุดอยู่บนสุด)</p>
+      <p id="audit-count" className="text-xs text-slate-500">{filteredAuditLogs.length}{auditHasMore ? '+' : ''} รายการ (ล่าสุดอยู่บนสุด)</p>
       <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1 text-xs">
         {filteredAuditLogs.length === 0 ? (
           <p className="text-slate-400 text-center py-10">ไม่พบประวัติพฤติกรรมในฐานสลักสำหรับเกณฑ์ค่าดึงค้นหานี้</p>
@@ -217,6 +220,17 @@ export default function AuditLogTab() {
                 </div>
               );
             })
+        )}
+        {auditHasMore && (
+          <button
+            id="audit-load-more"
+            type="button"
+            onClick={loadMoreAuditLogs}
+            disabled={auditLoading}
+            className="w-full py-2 text-xs font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded-xl hover:bg-sky-100 disabled:opacity-50"
+          >
+            {auditLoading ? 'กำลังโหลด…' : 'โหลดรายการก่อนหน้าเพิ่ม'}
+          </button>
         )}
       </div>
     </div>

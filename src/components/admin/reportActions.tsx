@@ -99,8 +99,9 @@ export function useReportActions(deps: AdminPanelCore) {
     onAddAuditLog('REPORT_CSV_EXPORTED', 'Report', 'csv-gen', null, { kind, month: reportsMonth, year: reportsYear });
   };
 
-  // Filtering Audit Logs (Module 4 search spec)
-  const filteredAuditLogs = auditLogs.filter(log => {
+  // Filtering Audit Logs (Module 4 search spec). API mode: the server
+  // already searched and filtered the page it sent.
+  const filteredAuditLogs = api.USE_BACKEND ? auditLogs : auditLogs.filter(log => {
     const term = auditSearch.trim().toLowerCase();
     // The box says "...or ID": the target's id is searched too.
     const matchTerm = log.userName.toLowerCase().includes(term) ||
