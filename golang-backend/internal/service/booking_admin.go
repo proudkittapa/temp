@@ -909,15 +909,33 @@ func (s *BookingService) DismissRefundCheck(ctx context.Context, paymentID, reas
 	return &p, nil
 }
 
+// CompleteBatch is how many hours CompleteFinishedBookings updates per
+// statement.
+const CompleteBatch = 1000
+
 // CompleteFinishedBookings marks confirmed hours whose end has passed
-// (Bangkok time) as COMPLETED. main runs it every minute.
+// (Bangkok time) as COMPLETED. main runs it every minute. In batches, each
+// its own short statement, so a backlog (the first run after a long
+// stop) doesn't lock thousands of rows at once; rows a request has locked
+// (being cancelled, say) are skipped and picked up next minute.
 func (s *BookingService) CompleteFinishedBookings(ctx context.Context) (int64, error) {
 	now := s.now().In(Bangkok)
 	today, clock := now.Format("2006-01-02"), now.Format("15:04")
-	res := s.db.WithContext(ctx).Model(&model.Booking{}).
-		Where("status = ? AND (date < ? OR (date = ? AND end_time <= ?))", model.BookingConfirmed, today, today, clock).
-		Updates(map[string]interface{}{"status": model.BookingCompleted, "updated_at": s.now()})
-	return res.RowsAffected, res.Error
+	var total int64
+	for {
+		res := s.db.WithContext(ctx).Exec(`UPDATE bookings SET status = ?, updated_at = ?
+			WHERE id IN (SELECT id FROM bookings
+				WHERE status = ? AND (date < ? OR (date = ? AND end_time <= ?))
+				ORDER BY date, start_time LIMIT ? FOR UPDATE SKIP LOCKED)`,
+			model.BookingCompleted, s.now(), model.BookingConfirmed, today, today, clock, CompleteBatch)
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+		if res.RowsAffected < CompleteBatch {
+			return total, nil
+		}
+	}
 }
 
 // DaySummary is what the counter's cash-drawer report needs from bookings

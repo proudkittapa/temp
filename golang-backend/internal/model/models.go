@@ -367,6 +367,15 @@ const (
 	RefundCash     = "CASH"
 )
 
+// JobLease says which server runs the background jobs (one row, name
+// "background"): the holder renews it every minute; another server takes
+// over once ExpiresAt has passed (holder stopped or lost the database).
+type JobLease struct {
+	Name      string    `gorm:"primaryKey;column:name;type:varchar(32)"`
+	Holder    string    `gorm:"column:holder;type:varchar(64);not null"`
+	ExpiresAt time.Time `gorm:"column:expires_at;not null"`
+}
+
 // AppMigration marks a one-off data migration as done, so it never runs twice.
 type AppMigration struct {
 	Name  string    `gorm:"primaryKey;column:name"`

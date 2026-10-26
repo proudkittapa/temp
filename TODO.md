@@ -175,7 +175,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 
 ### Scaling to 2+ servers
 - [ ] Slip images are on the server's own disk - move to shared storage (S3/GCS or a shared volume) before a second server.
-- [ ] Background jobs run in every server - elect one with `pg_try_advisory_lock` per tick; batch `CompleteFinishedBookings`.
+- [x] Background jobs run in every server - done 2026-10-26: one server holds a lease row (`job_leases`, 2-minute expiry on the database clock, renewed each minute, given up at shutdown) and runs the jobs; a row rather than an advisory lock, which would hold a pooled connection (deadlock with `DB_MAX_OPEN_CONNS=1`). `CompleteFinishedBookings` updates 1,000 at a time and skips rows a request has locked.
 - [x] Startup migrations/indexes run unlocked - done 2026-10-22/23: the whole `setupSchema` holds one session advisory lock (4205) on one connection; two servers starting together on an empty database used to crash one of them in AutoMigrate (3 of 3 tries), now both start (5 of 5).
 - [ ] Cash-drawer attribution uses each server's clock (`ReturnRentalItem` now takes its time after the drawer lock - fixed 2026-10-21): stamp `shift_id` on payments/orders/deposit settlements under the drawer lock and compute expected cash by shift.
 

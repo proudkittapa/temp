@@ -772,7 +772,18 @@ func resolveJWTSecret() []byte {
 func expireUnpaidBookingsLoop(ctx context.Context, db *gorm.DB, bookings *service.BookingService, auth *service.AuthService, rewards *service.RewardService) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
+	lease := newJobLease(db)
+	defer lease.release()
 	for {
+		if !lease.acquire(ctx) {
+			// Another server runs the jobs this minute.
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			continue
+		}
 		runJob(ctx, "expiring unpaid bookings", func(ctx context.Context) error {
 			n, err := bookings.ExpireUnpaidBookings(ctx)
 			if n > 0 {
@@ -1091,6 +1102,7 @@ func setupSchemaLocked(setupDB *gorm.DB) error {
 		&model.LoginFailure{},
 		&model.Refund{},
 		&model.AppMigration{},
+		&model.JobLease{},
 	)
 	if err != nil {
 		return err

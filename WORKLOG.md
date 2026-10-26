@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-10-26 — One server runs the background jobs; finished hours in batches
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - `job_lease.go` (new) + `model.JobLease` (table `job_leases`): before
+    each minute's jobs a server takes or renews the lease
+    (`INSERT … ON CONFLICT DO UPDATE … WHERE holder = me OR expired`,
+    expiry 2 min on the database's clock); others skip that minute.
+    Released at shutdown, so a rolling update hands over at the next tick;
+    a crashed holder is replaced within ~2 minutes. Logs "This server now
+    runs the background jobs." / "Another server runs …" on changes only.
+    A row, not a session advisory lock: the lock would hold a pooled
+    connection while the jobs use others (deadlock with
+    `DB_MAX_OPEN_CONNS=1`) and vanish silently if that connection drops.
+    Jobs were already safe to run twice at once; this stops duplicate work.
+  - `CompleteFinishedBookings`: `UPDATE … WHERE id IN (SELECT … ORDER BY
+    date, start_time LIMIT 1000 FOR UPDATE SKIP LOCKED)` in a loop, so a
+    backlog isn't one huge statement and a booking a request is changing
+    is left for the next minute instead of waited on (`service.CompleteBatch`).
+  - Files: `job_lease.go`, `main.go`, `internal/model/models.go`,
+    `internal/service/booking_admin.go`, `jobs_db_test.go`, TODO.
+- **Verified:**
+  - New DB tests: `TestJobLeaseOneServer` (holder renews, second server
+    refused, takeover after expiry, old holder then refused, release frees
+    it, 20 rounds of three servers at once → exactly one each time);
+    `TestCompleteFinishedBookingsBatches` (2,500-hour backlog all
+    completed, one row locked by an open transaction skipped then done on
+    the next run, a future hour untouched). Full `go test -race ./...`
+    with `TEST_DATABASE_URL` passes.
+  - Live: two servers on one database (8080, 8091): 8080 logged "This
+    server now runs the background jobs", 8091 nothing; SIGTERM on 8080 →
+    "Stopped cleanly", lease row gone; 8091 took over 29 s later.
+- **Not done / follow-ups:** the two other multi-server items (slip images
+  on local disk, drawer attribution by server clock) - not needed with one
+  server.
+
+---
+
 ## 2026-10-26 — Audit log screen searches on the server
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")
