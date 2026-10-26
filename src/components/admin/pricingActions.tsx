@@ -66,7 +66,7 @@ export function usePricingActions(deps: AdminPanelCore) {
     });
   };
 
-  const handleSaveDiscountTier = (id: MemberType) => {
+  const handleSaveDiscountTier = async (id: MemberType) => {
     const staged = editingDiscounts[id];
     if (!staged) return;
 
@@ -74,7 +74,7 @@ export function usePricingActions(deps: AdminPanelCore) {
     if (!original) return;
 
     if (api.USE_BACKEND) {
-      return api.updateMemberDiscount({ ...original, name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive })
+      await api.updateMemberDiscount({ ...original, name: staged.name, discountPercent: staged.discountPercent, isActive: staged.isActive })
         .then(() => {
           setEditingDiscounts(prev => {
             const next = { ...prev };
@@ -88,6 +88,7 @@ export function usePricingActions(deps: AdminPanelCore) {
           notify(`บันทึกการตั้งราคา/เปอร์เซ็นต์ส่วนลดสำหรับ '${staged.name}' เรียบร้อยแล้วค่ะ!`);
         })
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
     }
 
     const updatedList = memberDiscounts.map(d => {
@@ -156,7 +157,7 @@ export function usePricingActions(deps: AdminPanelCore) {
     StorageService.set('pricing_config', { ...StorageService.get<PricingConfig>('pricing_config', { id: 'global', halfCourtRatePercent: 50 }), openHour: open, closeHour: close });
     done();
   };
-  const handleSaveMaxAdvanceDays = () => {
+  const handleSaveMaxAdvanceDays = async () => {
     const days = Math.round(Number(maxAdvanceDays));
     if (!(days >= 1 && days <= 365)) {
       notify('กรุณาระบุ 1–365 วัน');
@@ -169,14 +170,15 @@ export function usePricingActions(deps: AdminPanelCore) {
       notify(`ตั้งค่าแล้ว: ลูกค้าจองออนไลน์ล่วงหน้าได้ ${days} วัน (ถึง ${lastBookableDate()})`);
     };
     if (api.USE_BACKEND) {
-      return api.setMaxAdvanceDays(days).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      await api.setMaxAdvanceDays(days).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
     }
     StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), maxAdvanceDays: days });
     done();
   };
   // No-show rules: the re-sale price of a no-show hour (% of the normal
   // price) and how long after the start staff may mark it (owner setting).
-  const handleSaveNoShowRules = () => {
+  const handleSaveNoShowRules = async () => {
     const resale = Math.round(Number(noShowResaleSetting));
     const grace = Math.round(Number(noShowGraceSetting));
     if (!(resale >= 1 && resale <= 100) || !(grace >= 0 && grace <= 120)) {
@@ -191,12 +193,13 @@ export function usePricingActions(deps: AdminPanelCore) {
       notify(`ตั้งค่าแล้ว: ไม่มาใช้สนาม — กดบันทึกได้หลังเริ่ม ${grace} นาที, ขายต่อในราคา ${resale}% ของราคาปกติ`);
     };
     if (api.USE_BACKEND) {
-      return api.setNoShowRules(resale, grace).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      await api.setNoShowRules(resale, grace).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
     }
     StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), noShowResalePercent: resale, noShowGraceMinutes: grace });
     done();
   };
-  const handleSaveBusiness = () => {
+  const handleSaveBusiness = async () => {
     const b = { name: business.name.trim(), address: business.address.trim(), phone: business.phone.trim(),
       taxId: business.taxId.replace(/\D/g, ''), vatRegistered: business.vatRegistered };
     if (b.taxId && b.taxId.length !== 13) {
@@ -215,7 +218,8 @@ export function usePricingActions(deps: AdminPanelCore) {
       notify('บันทึกข้อมูลร้านแล้ว');
     };
     if (api.USE_BACKEND) {
-      return api.updateBusiness(b).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      await api.updateBusiness(b).then(() => api.syncPricingCache()).then(done).catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
     }
     StorageService.set('pricing_config', { ...StorageService.get('pricing_config', {}), businessName: b.name, businessAddress: b.address,
       businessPhone: b.phone, businessTaxId: b.taxId, vatRegistered: b.vatRegistered });
@@ -223,7 +227,7 @@ export function usePricingActions(deps: AdminPanelCore) {
   };
 
   // Pricing CRUD functions
-  const handleSavePricingRule = (e: React.FormEvent) => {
+  const handleSavePricingRule = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Same limits as the server: a rule covers part of 00:00-24:00 (only
@@ -254,7 +258,7 @@ export function usePricingActions(deps: AdminPanelCore) {
 
     if (api.USE_BACKEND) {
       const existing = editingRuleId ? pricingRules.find(r => r.id === editingRuleId) : undefined;
-      return api.savePricingRule({ ...newRule, id: editingRuleId || '', isActive: existing ? existing.isActive : true })
+      await api.savePricingRule({ ...newRule, id: editingRuleId || '', isActive: existing ? existing.isActive : true })
         .then(saved => {
           onAddAuditLog(editingRuleId ? 'PRICING_UPDATED' : 'PRICING_CREATED', 'PricingRule', saved.id, existing ?? null, saved);
           setEditingRuleId(null);
@@ -264,6 +268,7 @@ export function usePricingActions(deps: AdminPanelCore) {
           notify('บันทึกกติกาตั้งราคาเรียบร้อย! มีผลทันทีในกลไกเซิร์ฟเวอร์');
         })
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
     }
 
     const currentRules = StorageService.get<PricingRule[]>('pricing_rules', []);

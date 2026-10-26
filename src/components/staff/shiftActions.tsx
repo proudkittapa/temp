@@ -61,7 +61,7 @@ export function useShiftActions(deps: StaffPOSCore) {
   // browser-only mode from localStorage. Completed and no-show hours count
   // as paid like confirmed ones.
   // Open the drawer shift with the counted float (FR-6.1).
-  const handleOpenShift = () => {
+  const handleOpenShift = async () => {
     const float = Number(shiftFloatInput);
     if (shiftFloatInput.trim() === '' || !(float >= 0)) {
       notify('กรุณากรอกเงินทอนตั้งต้นในลิ้นชัก (บาท)');
@@ -77,7 +77,8 @@ export function useShiftActions(deps: StaffPOSCore) {
     setClosedShift(null);
     const done = () => { setShiftFloatInput(''); setShiftOpenNote(''); onRefreshAll(); };
     if (api.USE_BACKEND) {
-      return api.openShift(float, note).then(done).catch(err => notify(`เปิดกะไม่สำเร็จ: ${err.message}`));
+      await api.openShift(float, note).then(done).catch(err => notify(`เปิดกะไม่สำเร็จ: ${err.message}`));
+      return;
     }
     const list = StorageService.get<Shift[]>('shifts', []);
     if (list.some(sh => !sh.closedAt)) { notify('มีกะที่เปิดอยู่แล้ว ปิดกะก่อน'); return; }

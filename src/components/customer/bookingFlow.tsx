@@ -231,7 +231,7 @@ export function useBookingFlow(deps: CustomerPanelCore & ReturnType<typeof useSl
     setTimeout(() => document.getElementById('promptpay-qr-display')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   };
 
-  const handleSlipUploadSimulation = (mockImgUrl: string, realFile?: File) => {
+  const handleSlipUploadSimulation = async (mockImgUrl: string, realFile?: File) => {
     if (!currentBooking) return;
 
     if (api.USE_BACKEND) {
@@ -244,7 +244,7 @@ export function useBookingFlow(deps: CustomerPanelCore & ReturnType<typeof useSl
             if (!r.ok) throw new Error('could not load sample slip image');
             return r.blob();
           });
-      return getFile
+      await getFile
         .then(file => api.uploadSlip(currentBooking.id, file, (file as File).name || realFile?.name || 'sample-slip.jpg'))
         .then(() => {
           setBookingSuccessAlert("ส่งสลิปเรียบร้อยแล้ว! พนักงานจะตรวจสอบและยืนยันการจอง ดูสถานะได้ที่รายการจองด้านล่าง");
@@ -253,6 +253,7 @@ export function useBookingFlow(deps: CustomerPanelCore & ReturnType<typeof useSl
           onRefreshAll();
         })
         .catch(err => notify(err instanceof SlipImageError ? err.message : `ส่งสลิปไม่สำเร็จ: ${err.message}`));
+      return;
     }
 
     // Only a payment still waiting for its money can take a slip (as on the

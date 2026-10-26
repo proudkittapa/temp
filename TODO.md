@@ -200,7 +200,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] Audit rows store full order/product snapshots and are never pruned - store ids/totals, partition or archive by month.
 
 ### Structure / debt
-- [x] React type checking (done 2026-10-22): `@types/react`/`@types/react-dom` added; `strict`, `noUnusedLocals`, `noFallthroughCasesInSwitch` on in `tsconfig.json` (`npm run lint` = 0 errors). The ~3,500 errors were nearly all from React being untyped; 8 real ones fixed. Left off: `noImplicitReturns` (15, style only).
+- [x] React type checking (done 2026-10-22): `@types/react`/`@types/react-dom` added; `strict`, `noUnusedLocals`, `noFallthroughCasesInSwitch` on in `tsconfig.json` (`npm run lint` = 0 errors). The ~3,500 errors were nearly all from React being untyped; 8 real ones fixed. `noImplicitReturns` on too (2026-10-26): the 16 handlers that returned the server call in API mode and nothing in browser-only mode are `async` and `await` it, so forms that wait on them (busy buttons) still do.
 - [ ] Pricing/availability/drawer rules exist in Go and TypeScript - server returns the availability matrix (status, price, reason) and error codes instead of English text matched by ~130 regexes.
   - Guard added 2026-10-26: `src/serverMessages.test.ts` reads the Go source and fails when a message a user can see has no Thai rule (rewording one in Go used to drop its translation silently); 32 untranslated messages found and translated. Error codes would still be the cleaner fix.
 - [ ] Two data modes (110 `USE_BACKEND` branches) - one DataSource interface, or drop browser-only mode for a Docker demo.

@@ -61,7 +61,7 @@ Nothing High was found.
 | Medium | **Phone numbers aren't verified:** someone can register another person's number first and collect the points of the walk-ins staff record for it. | Phone OTP at sign-up (SMS provider) or LINE login. |
 | Low-Med | **Anyone can lock any account** (incl. the admin) for 15 min with 20 wrong passwords from a few IPs. | Already an open owner decision (section 0, login lockout): e.g. let a correct password through the account-wide lock and keep the hard lock per (account, IP). |
 | Low | **Sessions can't be revoked:** a stolen token works for up to 48 h after logout; there's no "log out everywhere". | `token_version` on users, checked per request, bumped on logout-all / password change / suspension - do together with "forgot password". |
-| Low | A manager can cancel and refund an hour that is being played or just finished. | Refuse once the hour has started unless an audited override is given. |
+| ~~Low~~ decided 2026-10-23 | A manager can cancel and refund an hour that is being played or just finished. | Owner: allowed, with a log - the cancel's audit entry records how many of the hours had already started (`started_hours`). |
 | ~~Low~~ fixed 2026-10-22 | The opening float isn't checked against the previous shift's count. | Done: the screen shows the last count ("ใช้ยอดนี้"); a different float needs a note (server and browser-only mode), kept on the shift and in the audit log. |
 | ~~Low~~ fixed 2026-10-22 | Counter staff can book through a closure (`override_closure`). | Done: needs `manage_closures` (403 otherwise); the counter screen says so instead of offering it. |
 | Low | Registration reveals whether a phone/email is registered. | Normal for sign-up; goes away with OTP-first sign-up. |

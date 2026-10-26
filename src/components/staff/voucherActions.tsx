@@ -34,17 +34,18 @@ export function useVoucherActions(deps: StaffPOSCore) {
 
   // Reward voucher check: look the code up, then mark it handed over.
   // Browser-only mode keeps vouchers in localStorage ("redemptions").
-  const handleLookupVoucher = () => {
+  const handleLookupVoucher = async () => {
     setVoucherError(null);
     setVoucherFound(null);
     const code = voucherCode.trim().toUpperCase();
     if (!code) return;
     if (api.USE_BACKEND) {
-      return api.lookupVoucher(code)
+      await api.lookupVoucher(code)
         .then(v => setVoucherFound({ code: v.code, reward: `${v.rewardEmoji} ${v.rewardName}`, customer: `${v.userName || ''} ${v.userPhone || ''}`,
           name: v.userName || '', phone: v.userPhone || '', freeHour: v.rewardKind === 'FREE_OFFPEAK_HOUR', status: v.status,
           expires: formatDate(v.expiresAt) }))
         .catch(err => setVoucherError(err instanceof api.ApiError && err.status === 404 ? 'ไม่พบรหัสนี้' : err.message));
+      return;
     }
     const v = StorageService.get<LocalVoucher[]>('redemptions', []).find(r => r.claimCode === code);
     if (!v) { setVoucherError('ไม่พบรหัสนี้'); return; }
@@ -64,7 +65,7 @@ export function useVoucherActions(deps: StaffPOSCore) {
     setActivePosTab('walkin');
   };
 
-  const handleDispenseVoucher = () => {
+  const handleDispenseVoucher = async () => {
     if (!voucherFound) return;
     const code = voucherFound.code;
     const done = () => {
@@ -73,7 +74,8 @@ export function useVoucherActions(deps: StaffPOSCore) {
       notify(`มอบของรางวัล ${voucherFound.reward} แล้ว`);
     };
     if (api.USE_BACKEND) {
-      return api.dispenseVoucher(code).then(done).catch(err => setVoucherError(err.message));
+      await api.dispenseVoucher(code).then(done).catch(err => setVoucherError(err.message));
+      return;
     }
     const list = StorageService.get<LocalVoucher[]>('redemptions', []);
     // As the server: only an ACTIVE voucher (not handed out, cancelled by

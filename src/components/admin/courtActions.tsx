@@ -36,7 +36,7 @@ export function useCourtActions(deps: AdminPanelCore) {
     setNewDayOffStartHour
   } = deps;
   // Court Management functions
-  const handleCreateCourt = (e: React.FormEvent) => {
+  const handleCreateCourt = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCourtName) return;
     // A half court shares a full court's floor: it must name that court, so
@@ -47,7 +47,7 @@ export function useCourtActions(deps: AdminPanelCore) {
       return;
     }
     if (api.USE_BACKEND) {
-      return api.createCourt({ name: newCourtName, type: newCourtType, halfCourt: newCourtAllowHalf, halfOf: fullCourt?.id })
+      await api.createCourt({ name: newCourtName, type: newCourtType, halfCourt: newCourtAllowHalf, halfOf: fullCourt?.id })
         .then(c => {
           onAddAuditLog('COURT_CREATED', 'Court', c.id, null, c);
           setNewCourtName('');
@@ -57,6 +57,7 @@ export function useCourtActions(deps: AdminPanelCore) {
           notify(`เพิ่มสนาม "${c.name}" แล้ว ลูกค้าและพนักงานจองได้ทันที`);
         })
         .catch(err => notify(`เพิ่มสนามไม่สำเร็จ: ${err.message}`));
+      return;
     }
     const current = StorageService.get<Court[]>('courts', []);
     const cId = newCourtType.toLowerCase().substring(0, 3) + '-' + (current.length + 1) + '-' + Math.floor(100 + Math.random() * 900);
@@ -161,7 +162,7 @@ export function useCourtActions(deps: AdminPanelCore) {
   };
 
   // DayOff / Special Holidays Settings functions
-  const handleSaveDayOff = (e: React.FormEvent) => {
+  const handleSaveDayOff = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDayOffDate || !newDayOffReason) return;
     
@@ -171,7 +172,7 @@ export function useCourtActions(deps: AdminPanelCore) {
     }
 
     if (api.USE_BACKEND) {
-      return api.createDayOff({
+      await api.createDayOff({
         date: newDayOffDate,
         courtId: newDayOffCourtId,
         reason: newDayOffReason,
@@ -217,6 +218,7 @@ export function useCourtActions(deps: AdminPanelCore) {
           }
         })
         .catch(err => notify(`บันทึกไม่สำเร็จ: ${err.message}`));
+      return;
     }
 
     const current = StorageService.get<DayOff[]>('days_off', []);

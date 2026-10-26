@@ -35,12 +35,12 @@ export function useAccountActions(deps: CustomerPanelCore) {
   };
 
   // Shared by the login form and the dev-only demo account buttons.
-  const loginWith = (identity: string, password: string) => {
+  const loginWith = async (identity: string, password: string) => {
     setAuthError(null);
     setForgotResult(null);
 
     if (api.USE_BACKEND) {
-      return api.login('customer', identity, password)
+      await api.login('customer', identity, password)
         .then(user => {
           setAuthEmail('');
           setAuthPassword('');
@@ -55,6 +55,7 @@ export function useAccountActions(deps: CustomerPanelCore) {
           onRefreshAll();
         })
         .catch(err => setAuthError(`❌ ${err.message}`));
+      return;
     }
 
     const allUsers = StorageService.get<User[]>('users', []);
@@ -88,7 +89,7 @@ export function useAccountActions(deps: CustomerPanelCore) {
     onRefreshAll();
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
     setForgotResult(null);
@@ -103,7 +104,7 @@ export function useAccountActions(deps: CustomerPanelCore) {
     }
 
     if (api.USE_BACKEND) {
-      return api.register({ name: authName, email: authEmail.trim(), phone: authPhone, password: authPassword })
+      await api.register({ name: authName, email: authEmail.trim(), phone: authPhone, password: authPassword })
         .then(user => {
           setLoggedInUser(user);
           setAuthEmail('');
@@ -114,6 +115,7 @@ export function useAccountActions(deps: CustomerPanelCore) {
           notify('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
         })
         .catch(err => setAuthError(`❌ ${err.message}`));
+      return;
     }
 
     const allUsers = StorageService.get<User[]>('users', []);

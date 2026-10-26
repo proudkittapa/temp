@@ -18,6 +18,31 @@ Entry format:
 
 ---
 
+## 2026-10-26 — `noImplicitReturns` on; security review table brought up to date
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - `tsconfig.json`: `noImplicitReturns: true` (the last check left off in
+    2026-10-22). The 16 handlers it flagged returned the server call's
+    promise in API mode and nothing in browser-only mode; they are now
+    `async`, `await` the call and `return` - same behaviour, and callers
+    that wait on them (`guarded(...)` busy buttons, `handleLogin` →
+    `loginWith`) still get a promise. Files: admin `courtActions`,
+    `pricingActions` (5), `productActions`, `userActions` (2); customer
+    `accountActions` (2), `bookingFlow`; staff `shiftActions`,
+    `voucherActions` (2).
+  - `SECURITY_REVIEW.md`: "cancel after the hour started" marked decided
+    2026-10-23 (allowed; the audit entry records `started_hours`).
+- **Verified:** `tsc` clean with the new flag, vitest 69/69. Live (API
+  mode): customer sign-in wrong password → Thai error, right password →
+  signed in; admin no-show settings save → confirmation; staff unknown
+  voucher → "ไม่พบรหัสนี้". No page errors.
+- **Not done / follow-ups:** the screen doesn't warn before cancelling an
+  hour that has started (the server allows and logs it).
+
+---
+
 ## 2026-10-26 — Every server message has a Thai translation (with a test)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")

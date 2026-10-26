@@ -24,6 +24,7 @@
     "noEmit": true,
     "strict": true,
     "noUnusedLocals": true,
+    "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true
   }
 }

@@ -25,12 +25,12 @@ export function useProductActions(deps: AdminPanelCore) {
     stockVariantSel
   } = deps;
   // Product Inventory management
-  const handleCreateProduct = (e: React.FormEvent) => {
+  const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProductName || !newProductPrice) return;
 
     if (api.USE_BACKEND) {
-      return api.createProducts([{ name: newProductName, category: newProductCat, price: Number(newProductPrice), isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental,
+      await api.createProducts([{ name: newProductName, category: newProductCat, price: Number(newProductPrice), isRental: newProductCat === ProductCat.EQUIPMENT && newProductIsRental,
         deposit: newProductCat === ProductCat.EQUIPMENT && newProductIsRental ? Number(newProductDeposit) || 0 : 0, stock: Number(newProductStock) }])
         .then(() => {
           setNewProductName('');
@@ -40,6 +40,7 @@ export function useProductActions(deps: AdminPanelCore) {
           notify('บันทึกเพิ่มสินค้า/บริการสำเร็จ!');
         })
         .catch(err => notify(`เพิ่มสินค้าไม่สำเร็จ: ${err.message}`));
+      return;
     }
 
     const newProdId = 'pd-' + Date.now();

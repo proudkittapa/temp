@@ -23,7 +23,7 @@ export function useUserActions(deps: AdminPanelCore) {
     users
   } = deps;
   // User Management actions (Promote existing registered users to staff operator role)
-  const handlePromoteUser = (e: React.FormEvent) => {
+  const handlePromoteUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userIdToPromote) {
       notify('🔒 กรุณาเลือกผู้ใช้ที่มีในระบบเพื่อใช้ลากเลื่อนระดับสิทธิ์ปฏิบัติงานเวร!');
@@ -32,7 +32,7 @@ export function useUserActions(deps: AdminPanelCore) {
 
     if (api.USE_BACKEND) {
       const before = users.find(u => u.id === userIdToPromote);
-      return api.setUserRole(userIdToPromote, newUserRole)
+      await api.setUserRole(userIdToPromote, newUserRole)
         .then(updated => {
           setUsers(prev => prev.map(u => (u.id === updated.id ? updated : u)));
           onAddAuditLog('USER_PROMOTED_TO_OPERATOR_BY_ADMIN', 'User', updated.id, before ?? null, updated);
@@ -41,6 +41,7 @@ export function useUserActions(deps: AdminPanelCore) {
           notify(`🎉 เลื่อนสิทธิ์ให้คุณ "${updated.name}" เป็น "${updated.role}" เรียบร้อยแล้วค่ะ!`);
         })
         .catch(err => notify(`เลื่อนสิทธิ์ไม่สำเร็จ: ${err.message}`));
+      return;
     }
 
     const currentUsers = StorageService.get<User[]>('users', []);
@@ -200,15 +201,16 @@ export function useUserActions(deps: AdminPanelCore) {
     });
   };
 
-  const handleToggleUserActive = (id: string, currentlyActive: boolean) => {
+  const handleToggleUserActive = async (id: string, currentlyActive: boolean) => {
     if (api.USE_BACKEND) {
-      return api.setUserActive(id, !currentlyActive)
+      await api.setUserActive(id, !currentlyActive)
         .then(updated => {
           setUsers(prev => prev.map(u => (u.id === id ? updated : u)));
           onAddAuditLog('USER_STATUS_TOGGLED', 'User', id, { isActive: currentlyActive }, { isActive: updated.isActive });
           onRefreshAll();
         })
         .catch(err => notify(`เปลี่ยนสถานะไม่สำเร็จ: ${err.message}`));
+      return;
     }
     const currentUsers = StorageService.get<User[]>('users', []);
     const updated = currentUsers.map(u => u.id === id ? { ...u, isActive: !currentlyActive } : u);
