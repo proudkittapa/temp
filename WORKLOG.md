@@ -18,6 +18,39 @@ Entry format:
 
 ---
 
+## 2026-10-26 — Every server message has a Thai translation (with a test)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - `src/serverMessages.test.ts` (new): reads every non-test `.go` file,
+    collects the messages a user can see - error sentinels
+    (`errors.New`), `fmt.Errorf` formats that start a message (`"%w: …"`
+    or without `%w`; wrappers like `"failed to …: %w"` are skipped, they
+    end up as "internal server error"), handler `"error": "…"` literals and
+    `msg…` constants - fills in sample values and fails if
+    `thaiErrorText` leaves any unchanged. `NOT_SHOWN` lists the six that
+    never reach a screen, each with why; `SAMPLES` gives real values where
+    the generic ones don't fit. A third check fails if either list names
+    a message no longer in Go. Proven by renaming one message in Go: the
+    test failed naming the file and message.
+  - `src/errorText.ts`: Thai for the 32 it found untranslated - kept
+    deposit rules (cash only, settled at the last return, at most X kept,
+    reason), product category/deposit range, bill type, roles (name,
+    unknown permission/role, Admin keeps "manage roles", built-in can't be
+    deleted, N accounts still use it, name taken), court/member/day/price
+    types, the no-show settings ranges, the pricing-config "nothing to
+    save", refund method, voucher payment without a code, unknown user,
+    audit paging id, and the bare sentinels "invalid booking request",
+    "invalid registration details", "slot not bookable".
+  - Files: `src/serverMessages.test.ts`, `src/errorText.ts`, TODO.
+- **Verified:** vitest 69/69 (3 new), `tsc` clean. The test with one Go
+  message reworded: fails; restored: passes.
+- **Not done / follow-ups:** error codes instead of English matching
+  (TODO 11) - bigger; this test keeps the current approach safe meanwhile.
+
+---
+
 ## 2026-10-26 — One server runs the background jobs; finished hours in batches
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")
