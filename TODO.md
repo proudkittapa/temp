@@ -180,7 +180,7 @@ Full review: three reviewers (backend performance, concurrency/money, frontend) 
 - [ ] Cash-drawer attribution uses each server's clock (`ReturnRentalItem` now takes its time after the drawer lock - fixed 2026-10-21): stamp `shift_id` on payments/orders/deposit settlements under the drawer lock and compute expected cash by shift.
 
 ### Correctness
-- [x] Booking cancel / no-show now cancel unused rewards bought with those points (shared `coverPointsWithRewards` with VoidOrder); a reward already handed over is reported (`points_short`), the cancel still goes ahead. Done 2026-10-21. (Browser-only mode doesn't do the clawback.)
+- [x] Booking cancel / no-show now cancel unused rewards bought with those points (shared `coverPointsWithRewards` with VoidOrder); a reward already handed over is reported (`points_short`), the cancel still goes ahead. Done 2026-10-21. Browser-only mode does the same (`planPointsCover` / `applyPointsCover` in the staff cancel and no-show, since fc8cef0).
 - [x] Lock order: rental return now locks order → item → drawer → stock, void locks its items and restocks in checkout's sorted order. Done 2026-10-21. (MarkPaidInCash now takes the closure lock before the drawer for an expired booking, the order CreateBookings uses; race test with a closure and a shift close at the same moment passes, 2026-10-23.)
 - [x] `CancelBookings` (and the expiry job's counter) reset per retry attempt. Done 2026-10-21.
 - [x] `SaveSlip` takes the customer's lock first (as CreateBookings); the expiry job closes orphan payments (booking rows gone) instead of re-picking them forever. Done 2026-10-21.

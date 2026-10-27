@@ -18,6 +18,32 @@ Entry format:
 
 ---
 
+## 2026-10-27 — Notes corrected: demo-mode differences were already fixed
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com
+- **Commit(s):** this commit (on `main`) - docs only
+- **Changed:** asked to fix the two known browser-only-mode differences
+  and add a warning before cancelling a started hour; reading the code
+  showed all three were already done, the notes were stale:
+  - cancel / no-show take points back and cancel unused rewards bought
+    with them in browser-only mode too (`planPointsCover` /
+    `applyPointsCover`, `staff/bookingActions.tsx`, since fc8cef0) -
+    TODO 11 note "(Browser-only mode doesn't do the clawback.)" removed;
+  - refunding a slip never approved asks "ตรวจในบัญชีธนาคารแล้ว…" before
+    either mode's branch (`staff/slipActions.tsx`, since 5f6ee7e); the
+    cancel dialog's refund box starts unticked for a waiting slip and its
+    label says to tick it only after checking the bank (both modes);
+  - the cancel dialog warns "⚠️ มีชั่วโมงที่เริ่มเล่นไปแล้ว…" (f8f659b).
+    The 2026-10-26 `noImplicitReturns` entry said it didn't - corrected.
+- **Verified:** read the code paths above; `git log -S` for when each
+  came in. No code changed.
+- **Not done / follow-ups:** the warning shows when any hour of the
+  booking has started, even if only a later hour is being cancelled
+  (the dialog asks which hours after the message). Undo of a no-show
+  isn't checked against a closure made since (server and demo).
+
+---
+
 ## 2026-10-26 — `noImplicitReturns` on; security review table brought up to date
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("code clean up")
@@ -38,8 +64,9 @@ Entry format:
   mode): customer sign-in wrong password → Thai error, right password →
   signed in; admin no-show settings save → confirmation; staff unknown
   voucher → "ไม่พบรหัสนี้". No page errors.
-- **Not done / follow-ups:** the screen doesn't warn before cancelling an
-  hour that has started (the server allows and logs it).
+- **Not done / follow-ups:** none. (This entry first said the screen
+  doesn't warn before cancelling a started hour - wrong: the cancel dialog
+  has warned since f8f659b, `slotTiming(...).started`. Corrected 2026-10-27.)
 
 ---
 
