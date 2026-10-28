@@ -18,6 +18,46 @@ Entry format:
 
 ---
 
+## 2026-10-28 — Bug check 2: review finished, full-day live test, tab icon
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("check all the bugs")
+- **Commit(s):** this commit (on `main`)
+- **Reviewed** (every change since fc8cef0, 10 commits): cancel/refund
+  with method and drawer lock, shift totals (cash refunds, frozen at
+  close, banked cash, next float), kept deposits in the day summary /
+  dashboard (server and browser-only; no double counting - the local sums
+  run only when not in API mode; `deposit_kept` is NOT NULL so
+  `total_amount + deposit_kept` never drops a row), no-show rules from
+  the admin setting, max hours per booking, walk-in transfer expiry,
+  voucher validity, audit retention (only a one-off migration and a
+  24-hour slip limit read `audit_logs` - both safe with ≥ 30 days kept),
+  job lease, audit paging, refund dialog amount (only offered for
+  never-approved payments, which have no confirmed hour, so the amount
+  shown is the amount refunded), walk-in "not paid in 30 min" notice
+  (only checked when the grid shows that walk-in's date). No other bug
+  found; the lock-order fix is the previous entry.
+- **Changed:** `index.html` - an inline SVG tab icon (green "SC", as the
+  logo). The browser asked for `/favicon.ico`, which doesn't exist: a 404
+  logged on every page and no icon in the tab. The Caddy CSP allows
+  `data:` images.
+- **Verified:**
+  - Live full day against the API (scratchpad `fullday.py`, 37 checks,
+    3 runs all pass): register → book 2 h → real slip → approve (+2
+    points, drawer unchanged) → cash walk-in (+price) → cash F&B to the
+    member (+total) → rental with 300 deposit (+350) → return keeping 100
+    (−200) → cancel one hour with a CASH refund (−180, point taken back)
+    → void the sale (−total) → no-show with grace 0 and undo → settings
+    restored → day summary kept deposits / drawer refunds, blind staff
+    see 0 → close with 500 banked → next float = counted − 500, other
+    float without a note refused → dashboard, month report, audit log.
+    The only failures were the script's own (a reused slip image and a
+    taken hour - both correctly refused by the server).
+  - Browser (API mode): all 9 admin tabs and 6 staff tabs, customer page
+    - no page errors after the icon fix. `vite build` OK.
+- **Not done / follow-ups:** none from this check.
+
+---
+
 ## 2026-10-28 — Bug check 1: cash refund takes the customer lock before the drawer
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("check all the bugs")
