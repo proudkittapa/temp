@@ -41,6 +41,12 @@ Entry format:
   here. The Docker builds can't be run in this sandbox (its HTTPS proxy's
   certificate isn't trusted inside containers: `go mod download` /
   `npm ci` fail with x509) - the first run on GitHub is their check.
+- **On GitHub:** first run 40639818320 all green (backend 1m30s with the
+  DB tests confirmed run, frontend 33s, both Docker images 51s). It
+  warned that checkout@v4 / setup-go@v5 / setup-node@v4 run on the
+  deprecated Node 20, so the next commit (`CI: current action versions`)
+  moved to checkout@v5, setup-go@v6, setup-node@v5: run 40640026482 all
+  green, warning gone.
 - **Not done / follow-ups:** the full-day money test and browser tests in
   the workflow (items 2 and 3 of the plan).
 
