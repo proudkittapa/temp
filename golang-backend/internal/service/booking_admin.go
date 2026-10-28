@@ -384,7 +384,16 @@ func (s *BookingService) CancelBookings(ctx context.Context, bookingID string, o
 		}
 		// Cash out of the drawer: an open shift, and the time taken after
 		// the drawer lock (as every cash movement).
+		// The customer first (reversePoints locks them below), as checkout
+		// does: customer, then drawer - the other order can deadlock with a
+		// sale to the same customer while a shift close is waiting.
 		if refund && refundMethod == model.RefundCash {
+			if root.UserID != "" && root.UserID != model.WalkInUserID {
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Take(&model.User{}, "id = ?", root.UserID).Error; err != nil &&
+					!errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+			}
 			if err := lockDrawerForCash(tx); err != nil {
 				return err
 			}

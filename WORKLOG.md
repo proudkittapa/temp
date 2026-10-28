@@ -18,6 +18,30 @@ Entry format:
 
 ---
 
+## 2026-10-28 — Bug check 1: cash refund takes the customer lock before the drawer
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("check all the bugs")
+- **Commit(s):** this commit (on `main`)
+- **Checked so far:** `go vet` clean; `golangci-lint` 20 notes, none a
+  bug (unchecked `Close()` at shutdown/in tests, style); full
+  `go test -race ./...` with the DB; `tsc`; vitest 69/69. Then reading
+  every code change since the last full recheck (fc8cef0).
+- **Changed:** `CancelBookings` with a CASH refund took the drawer lock
+  and then (in `reversePoints`) the customer's row - the reverse of
+  checkout (customer, then drawer). With a cash sale to the same customer
+  and a shift close waiting at the same moment, Postgres would have to
+  break a deadlock (the retry hides it, ~1 s). Not seen in 750 rounds -
+  the window is microseconds - but the order now matches: the customer
+  row is locked before the drawer. New race test
+  `TestConcurrencyCashRefundVersusSaleAndClose` (cash-refund cancel + cash
+  sale to that customer + shift close together) fails if
+  `pg_stat_database.deadlocks` goes up.
+- **Verified:** new test 5×150 rounds before and after the change, 0
+  deadlocks; full `go test -race ./...` with the DB passes.
+- **Not done / follow-ups:** the rest of the review (next entries).
+
+---
+
 ## 2026-10-28 — Browser-only mode: undoing a no-show respects closures
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("continue")

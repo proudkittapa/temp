@@ -959,3 +959,61 @@ func TestConcurrencySlipReuploadVersusApprove(t *testing.T) {
 		t.Errorf("%d deadlock(s) between re-upload and approve", d)
 	}
 }
+
+// A cash refund from the drawer (cancel), a cash sale to the same customer
+// and a shift close at the same moment. Every lock is taken in the same
+// order (customer, then drawer), so Postgres never has to break a
+// deadlock - counted in pg_stat_database, which a retried transaction
+// would otherwise hide - and the cash at close adds up either way.
+func TestConcurrencyCashRefundVersusSaleAndClose(t *testing.T) {
+	e := raceSetup(t)
+	ctx := context.Background()
+	prod := model.Product{ID: "prd-race-refund", Name: "Race drink", Category: model.ProductFB, Price: 25, Stock: 100000, IsActive: true, CreatedAt: time.Now()}
+	if err := e.db.Create(&prod).Error; err != nil {
+		t.Fatal(err)
+	}
+	deadlocks := func() int64 {
+		var n int64
+		e.db.Raw("SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()").Scan(&n)
+		return n
+	}
+	sl := newSlots()
+	before := deadlocks()
+	for round := 0; round < raceRounds(); round++ {
+		e.openTestShift(t)
+		u := e.newCustomer(t, 0)
+		date, times := sl.take(t, 1)
+		res, p := e.bookWithSlip(t, u, date, "bad-5", times...)
+		if _, err := e.bookings.VerifyPayment(ctx, p.ID, p.SlipUploadedAt, "staff-a", "Staff A"); err != nil {
+			t.Fatal(err)
+		}
+		errs := together(
+			func() error {
+				_, err := e.bookings.CancelBookings(ctx, res.Bookings[0].ID, nil, "rain", true, false, model.RefundCash, "mgr-a", "Manager A")
+				return err
+			},
+			func() error {
+				_, err := e.pos.ProcessCheckout(ctx, service.CheckoutInput{
+					Type: model.OrderFB, PaymentMeth: model.PaymentCash, CreatedBy: "staff-a", CreatedByName: "Staff A",
+					CustomerPhone: u.Phone, CustomerName: u.Name,
+					Items: []service.POSOrderItemInput{{ProductID: prod.ID, Qty: 1}},
+				})
+				return err
+			},
+			func() error {
+				_, err := e.shifts.Close(ctx, 0, 0, "race test", "staff-a", "Staff A", false)
+				return err
+			},
+		)
+		// After the close, cash is refused (no shift open) - a correct answer.
+		expectOnly(t, fmt.Sprintf("round %d cancel", round), errs[0], service.ErrNoOpenShift)
+		expectOnly(t, fmt.Sprintf("round %d sale", round), errs[1], service.ErrNoOpenShift)
+		if errs[2] != nil {
+			t.Fatalf("round %d close: %v", round, errs[2])
+		}
+	}
+	if n := deadlocks() - before; n != 0 {
+		t.Errorf("%d deadlock(s) broken by Postgres during the rounds - a lock order differs", n)
+	}
+	e.checkLedger(t)
+}
