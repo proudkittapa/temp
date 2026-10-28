@@ -1,0 +1,96 @@
+# Every push to main (and every pull request) runs all the checks, so a
+# change that breaks something is marked with a red X on the commit and
+# GitHub emails the repository owner. Several AI sessions push to main:
+# this catches a change made without running the tests.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run still going for an older one.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Go + Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # The database tests (concurrency, money, shifts, ...) need a real
+      # Postgres; they drop and rebuild the schema of a database whose
+      # name ends in _test.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: arena_user
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: arena_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U arena_user -d arena_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: golang-backend
+    env:
+      TEST_DATABASE_URL: postgres://arena_user:ci-only-password@localhost:5432/arena_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: golang-backend/go.mod
+          cache-dependency-path: golang-backend/go.sum
+      - name: Formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: Tests with the race detector (incl. database tests)
+        run: go test -race -count=1 ./...
+      - name: The database tests ran (not skipped)
+        run: |
+          go test -count=1 -run 'TestCashRefundFromDrawer|TestJobLeaseOneServer' -v . | tee db-tests.log
+          grep -q -- '--- PASS: TestCashRefundFromDrawer' db-tests.log
+          grep -q -- '--- PASS: TestJobLeaseOneServer' db-tests.log
+
+  frontend:
+    name: Frontend (types, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run lint
+      # Includes serverMessages.test.ts, which reads the Go source: every
+      # message a user can see must have a Thai translation.
+      - name: Unit tests
+        run: npm test
+      - name: Production build (API mode, as deployed)
+        run: npm run build
+        env:
+          VITE_DATA_SOURCE: api
+
+  docker:
+    name: Deployment images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backend image
+        run: docker build -f golang-backend/Dockerfile golang-backend
+      - name: Web image
+        run: docker build -f deploy/web.Dockerfile .

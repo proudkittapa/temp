@@ -18,6 +18,34 @@ Entry format:
 
 ---
 
+## 2026-10-28 — Automatic tests on every push (GitHub Actions)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1")
+- **Commit(s):** this commit (on `main`)
+- **Changed:** `.github/workflows/ci.yml` (new) - on every push to
+  `main`, every pull request, and by hand (Actions → Tests → Run
+  workflow), three jobs:
+  - **Backend:** Postgres 16 service (`arena_test`), `gofmt` check,
+    `go vet`, `go test -race -count=1 ./...` with `TEST_DATABASE_URL`, and
+    a check that two database tests really ran (PASS lines) so a missing
+    database can't turn them into silent skips.
+  - **Frontend:** Node 22, `npm ci`, `npm run lint` (tsc), `npm test`
+    (vitest, incl. the Thai-message test that reads the Go source),
+    `npm run build` with `VITE_DATA_SOURCE=api`.
+  - **Docker:** builds `golang-backend/Dockerfile` and
+    `deploy/web.Dockerfile` as `deploy/docker-compose.yml` does (same
+    contexts), so a change that breaks deployment shows up too.
+  A newer push cancels the older run; a failure marks the commit with a
+  red X and GitHub emails the owner.
+- **Verified locally:** every backend and frontend command above passes
+  here. The Docker builds can't be run in this sandbox (its HTTPS proxy's
+  certificate isn't trusted inside containers: `go mod download` /
+  `npm ci` fail with x509) - the first run on GitHub is their check.
+- **Not done / follow-ups:** the full-day money test and browser tests in
+  the workflow (items 2 and 3 of the plan).
+
+---
+
 ## 2026-10-28 — Bug check 2: review finished, full-day live test, tab icon
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("check all the bugs")
