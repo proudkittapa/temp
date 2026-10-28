@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-10-28 — Browser-only mode: undoing a no-show respects closures
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("continue")
+- **Commit(s):** this commit (on `main`)
+- **Changed:** the server has refused to undo a no-show whose hour was
+  closed since (`UndoNoShow`, "remove the closure first",
+  `TestUndoNoShowRespectsClosures`, since 59749a6); browser-only mode
+  only checked for another booking at that hour. `handleUndoNoShow`
+  (`staff/bookingActions.tsx`) now reads the closures fresh and refuses
+  with "สนามปิดบริการช่วงเวลานี้ (<reason>) — ลบวันปิดก่อน", the same rule
+  (`findClosure`, court halves included).
+- **Verified:** `tsc` clean, vitest 69/69. Live in browser-only mode
+  (Playwright, port 3002): a no-show today 08:00 on สนามแบดมินตัน 1 with an
+  08:00-09:00 closure → undo refused with the reason, booking still
+  NO_SHOW; closure removed → undo done, CONFIRMED. No page errors.
+- **Not done / follow-ups:** none for this.
+
+---
+
 ## 2026-10-27 — Notes corrected: demo-mode differences were already fixed
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com

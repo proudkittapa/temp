@@ -1,8 +1,8 @@
 import {
-  Booking, BookingStatus, Payment, PaymentStatus,
+  Booking, BookingStatus, Payment, PaymentStatus, DayOff,
   PaymentMethod, MemberType, LedgerEntryType, PointsLedgerEntry
 } from '../../types';
-import { StorageService, calculatePrice, findConflictingBooking, bookingGroupOf, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, formatBaht, roundBaht, resalePrice, noShowOpenAt, slotTiming } from '../../mockData';
+import { StorageService, calculatePrice, findConflictingBooking, bookingGroupOf, generatePromptPayPayload, LOCAL_PROMPTPAY_ID, formatBaht, roundBaht, resalePrice, noShowOpenAt, slotTiming, findClosure } from '../../mockData';
 import * as api from '../../api';
 import { notify, ask, dialog } from '../Dialog';
 import type { StaffPOSCore } from './useStaffPOS';
@@ -224,6 +224,13 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
       notify('ยกเลิกไม่สำเร็จ: การจองนี้ไม่ได้อยู่ในสถานะ "ไม่มา" แล้ว');
       closeBookingDetail();
       onRefreshAll();
+      return;
+    }
+    // As the server: a closure made since the no-show keeps the hour closed
+    // (it read the closures fresh, not the screen's copy).
+    const closure = findClosure(StorageService.get<DayOff[]>('days_off', []), booking.date, booking.courtId, parseInt(booking.startTime, 10), courts);
+    if (closure) {
+      notify(`ยกเลิกไม่สำเร็จ: สนามปิดบริการช่วงเวลานี้ (${closure.reason}) — ลบวันปิดก่อน`);
       return;
     }
     if (findConflictingBooking(booking.courtId, booking.date, booking.startTime, stored, courts)) {
