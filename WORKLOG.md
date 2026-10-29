@@ -18,6 +18,28 @@ Entry format:
 
 ---
 
+## 2026-10-29 — DEPLOY.md: testing the real setup on a Mac
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (wants to test it alone on a Mac, free, before renting a server)
+- **Commit(s):** this commit (on `main`) - docs only
+- **Changed:** `DEPLOY.md` section 10 (new): Docker Desktop on a Mac runs
+  the production compose at `http://localhost` (SITE_ADDRESS=:80, no demo
+  accounts): install, clone, settings with Mac `sed -i ''` (random
+  POSTGRES_PASSWORD / JWT_SECRET written straight into the files, own
+  PromptPay number), start, make-admin, phone on the same Wi-Fi, day-to-day
+  table, limits. Section 9 (public quick demo with demo accounts) now
+  points to section 10 for testing alone.
+- **Verified (by reading, not on a Mac):** the compose file publishes only
+  `web` on 80/443; all base images (golang/node/caddy/alpine/postgres
+  alpine) have arm64 builds; CORS stays empty (same origin) so plain HTTP
+  at localhost or a LAN IP works; the frontend's Idempotency-Key falls back
+  when `crypto.randomUUID` is missing on plain HTTP, and the fallback
+  matches the server's `^[A-Za-z0-9_-]{8,80}$`; CI builds both images.
+- **Not done / follow-ups:** the owner runs it on the Mac (first real
+  run of the compose since 2026-10-22).
+
+---
+
 ## 2026-10-28 — Automatic tests on every push (GitHub Actions)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("do 1")

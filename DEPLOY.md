@@ -215,6 +215,9 @@ applies database changes by itself when it starts.
 
 ## 9. Quick demo from a laptop instead (no server)
 
+To try the app **by yourself** on a Mac, use section 10 instead: it runs the
+real setup (no demo accounts) and nothing is open to the internet.
+
 `npm run dev:api` and `cloudflared tunnel --url http://localhost:3000`
 (`brew install cloudflared`) give a temporary `https://...trycloudflare.com`
 address (Vite allows those hosts). It works only while the laptop is on, the
@@ -222,3 +225,66 @@ address changes on every start, and the demo accounts (password `123456`)
 are open to anyone with the link - their logins are visible on the sign-in
 screen. Use test data only (never real customers or the real PromptPay
 number), and stop the tunnel (Ctrl+C) as soon as the demo is over.
+
+## 10. Test the real setup on a Mac (Docker Desktop, free)
+
+The same three containers as on a server (database, backend, Caddy), on
+your Mac at `http://localhost` - no demo accounts, nothing open to the
+internet. For trying the app yourself before renting a server.
+
+1. Install **Docker Desktop for Mac** (docker.com - pick Apple chip or
+   Intel chip as in Apple menu → About This Mac), open it once and leave it
+   running (whale icon in the menu bar).
+2. Get the code (if macOS offers the "command line developer tools", install
+   them and run it again):
+   ```sh
+   git clone https://github.com/proudkittapa/temp.git ~/arena
+   ```
+3. Settings - the random passwords are written straight into the files.
+   Put **your own** PromptPay phone number in the third line (test QR codes
+   then pay to you; the app does not start without a real number):
+   ```sh
+   cd ~/arena
+   cp deploy/.env.example deploy/.env
+   cp golang-backend/.env.example golang-backend/.env
+   sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" deploy/.env
+   sed -i '' "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 32)/" golang-backend/.env
+   sed -i '' "s/^PROMPTPAY_ID=.*/PROMPTPAY_ID=0812345678/" golang-backend/.env
+   chmod 600 deploy/.env golang-backend/.env
+   ```
+   (`sed -i ''` is the Mac form; on Linux it is `sed -i`.) Leave
+   `SITE_ADDRESS=:80` in `deploy/.env`.
+4. Start (the first time builds for 3-6 minutes):
+   ```sh
+   cd ~/arena/deploy
+   docker compose up -d --build
+   docker compose ps      # db, backend, web: running / healthy
+   ```
+   Open **http://localhost**. If it says the port is already allocated,
+   another program uses port 80 - stop it, or ask for help.
+5. Make yourself the admin: register on http://localhost with your phone
+   number, then (your number):
+   ```sh
+   docker compose exec backend /app/arena-backend make-admin 0812345678        # shows the account
+   docker compose exec backend /app/arena-backend make-admin 0812345678 --yes  # if it is yours
+   ```
+   Sign in again: the counter (`#/staff`) and settings (`#/admin`) open.
+   To test staff roles, register more accounts with made-up numbers (e.g.
+   `0800000001`) and give them a role in Admin → บัญชีสตาฟเวร.
+6. On your phone (same Wi-Fi): `ipconfig getifaddr en0` on the Mac prints
+   e.g. `192.168.1.23` - open `http://192.168.1.23` on the phone (allow
+   incoming connections if macOS asks).
+
+| Task | Command (in `~/arena/deploy`) |
+|---|---|
+| Stop (data kept) | `docker compose stop` |
+| Start again | `docker compose start` |
+| Latest version | `cd ~/arena && git pull && cd deploy && docker compose up -d --build` |
+| Errors | `docker compose logs -f backend` |
+| Wipe the test data, start fresh | `docker compose down -v` then `docker compose up -d --build` |
+
+It works only while the Mac is on and awake, and only on your Wi-Fi. Every
+visitor reaches it through Docker Desktop's network, so the login limit
+counts them as one address - fine for one tester, one more reason this is
+not for customers. `down -v` deletes everything in the test copy; never use
+it on a real server (section 8).
