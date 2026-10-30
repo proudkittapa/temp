@@ -1,11 +1,10 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { UserRole, AuditLog, AddAuditLog } from './types';
 import { initializeState, StorageService, formatDateTime } from './mockData';
 import CustomerPanel from './components/CustomerPanel';
-// The counter and settings screens load on demand: customers' phones don't
-// download them (nor the charts and Excel code they use).
-const StaffPOS = lazy(() => import('./components/StaffPOS'));
-const AdminPanel = lazy(() => import('./components/AdminPanel'));
+// The counter and settings screens load on demand (customers' phones don't
+// download them), fetched before they are shown - see screens.ts.
+import { StaffPOS, AdminPanel, preloadScreen, roleFromHash, hashForRole } from './screens';
 import { DialogHost } from './components/Dialog';
 import { Shield, Sparkles, User, Users, Briefcase, Clock } from 'lucide-react';
 import * as api from './api';
@@ -16,12 +15,6 @@ import { User as SessionUser } from './types';
 // that (see api.migrateLegacySessions), before anything reads the session.
 if (api.USE_BACKEND) api.migrateLegacySessions();
 
-// Each panel has its own address: the customer site is "/", the counter
-// "#/staff" (managers sign in there too), settings "#/admin". Hash routes
-// work on any static host without server rewrites.
-const ROUTES: Record<string, UserRole> = { '#/staff': UserRole.STAFF, '#/manager': UserRole.MANAGER, '#/admin': UserRole.ADMIN };
-const roleFromHash = () => ROUTES[window.location.hash] ?? UserRole.CUSTOMER;
-const hashForRole = (role: UserRole) => Object.keys(ROUTES).find(h => ROUTES[h] === role) ?? '#/';
 
 // The role switcher is a demo tool: shown in the browser-only demo and in
 // dev, never to customers of a real (backend) deployment.
@@ -52,10 +45,13 @@ export default function App() {
     if (api.USE_BACKEND) setSessionUser(api.getSession()?.user ?? null);
   }, [refreshTrigger]);
 
+  // The screen's code is fetched first, so it shows at once (screens.ts).
   const openScreen = (role: UserRole) => {
-    setCurrentRole(role);
-    window.history.replaceState(null, '', role === UserRole.CUSTOMER ? window.location.pathname : hashForRole(role));
-    triggerCompleteRefresh();
+    preloadScreen(role).then(() => {
+      setCurrentRole(role);
+      window.history.replaceState(null, '', role === UserRole.CUSTOMER ? window.location.pathname : hashForRole(role));
+      triggerCompleteRefresh();
+    });
   };
   // A staff/admin account signed in on the customer page goes to the
   // screen its role may use: the counter first, otherwise settings.
@@ -73,7 +69,10 @@ export default function App() {
   useEffect(() => {
     initializeState();
     triggerCompleteRefresh();
-    const onHash = () => { setCurrentRole(roleFromHash()); triggerCompleteRefresh(); };
+    const onHash = () => {
+      const role = roleFromHash();
+      preloadScreen(role).then(() => { setCurrentRole(role); triggerCompleteRefresh(); });
+    };
     window.addEventListener('hashchange', onHash);
     // Signed in or out in another tab: reload this tab's data under the
     // session that is now stored, instead of showing the old person.
@@ -170,11 +169,7 @@ export default function App() {
               return (
                 <div
                   key={roleObj.role}
-                  onClick={() => {
-                    setCurrentRole(roleObj.role);
-                    window.history.replaceState(null, '', roleObj.role === UserRole.CUSTOMER ? window.location.pathname : hashForRole(roleObj.role));
-                    triggerCompleteRefresh();
-                  }}
+                  onClick={() => openScreen(roleObj.role)}
                   className={`p-2.5 sm:p-3.5 rounded-xl border text-left cursor-pointer transition select-none ${
                     isSelected 
                       ? 'bg-slate-800 border-emerald-600 ring-2 ring-emerald-600 text-white' 

@@ -18,6 +18,46 @@ Entry format:
 
 ---
 
+## 2026-10-30 — Staff and settings screens show at once (React 19 loading pause)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("but on localhost it will still be slow?")
+- **Commit(s):** this commit (on `main`)
+- **Measured first** (fresh browser, same machine, production build in
+  Docker vs `npm run dev:api`): customer page 0.15 s vs 0.36 s (3 files /
+  140 KB vs 37 files / 3.7 MB) - the dev server is the slower one. But the
+  staff and admin sign-in screens took ~0.36 s even in the production
+  build with every file in by 24 ms, no API call and no long task:
+  React 19 keeps a Suspense fallback ("กำลังโหลด...") on screen ~300 ms
+  before revealing a lazy component, however fast it loaded; the admin
+  page had two lazy steps (panel, then the dashboard's charts).
+- **Changed:**
+  - `src/screens.ts` (new): `preloadable()` - a lazy component that can be
+    fetched ahead; once fetched, its loader gives `React.lazy` a thenable
+    that resolves synchronously, so it renders without suspending (checked
+    in React 19.3's `lazyInitializer`: status set to resolved before the
+    throw). `preloadScreen(role)` fetches the counter or settings code
+    (the dashboard's charts in the background, not waited for); the routes
+    (`roleFromHash`, `hashForRole`) moved here from `App.tsx`.
+  - `src/main.tsx`: opened on `#/staff`, `#/manager` or `#/admin`, the
+    screen's code is fetched before the first render (never rejects: a
+    failed fetch is retried by React.lazy as before). The customer page
+    waits for nothing and still downloads no staff/admin code.
+  - `App.tsx`: `openScreen` and the hash change fetch the screen first,
+    then switch; the demo role-switcher cards use `openScreen` (they
+    repeated its code). `AdminPanel.tsx`: DashboardTab from `screens.ts`.
+- **Verified:** in the production build (Docker, Caddy), first content
+  after navigation, median of 5 fresh browsers: staff sign-in 362 → 74 ms,
+  admin sign-in 361 → 92 ms, customer page 92 → 91 ms (no staff/admin code
+  loaded). `tsc`, vitest 69/69, build OK (customer bundle unchanged,
+  124.6 KB gzip). Browser scripts: all 9 admin tabs, all 6 staff tabs,
+  customer sign-in, admin settings save, staff voucher lookup, a staff
+  account signing in on the customer page lands on `#/staff` with the
+  counter tabs, role-switcher cards to customer and admin - no page
+  errors.
+- **Not done / follow-ups:** none.
+
+---
+
 ## 2026-10-30 — Query speed checked on two years of data; JIT off, dashboard sales split
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("look at all the queries, can they be optimized, why so slow")

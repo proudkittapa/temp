@@ -4,9 +4,10 @@ import DemoLogins, { DEMO_ADMINS } from './DemoLogins';
 import RolesTab from './RolesTab';
 import { Settings } from 'lucide-react';
 import { useAdminPanel, AdminPanelContext, AdminPanelProps, ADMIN_TABS } from './admin/useAdminPanel';
-import { lazy, Suspense } from 'react';
-// The dashboard's chart library loads only when the dashboard is opened.
-const DashboardTab = lazy(() => import('./admin/DashboardTab'));
+import { Suspense } from 'react';
+// The dashboard's chart library loads on demand, fetched together with this
+// panel so it shows at once (screens.ts).
+import { DashboardTab } from '../screens';
 import PricingTab from './admin/PricingTab';
 import CourtsTab from './admin/CourtsTab';
 import ProductsTab from './admin/ProductsTab';
