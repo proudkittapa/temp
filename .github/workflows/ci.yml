@@ -54,8 +54,18 @@ jobs:
           if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
       - name: go vet
         run: go vet ./...
+      # A failing test's lines are also posted as annotations, so they show
+      # on the run's summary page (and through the API) without the log.
       - name: Tests with the race detector (incl. database tests)
-        run: go test -race -count=1 ./...
+        run: |
+          set +e
+          go test -race -count=1 ./... 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E '^(--- FAIL|panic:|FAIL[[:space:]])|_test\.go:[0-9]+:|^WARNING: DATA RACE' test.log | head -40 |
+              while IFS= read -r line; do echo "::error title=Go test failure::$line"; done
+          fi
+          exit "$status"
       - name: The database tests ran (not skipped)
         run: |
           go test -count=1 -run 'TestCashRefundFromDrawer|TestJobLeaseOneServer' -v . | tee db-tests.log

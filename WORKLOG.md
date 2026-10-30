@@ -18,6 +18,38 @@ Entry format:
 
 ---
 
+## 2026-10-30 — Flaky CI run: deadlock test counts its own deadlocks; failures shown as annotations
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo
+- **Commit(s):** this commit (on `main`)
+- **What happened:** run 41049216886 (the screens commit, frontend only)
+  failed in "Tests with the race detector"; the re-run of the same commit
+  passed - a flaky test. Its log can't be downloaded from this sandbox
+  (GitHub's log storage is blocked), so which test failed is not known.
+  Not reproduced locally: 6 full runs and 8 runs on 2 cores
+  (`taskset -c 0,1`, like GitHub's runner) all pass.
+- **Changed:**
+  - Likeliest cause fixed: `TestConcurrencyCashRefundVersusSaleAndClose`
+    compared `pg_stat_database.deadlocks` before/after, but Postgres
+    reports a backend's stats when it goes idle, up to ~10 s late - a
+    deadlock from an earlier test could land inside this one. Now
+    `repository.RetryTx` counts the 40P01 deadlocks it retries
+    (`repository.Deadlocks`, atomic) and the test compares that: only this
+    process, only during the rounds. Every money path runs through
+    RetryTx; a deadlock outside it would fail the call anyway.
+  - `.github/workflows/ci.yml`: the Go test step keeps going after a
+    failure long enough to post each `--- FAIL`, `_test.go:N:`, `panic:`
+    and `DATA RACE` line as a `::error` annotation (shown on the run's
+    page and readable through the API), then exits with the test status.
+    Checked with a deliberately failing test locally.
+- **Verified:** `go vet`; the annotation script on a failing sample;
+  full `go test -race` with the DB (and on 2 cores) passes; GitHub runs
+  below.
+- **Not done / follow-ups:** if a run fails again, its annotations name
+  the test.
+
+---
+
 ## 2026-10-30 — Staff and settings screens show at once (React 19 loading pause)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("but on localhost it will still be slow?")

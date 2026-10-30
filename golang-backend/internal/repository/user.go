@@ -42,6 +42,13 @@ func IsRetryableConflict(err error) bool {
 	return errors.As(err, &pgErr) && (pgErr.Code == "40P01" || pgErr.Code == "40001")
 }
 
+// Deadlocks counts the transactions Postgres aborted as deadlocks in this
+// process (each is retried below). The race tests check it doesn't move: a
+// deadlock means two code paths take the same locks in a different order.
+// (Postgres's own pg_stat_database.deadlocks can report one up to ~10 s
+// late, so it can't tell which test caused it.)
+var Deadlocks atomic.Int64
+
 // RetryTx runs fn in a transaction and, when Postgres aborts it as a
 // deadlock or serialization failure (IsRetryableConflict), runs it again -
 // up to 3 attempts, after a short pause - instead of sending the client
@@ -51,6 +58,10 @@ func RetryTx(db *gorm.DB, fn func(tx *gorm.DB) error) error {
 	var err error
 	for attempt := 1; ; attempt++ {
 		err = db.Transaction(fn)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "40P01" {
+			Deadlocks.Add(1)
+		}
 		if err == nil || attempt == 3 || !IsRetryableConflict(err) {
 			return err
 		}

@@ -963,8 +963,8 @@ func TestConcurrencySlipReuploadVersusApprove(t *testing.T) {
 // A cash refund from the drawer (cancel), a cash sale to the same customer
 // and a shift close at the same moment. Every lock is taken in the same
 // order (customer, then drawer), so Postgres never has to break a
-// deadlock - counted in pg_stat_database, which a retried transaction
-// would otherwise hide - and the cash at close adds up either way.
+// deadlock - counted by RetryTx (repository.Deadlocks), as the retry
+// would otherwise hide it.
 func TestConcurrencyCashRefundVersusSaleAndClose(t *testing.T) {
 	e := raceSetup(t)
 	ctx := context.Background()
@@ -972,13 +972,8 @@ func TestConcurrencyCashRefundVersusSaleAndClose(t *testing.T) {
 	if err := e.db.Create(&prod).Error; err != nil {
 		t.Fatal(err)
 	}
-	deadlocks := func() int64 {
-		var n int64
-		e.db.Raw("SELECT deadlocks FROM pg_stat_database WHERE datname = current_database()").Scan(&n)
-		return n
-	}
 	sl := newSlots()
-	before := deadlocks()
+	before := repository.Deadlocks.Load()
 	for round := 0; round < raceRounds(); round++ {
 		e.openTestShift(t)
 		u := e.newCustomer(t, 0)
@@ -1012,7 +1007,7 @@ func TestConcurrencyCashRefundVersusSaleAndClose(t *testing.T) {
 			t.Fatalf("round %d close: %v", round, errs[2])
 		}
 	}
-	if n := deadlocks() - before; n != 0 {
+	if n := repository.Deadlocks.Load() - before; n != 0 {
 		t.Errorf("%d deadlock(s) broken by Postgres during the rounds - a lock order differs", n)
 	}
 	e.checkLedger(t)
