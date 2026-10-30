@@ -27,6 +27,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      # While starting: checked every second, not every 5 s.
+      start_period: 60s
+      start_interval: 1s
     stop_grace_period: 60s # time to finish writing to disk
     networks: [internal]
     logging: *logging
@@ -63,15 +66,21 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m
+    # Starts together with the database (not after its health check): the
+    # backend waits for the database by itself, retrying for up to
+    # DB_CONNECT_TIMEOUT_SECONDS (60). Stopping still goes backend first.
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 120s
+      # While starting: checked every second, so web (which waits for this)
+      # starts about a second after the backend is ready, not 10 s.
+      start_interval: 1s
     # Longer than SHUTDOWN_TIMEOUT_SECONDS (30): requests in progress finish
     # before the database is closed (Docker's default is only 10 s).
     stop_grace_period: 35s

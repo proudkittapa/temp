@@ -18,6 +18,40 @@ Entry format:
 
 ---
 
+## 2026-10-30 — Faster start and rebuild (Docker)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("why is it so slow" / "during the start, can we do it concurrently")
+- **Commit(s):** this commit (on `main`)
+- **Measured first:** the backend itself is ready 0.35 s after it starts;
+  every API request the screens make answers in 1-8 ms on the server,
+  alone or 8 at once (the ~150 ms seen in the browser on the admin screen
+  was the Vite dev server compiling that screen at the same moment - not
+  in a production build). The wait was Docker's start order: db → (first
+  health check after 5 s) → backend → (first check after 10 s) → web, so
+  every start took 12-14 s.
+- **Changed:**
+  - `deploy/docker-compose.yml`: backend `depends_on` db
+    `service_started` (it waits for the database itself, retrying up to
+    DB_CONNECT_TIMEOUT_SECONDS) - db and backend start together; db and
+    backend health checks run every 1 s while starting (`start_interval`,
+    db `start_period: 60s`), so web (still waiting for a healthy backend:
+    no half-started site) starts ~1 s after the backend is ready.
+  - `golang-backend/Dockerfile`: BuildKit cache mounts for Go modules and
+    the Go build cache; `deploy/web.Dockerfile`: npm cache mount.
+  - `DEPLOY.md`: "a few seconds", rebuild note, Docker Engine 25+ needed for
+    `start_interval`.
+- **Verified (real Docker here, local-only Dockerfile copies that trust
+  this sandbox's HTTPS proxy; the web image from the same production
+  build, as cdn.sheetjs.com is blocked here):** time from `up` until the
+  site and `/readyz` answer through Caddy - first start (new database)
+  14.2 s → 5.3 s; restart 11.7 s → 2.2 s (3 runs). Backend rebuild after a
+  one-line code change 16 s → 1-2 s. New image: healthy, `/readyz` ready,
+  `/api/v1/pricing` answers. CI builds both real images (next run).
+- **Not done / follow-ups:** query timing with a large data set (in
+  progress).
+
+---
+
 ## 2026-10-29 — DEPLOY.md: testing the real setup on a Mac
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (wants to test it alone on a Mac, free, before renting a server)

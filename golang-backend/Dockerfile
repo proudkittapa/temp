@@ -3,9 +3,12 @@
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+# Build caches kept between builds (BuildKit, Docker's default builder): an
+# update recompiles only the changed code, not every library again.
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/arena-backend .
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/arena-backend .
 
 FROM alpine:3.22
 # The base image has the CA certificates and busybox wget (health check) and

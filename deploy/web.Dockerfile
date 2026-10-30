@@ -4,7 +4,8 @@
 FROM node:22-alpine AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
-RUN npm ci
+# npm's download cache kept between builds (BuildKit).
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY index.html vite.config.ts tsconfig.json ./
 COPY src ./src
 ENV VITE_DATA_SOURCE=api

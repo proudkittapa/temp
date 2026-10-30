@@ -88,7 +88,7 @@ manager (see Backups).
 ```sh
 cd /opt/arena/deploy
 docker compose up -d --build
-docker compose ps          # all three "healthy" / "running" after ~1 minute
+docker compose ps          # all three "healthy" / "running" a few seconds after the build
 docker compose logs -f backend
 ```
 
@@ -195,7 +195,11 @@ run `docker compose down` and then `docker compose up -d` (the data stays in
 the volumes).
 
 The backend finishes requests in progress before it stops (up to 30 s) and
-applies database changes by itself when it starts.
+applies database changes by itself when it starts. Rebuilds reuse Go's and
+npm's caches, so an update rebuilds only what changed (seconds). The start
+settings (`start_interval` in `docker-compose.yml`) need Docker Engine 25
+or newer - `curl -fsSL https://get.docker.com | sh` and Docker Desktop
+install that; if `docker compose` rejects `start_interval`, update Docker.
 
 ## 8. Day to day
 
