@@ -169,27 +169,24 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		}
 	}
 
-	// Counter sales lines by kind and Bangkok month, with the date's share:
-	// the day's order revenue, the monthly chart and the all-time split.
-	var lines []struct {
-		Kind     string
-		Month    string
-		Total    float64
-		DayTotal float64
+	// Counter sales lines: by kind over all time (the sales split), and by
+	// Bangkok month over the chart's six months with the date's share (the
+	// date is inside them). Two queries: one grouping every line ever sold
+	// by kind and month sorted ~200k rows on disk on two years of sales
+	// (290 ms); by kind alone it is three groups (~70 ms), and the months
+	// read only the six months' orders.
+	var kinds []struct {
+		Kind  string
+		Total float64
 	}
-	if err := db.Raw("SELECT "+saleKindSQL+" AS kind, to_char(o.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM') AS month, "+
-		"COALESCE(SUM(i.qty * i.unit_price), 0) AS total, "+
-		"COALESCE(SUM(i.qty * i.unit_price) FILTER (WHERE o.created_at >= ? AND o.created_at < ?), 0) AS day_total "+
+	if err := db.Raw("SELECT "+saleKindSQL+" AS kind, COALESCE(SUM(i.qty * i.unit_price), 0) AS total "+
 		"FROM order_items i JOIN orders o ON o.id = i.order_id "+
-		"LEFT JOIN products p ON p.id = i.product_id WHERE o.status <> ? GROUP BY 1, 2",
-		model.OrderEquipmentRent, model.ProductEquipment, from, to, model.OrderCancelled).Scan(&lines).Error; err != nil {
+		"LEFT JOIN products p ON p.id = i.product_id WHERE o.status <> ? GROUP BY 1",
+		model.OrderEquipmentRent, model.ProductEquipment, model.OrderCancelled).Scan(&kinds).Error; err != nil {
 		return nil, err
 	}
-	ordersByMonth := map[string]float64{}
-	var dayOrders, food, equipment, rental float64
-	for _, r := range lines {
-		ordersByMonth[r.Month] += r.Total
-		dayOrders += r.DayTotal
+	var food, equipment, rental float64
+	for _, r := range kinds {
 		switch r.Kind {
 		case "rental":
 			rental += r.Total
@@ -198,6 +195,25 @@ func (s *ReportService) Dashboard(ctx context.Context, date string) (*Dashboard,
 		default:
 			food += r.Total
 		}
+	}
+	var lineMonths []struct {
+		Month    string
+		Total    float64
+		DayTotal float64
+	}
+	if err := db.Raw("SELECT to_char(o.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM') AS month, "+
+		"COALESCE(SUM(i.qty * i.unit_price), 0) AS total, "+
+		"COALESCE(SUM(i.qty * i.unit_price) FILTER (WHERE o.created_at >= ? AND o.created_at < ?), 0) AS day_total "+
+		"FROM order_items i JOIN orders o ON o.id = i.order_id "+
+		"WHERE o.status <> ? AND o.created_at >= ? AND o.created_at < ? GROUP BY 1",
+		from, to, model.OrderCancelled, firstMonth, monthEnd).Scan(&lineMonths).Error; err != nil {
+		return nil, err
+	}
+	ordersByMonth := map[string]float64{}
+	var dayOrders float64
+	for _, r := range lineMonths {
+		ordersByMonth[r.Month] += r.Total
+		dayOrders += r.DayTotal
 	}
 	// Kept rental deposits are income (owner 2026-10-23), in the month and
 	// on the day they were kept.

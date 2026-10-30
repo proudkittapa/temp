@@ -1135,11 +1135,18 @@ func openSetupDB(dsn string) (*gorm.DB, error) {
 // stuck request then fails on its own instead of piling every request up
 // behind its locks. pgx sends unknown connection parameters to the server
 // as runtime settings.
+//
+// jit=off: Postgres compiles a query to machine code (JIT) once its cost
+// estimate passes a threshold - worth it for reports running for seconds,
+// but here it added ~0.5 s of compiling to millisecond queries (the
+// dashboard's hourly occupancy: 500 ms with JIT, 5 ms without, on two
+// years of bookings), and more queries cross the threshold as data grows.
 func withDBTimeouts(dsn string) string {
 	params := [][2]string{
 		{"statement_timeout", strconv.Itoa(envInt("DB_STATEMENT_TIMEOUT_MS", 90000))},
 		{"lock_timeout", strconv.Itoa(envInt("DB_LOCK_TIMEOUT_MS", 5000))},
 		{"idle_in_transaction_session_timeout", "30000"},
+		{"jit", "off"},
 	}
 	if strings.Contains(dsn, "://") {
 		u, err := url.Parse(dsn)

@@ -18,6 +18,43 @@ Entry format:
 
 ---
 
+## 2026-10-30 — Query speed checked on two years of data; JIT off, dashboard sales split
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("look at all the queries, can they be optimized, why so slow")
+- **Commit(s):** this commit (on `main`)
+- **Measured:** a copy of the database filled with ~2 years of a busy
+  complex (90,757 bookings and payments, 100,065 sales / 200,074 lines,
+  20,027 users, 272,372 audit entries, 86,383 ledger rows - scratchpad
+  `seed_perf.sql`, never on a real database); pg_stat_statements and
+  statement logging on; every request the screens make timed server-side
+  (median of 5). All but three answer in 1-12 ms. The month export is
+  ~180 ms / 5 MB (only on the export button). The admin dashboard took
+  300-810 ms:
+  - hourly occupancy (30 days): 456-520 ms, of which ~500 ms was Postgres
+    **JIT** compiling the query (5 ms with `jit = off`). JIT starts when
+    the planner's cost estimate passes a threshold, so it came and went
+    with the plan, and more queries would cross it as data grows;
+  - counter-sales lines grouped by kind *and month over all time*: 215-290
+    ms, a sort of ~200k rows spilling to disk (9.6 MB > work_mem).
+- **Changed:**
+  - `main.go` `withDBTimeouts`: `jit=off` on the app's connections (sent
+    as a runtime parameter like the timeouts; schema setup is unaffected).
+  - `report_service.go` Dashboard: the sales lines in two queries - all
+    time by kind only (3 groups, hash aggregate, ~70 ms) and by month only
+    for the chart's six months, with the date's share (~65 ms).
+- **Verified:** dashboards for 11 dates (today, yesterday, month and year
+  boundaries, an empty future date) from the old and the new code on the
+  big database: identical JSON. Dashboard old 293 ms median (730-810 ms on
+  the JIT path), new 185 ms median / 223 ms max (9 runs each). Full
+  `go test -race ./...` with the DB passes.
+- **Not done / follow-ups:** the remaining dashboard time is the all-time
+  totals (bookings, sales, sales split), which scan their whole table and
+  grow with the years (~3x at 5-6 years). If that ever matters: a small
+  daily-totals table kept up to date, or caching those three figures for a
+  minute. Not needed now.
+
+---
+
 ## 2026-10-30 — Faster start and rebuild (Docker)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("why is it so slow" / "during the start, can we do it concurrently")
