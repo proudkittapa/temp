@@ -19,6 +19,7 @@ import {
 } from './types';
 import { StorageService } from './mockData';
 import { thaiErrorText } from './errorText';
+import { beginAction } from './busy';
 
 export const USE_BACKEND = import.meta.env.VITE_DATA_SOURCE === 'api';
 const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL || '/api/v1';
@@ -116,11 +117,24 @@ const newIdempotencyKey = () => typeof crypto !== 'undefined' && crypto.randomUU
 
 const READ_TIMEOUT_MS = 20000;
 
-async function request<T>(
-  path: string,
+type RequestOpts = {
+  method?: string; body?: unknown; form?: FormData; session?: SessionKind;
   // withMeta: resolve to the whole body ({ data, has_more, ... }), not just data.
-  opts: { method?: string; body?: unknown; form?: FormData; session?: SessionKind; withMeta?: boolean } = {}
-): Promise<T> {
+  withMeta?: boolean;
+};
+
+// Every action (a write) blocks the screen until the server has answered -
+// see busy.ts and BusyOverlay; reads (the live refresh) don't.
+async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
+  const done = (opts.method || 'GET') !== 'GET' ? beginAction() : undefined;
+  try {
+    return await send<T>(path, opts);
+  } finally {
+    done?.();
+  }
+}
+
+async function send<T>(path: string, opts: RequestOpts): Promise<T> {
   const headers: Record<string, string> = {};
   const token = opts.session ? getSession(opts.session)?.token : undefined;
   if (token) headers.Authorization = `Bearer ${token}`;

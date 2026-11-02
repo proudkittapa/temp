@@ -18,6 +18,45 @@ Entry format:
 
 ---
 
+## 2026-11-02 — Loading box: the screen is blocked while an action is sent to the server
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("loading pop up when calling the api; the user shouldn't be able to interact")
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - `src/busy.ts` (new): the actions in progress. `beginAction()` (returns
+    its end function) sets `inert` on `#root` synchronously - no clicks,
+    typing or focus anywhere in the app, even a double-click in the same
+    frame; `dismissRunningActions()` for the close button;
+    `useBusyState()` / `busySnapshot()`.
+  - `src/api.ts`: `request()` wraps every **write** (POST/PUT/DELETE - all
+    40 actions: bookings, slips, approvals, refunds, sales, rentals,
+    shifts, settings, sign-in) in `beginAction()`; the old body is
+    `send()`. Reads (the 15 s live refresh, lists) don't block. Checked:
+    no screen sends a write from an effect (every write is a button).
+  - `src/components/BusyOverlay.tsx` (new, in `App.tsx`, portalled to
+    `<body>` so it isn't inert itself, above dialogs): transparent at
+    first, the box "กำลังดำเนินการ... กรุณารอสักครู่ อย่าปิดหรือรีเฟรชหน้านี้"
+    after 300 ms (a quick save doesn't flash it). Writes have no time limit
+    (their result matters; a retry reuses the Idempotency-Key), so after
+    20 s without an answer it says so and offers "ปิดหน้าต่างนี้": the action
+    continues in the background, the page is usable, its result still
+    shows when it arrives. A new action blocks again.
+  - The panels' own `busy` / `guarded` button guards stay as they were.
+  - `src/busy.test.ts`: blocking until every action ended, ending twice,
+    closing the box, a new action after closing.
+- **Verified:** `tsc`, vitest 71/71. Browser (API mode, the server's answer
+  delayed with Playwright): 2 s save - at 0.08 s blocked (inert, no box),
+  at 0.6 s the box; clicking another tab, Tab and Enter while saving did
+  nothing; after the answer the box and the block are gone and the result
+  message shows. 25 s save - at 19 s the box, at 21 s the slow note and
+  close button; closed → page usable (a tab opens); the late answer's
+  message still appeared. Staff screen, 17 s of live refresh: the box
+  never shown. No page errors. Screenshot at phone width checked.
+- **Not done / follow-ups:** a message dialog that pops up while another
+  action is still running waits (unclickable) until that action ends.
+
+---
+
 ## 2026-10-30 — Flaky CI run: deadlock test counts its own deadlocks; failures shown as annotations
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo

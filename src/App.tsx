@@ -6,6 +6,7 @@ import CustomerPanel from './components/CustomerPanel';
 // download them), fetched before they are shown - see screens.ts.
 import { StaffPOS, AdminPanel, preloadScreen, roleFromHash, hashForRole } from './screens';
 import { DialogHost } from './components/Dialog';
+import BusyOverlay from './components/BusyOverlay';
 import { Shield, Sparkles, User, Users, Briefcase, Clock } from 'lucide-react';
 import * as api from './api';
 import { canUseCounter, canUseSettings } from './permissions';
@@ -252,6 +253,8 @@ export default function App() {
       </main>
 
       <DialogHost />
+      {/* Loading box while a server action runs (busy.ts) */}
+      <BusyOverlay />
 
       {/* Footer Branding */}
       <footer className="bg-white border-t border-slate-100 py-6 text-center text-xs text-slate-400 text-slate-500">
