@@ -18,6 +18,31 @@ Entry format:
 
 ---
 
+## 2026-11-05 — Security check 1: dev-tool vulnerabilities fixed; dependency scan on every push
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("run a security check")
+- **Commit(s):** this commit (on `main`)
+- **Found:** `npm audit`: vite <= 6.4.3 (high: launch-editor command
+  execution on some editors/Windows, cross-origin script execution through
+  custom middleware, files outside `server.fs.allow`) and vitest /
+  @vitest/mocker 5.0.0-5.0.2 (moderate: code injection via manual mock
+  registration). Development tools only - the deployed site is the static
+  build served by Caddy - but they run on the developer's machine
+  (`npm run dev`, tests).
+- **Changed:** `package-lock.json` via `npm audit fix --package-lock-only`:
+  vite 6.4.3 → 6.4.5, vitest 5.0.1 → 5.1.0 (+ its own test-tool deps:
+  @vitest/spy, chai, tinybench, std-env, tinyexec, obug,
+  why-is-node-running); xlsx entry unchanged; `npm audit`: 0. 
+  `.github/workflows/ci.yml`: new job "Dependency vulnerabilities" -
+  `govulncheck` (Go: only vulnerable code the app calls) and
+  `npm audit --audit-level=high`, findings as annotations. (vuln.go.dev is
+  blocked from this sandbox, so the Go scan runs only on GitHub.)
+- **Verified:** `npm audit` 0 here; the GitHub run checks the new lockfile
+  (`npm ci`, tests, build) and runs the Go scan.
+- **Not done / follow-ups:** the rest of the security check (next entry).
+
+---
+
 ## 2026-11-05 — Login lockout: browsers that signed in before still get in
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (lockout decision: "go with your suggestion")

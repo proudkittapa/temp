@@ -94,6 +94,44 @@ jobs:
         env:
           VITE_DATA_SOURCE: api
 
+  # Known vulnerabilities in the libraries the app uses (Go: only those
+  # whose vulnerable code the app actually calls; npm: high or critical).
+  # Findings are also posted as annotations on the run's page.
+  security:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: golang-backend/go.mod
+          cache-dependency-path: golang-backend/go.sum
+      - name: Go (govulncheck)
+        working-directory: golang-backend
+        run: |
+          set +e
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./... 2>&1 | tee vuln.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E '^Vulnerability #|^ +(Found in|Fixed in): ' vuln.log | head -30 |
+              while IFS= read -r line; do echo "::error title=Go vulnerability::$line"; done
+          fi
+          exit "$status"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: npm (audit, high and critical)
+        run: |
+          set +e
+          npm audit --audit-level=high 2>&1 | tee audit.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E '^[a-z@].*$|Severity: |https://github.com/advisories/' audit.log | head -30 |
+              while IFS= read -r line; do echo "::error title=npm vulnerability::$line"; done
+          fi
+          exit "$status"
+
   docker:
     name: Deployment images build
     runs-on: ubuntu-latest
