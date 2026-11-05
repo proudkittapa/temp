@@ -93,3 +93,24 @@ bundle has no demo accounts or source maps.
 
 Checked and fine: no secret ever committed (history scanned; the example JWT secret is refused in release mode, the example DB password is only in local-dev instructions); the 9 public routes give only public data (`GET /bookings` blanks names, phones, ids and amounts); all 58 guarded routes refuse anonymous (401) and customer (403) calls; forged tokens (published example secret, `alg: none`) refused; role escalation refused; search boxes, `before_id`, `refund_method` and oversized device keys handled safely; no raw HTML in the screens; production headers (CSP, HSTS, frame, nosniff, referrer, permissions) sent; only Caddy is published; the backend runs as a non-root user on a read-only filesystem.
 
+### Recheck of 2026-11-05 (live attacks, after the Go 1.27 update)
+
+No new finding - 22 of 22 attacks refused on the running server:
+one customer listing or uploading a slip to another's booking; a price,
+`total_amount` or `user_id` sent with a booking (the server's price and the
+signed-in customer are used); `role` / `points` / `member_type` sent at
+sign-up (ignored: CUSTOMER, 0, NORMAL); a text file named .jpg, an SVG,
+a 6 MB upload (413), a `../` file name (the server names the file); a slip
+link with a changed signature, a later expiry, or another file name; a
+customer replaying another customer's Idempotency-Key (422, no answer
+from the first) - the owner's own retry gets the same booking, not a
+second; a suspended customer's or a demoted staff member's existing
+token (refused on the next request); a negative sale quantity, a points
+change over the limit, negative counted cash; the 11th sign-up from one
+network in an hour (429). The screens put no user text into raw HTML,
+and slip links in them always come from the server.
+
+Accepted as is: a slip link works for anyone who has it, for 2 hours
+(signed, tied to that one file) - the screens fetch a fresh one each
+load.
+

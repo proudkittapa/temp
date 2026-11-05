@@ -18,6 +18,23 @@ Entry format:
 
 ---
 
+## 2026-11-05 — Security recheck: 22 live attacks, no new finding
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck again")
+- **Commit(s):** this commit (on `main`) - docs only
+- **Checked** on the running Go 1.27 server (scratchpad `probe2.py`, plus
+  an idempotency and a sign-up-limit probe): other customers' data and
+  slips, price/owner/role fields in requests, non-image and oversized
+  uploads and file names, slip-link forgery, action-ID replay across
+  users, suspension and demotion on existing tokens, negative quantities
+  and amounts, the sign-up limit; frontend scan for raw-HTML sinks.
+  22/22 refused - list in SECURITY_REVIEW.md ("Recheck of 2026-11-05").
+  Two first-run failures were the probe's own (a date beyond the 30-day
+  online window; a wrong field name), corrected and re-run.
+- **Not done / follow-ups:** none.
+
+---
+
 ## 2026-11-05 — Security check 2: Go 1.27 and current libraries; every route must be guarded
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("run a security check")
