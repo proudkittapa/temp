@@ -20,7 +20,9 @@ import (
 //     IP* - a guesser is stopped quickly, but a stranger on another network
 //     can't lock the real owner out with five wrong guesses;
 //   - 20 failures for one account from anywhere lock the account (a
-//     distributed guess);
+//     distributed guess) - except on a browser that has signed in to it
+//     before (TrustedDevice, trusted_devices.go): anyone who knows a staff
+//     phone number could otherwise keep that staff member out;
 //   - 50 failures from one IP lock that IP (one source spraying accounts).
 //
 // Failures are stored in the database (login_failures), so the limits hold
@@ -121,6 +123,15 @@ func (t *LoginThrottle) Begin(ctx context.Context, identity, ip string) (time.Du
 
 // BeginAccount is Begin for a canonical account key (see accountKeys).
 func (t *LoginThrottle) BeginAccount(ctx context.Context, account, ip string) (time.Duration, func(ok bool) error, error) {
+	return t.BeginAccountTrusted(ctx, account, ip, false)
+}
+
+// BeginAccountTrusted is BeginAccount for a browser that has signed in to
+// this account before (TrustedDevice): the account-wide limit - which
+// anyone who knows the phone number can fill from a few networks - doesn't
+// stop it. The limits per account and network and per network still do,
+// and its failures are counted as everyone's.
+func (t *LoginThrottle) BeginAccountTrusted(ctx context.Context, account, ip string, trusted bool) (time.Duration, func(ok bool) error, error) {
 	// Postgres keeps microseconds: without truncating, the stored row no
 	// longer equals `now`, so this attempt was counted as a prior one (4
 	// tries instead of 5) and remove() never matched refused attempts.
@@ -135,6 +146,9 @@ func (t *LoginThrottle) BeginAccount(ctx context.Context, account, ip string) (t
 		key string
 		max int
 	}{{pair, t.maxPerPair}, {acct, t.maxPerAcct}, {ipKey, t.maxPerIP}} {
+		if trusted && l.key == acct {
+			continue
+		}
 		times, err := t.store.since(ctx, l.key, now.Add(-t.window))
 		if err != nil {
 			return 0, nil, err

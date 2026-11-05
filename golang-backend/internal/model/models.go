@@ -630,6 +630,20 @@ type LoginFailure struct {
 	At  time.Time `json:"-" gorm:"column:at;index:idx_login_failures_key_at,priority:2;index"`
 }
 
+// TrustedDevice is a browser that has signed in to an account with the
+// right password: it may still sign in (with the right password) while
+// that account is locked by wrong passwords from elsewhere, so someone who
+// knows a staff phone number can't keep the staff member out. Only a hash
+// of the key is stored; the browser keeps the key.
+type TrustedDevice struct {
+	ID         string    `json:"-" gorm:"primaryKey;column:id"`
+	UserID     string    `json:"-" gorm:"column:user_id;not null;index"`
+	TokenHash  string    `json:"-" gorm:"column:token_hash;not null;uniqueIndex"`
+	CreatedAt  time.Time `json:"-" gorm:"column:created_at"`
+	LastUsedAt time.Time `json:"-" gorm:"column:last_used_at"`
+	ExpiresAt  time.Time `json:"-" gorm:"column:expires_at;index"`
+}
+
 // 16. A write request the app may send again (a retry after a lost
 // response): the first attempt's response is kept, keyed by the client's
 // Idempotency-Key header, so a repeat is answered from here instead of

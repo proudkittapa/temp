@@ -23,7 +23,7 @@ func TestAuthenticateDuringDatabaseOutage(t *testing.T) {
 		t.Fatal(err)
 	}
 	users := repository.NewUserRepository(db)
-	auth := service.NewAuthService(users, repository.NewAuditRepository(db), []byte("secret"), nil)
+	auth := service.NewAuthService(users, repository.NewAuditRepository(db), []byte("secret"), nil, db)
 	token, err := auth.IssueTokenForTest("u-1", "CUSTOMER")
 	if err != nil {
 		t.Fatal(err)

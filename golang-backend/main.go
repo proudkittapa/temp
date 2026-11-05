@@ -172,7 +172,7 @@ func main() {
 		log.Println("WARNING: TRUSTED_PROXIES is not set. Behind a reverse proxy every client then has the proxy's IP, " +
 			"so the per-IP login and sign-up limits lock out everyone at once. Set it to the proxy's address.")
 	}
-	authService := service.NewAuthService(usrRepo, auditRepo, serverSecret, service.NewLoginThrottle(db))
+	authService := service.NewAuthService(usrRepo, auditRepo, serverSecret, service.NewLoginThrottle(db), db)
 	slipSigner := handler.NewSlipSigner(serverSecret)
 	userService := service.NewUserService(db, usrRepo)
 	roleService := service.NewRoleService(db)
@@ -1103,6 +1103,7 @@ func setupSchemaLocked(setupDB *gorm.DB) error {
 		&model.Refund{},
 		&model.AppMigration{},
 		&model.JobLease{},
+		&model.TrustedDevice{},
 	)
 	if err != nil {
 		return err

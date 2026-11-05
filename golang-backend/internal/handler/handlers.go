@@ -80,8 +80,9 @@ func (h *ArenaHandler) Register(c *gin.Context) {
 		"success": true,
 		"message": "User registered successfully",
 		"data": gin.H{
-			"token": result.Token,
-			"user":  result.User,
+			"token":        result.Token,
+			"user":         result.User,
+			"device_token": result.DeviceToken,
 		},
 	})
 }
@@ -91,6 +92,9 @@ func (h *ArenaHandler) Login(c *gin.Context) {
 	var input struct {
 		Identity string `json:"identity" binding:"required"` // Email or Phone ID
 		Password string `json:"password" binding:"required"`
+		// This browser's trusted-device keys (one per account signed in on
+		// it): one for this account gets past an account-wide lock.
+		DeviceTokens []string `json:"device_tokens"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -98,7 +102,7 @@ func (h *ArenaHandler) Login(c *gin.Context) {
 		return
 	}
 
-	result, err := h.authService.Login(c.Request.Context(), input.Identity, input.Password, c.ClientIP())
+	result, err := h.authService.Login(c.Request.Context(), input.Identity, input.Password, c.ClientIP(), input.DeviceTokens)
 	if err != nil {
 		var tooMany *service.TooManyAttemptsError
 		switch {
@@ -116,8 +120,9 @@ func (h *ArenaHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"token": result.Token,
-			"user":  result.User,
+			"token":        result.Token,
+			"user":         result.User,
+			"device_token": result.DeviceToken,
 		},
 	})
 }

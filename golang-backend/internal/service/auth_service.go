@@ -14,6 +14,7 @@ import (
 	"arena-backend/internal/repository"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type AuthClaims struct {
@@ -27,6 +28,7 @@ type AuthService struct {
 	auditRepo *repository.AuditRepository
 	jwtSecret []byte
 	throttle  *LoginThrottle
+	devicesDB *gorm.DB // trusted devices (trusted_devices.go)
 }
 
 // NewAuthService takes the JWT signing secret explicitly (see
@@ -34,7 +36,7 @@ type AuthService struct {
 // package init(), which runs before main loads .env - so a secret set in
 // .env was silently ignored in favour of a hard-coded, publicly committed
 // default that anyone could use to sign an ADMIN token.
-func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.AuditRepository, jwtSecret []byte, throttle *LoginThrottle) *AuthService {
+func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.AuditRepository, jwtSecret []byte, throttle *LoginThrottle, db *gorm.DB) *AuthService {
 	if len(jwtSecret) == 0 {
 		panic("auth: empty JWT secret")
 	}
@@ -43,6 +45,7 @@ func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.Au
 		auditRepo: auditRepo,
 		jwtSecret: jwtSecret,
 		throttle:  throttle,
+		devicesDB: db,
 	}
 	// Built now rather than on the first unknown-account login, which would
 	// otherwise be measurably slower than the rest.
@@ -50,9 +53,13 @@ func NewAuthService(usrRepo *repository.UserRepository, auditRepo *repository.Au
 	return s
 }
 
-// PruneLoginFailures forgets failed logins older than the throttle window.
+// PruneLoginFailures forgets failed logins older than the throttle window,
+// and trusted devices past their expiry.
 func (s *AuthService) PruneLoginFailures(ctx context.Context) error {
-	return s.throttle.Prune(ctx)
+	if err := s.throttle.Prune(ctx); err != nil {
+		return err
+	}
+	return s.pruneTrustedDevices(ctx)
 }
 
 // TooManyAttemptsError is returned by Login while an account or client IP
@@ -98,6 +105,8 @@ var (
 type AuthResult struct {
 	Token string      `json:"token"`
 	User  *model.User `json:"user"`
+	// DeviceToken: this browser's key for the account (TrustedDevice).
+	DeviceToken string `json:"device_token,omitempty"`
 }
 
 // Register verifies credentials duplicate and inserts a secured password payload
@@ -200,10 +209,16 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 	if err != nil {
 		return nil, err
 	}
+	// The browser that signed up is the account's first trusted device.
+	deviceToken, err := s.rememberDevice(ctx, userID, nil, "")
+	if err != nil {
+		return nil, err
+	}
 
 	return &AuthResult{
-		Token: tokenString,
-		User:  &newUser,
+		Token:       tokenString,
+		User:        &newUser,
+		DeviceToken: deviceToken,
 	}, nil
 }
 
@@ -212,7 +227,9 @@ func (s *AuthService) Register(ctx context.Context, name, email, phone, password
 // phones were normalized one number could belong to two accounts (see
 // UserRepository.FindByIdentity) - checking only the oldest locked the
 // other account's owner out.
-func (s *AuthService) Login(ctx context.Context, identity, password, clientIP string) (*AuthResult, error) {
+// deviceTokens: the keys this browser holds (TrustedDevice); one for the
+// account lets it past the account-wide lock.
+func (s *AuthService) Login(ctx context.Context, identity, password, clientIP string, deviceTokens []string) (*AuthResult, error) {
 	users, err := s.usrRepo.FindByIdentity(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -223,7 +240,15 @@ func (s *AuthService) Login(ctx context.Context, identity, password, clientIP st
 	if len(users) > 0 {
 		account = AccountKeyForUser(users[0].ID)
 	}
-	wait, done, err := s.throttle.BeginAccount(ctx, account, clientIP)
+	userIDs := make([]string, len(users))
+	for i := range users {
+		userIDs[i] = users[i].ID
+	}
+	device, deviceToken, err := s.matchTrustedDevice(ctx, deviceTokens, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	wait, done, err := s.throttle.BeginAccountTrusted(ctx, account, clientIP, device != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -261,10 +286,14 @@ func (s *AuthService) Login(ctx context.Context, identity, password, clientIP st
 	if err != nil {
 		return nil, err
 	}
+	if deviceToken, err = s.rememberDevice(ctx, user.ID, device, deviceToken); err != nil {
+		return nil, err
+	}
 
 	return &AuthResult{
-		Token: tokenString,
-		User:  user,
+		Token:       tokenString,
+		User:        user,
+		DeviceToken: deviceToken,
 	}, nil
 }
 

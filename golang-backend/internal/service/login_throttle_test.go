@@ -228,3 +228,38 @@ func TestLoginThrottleWithMicrosecondStore(t *testing.T) {
 		t.Fatalf("%d failures stored, want 5", len(times))
 	}
 }
+
+// A browser trusted for the account isn't stopped by the account-wide
+// limit, but still by the per-network ones; others are stopped.
+func TestLoginThrottleTrustedDeviceSkipsOnlyTheAccountLimit(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	th := testThrottle(&now)
+	ctx := context.Background()
+	acct := AccountKeyForUser("u-staff")
+	for i := 0; i < 20; i++ { // someone else, from 20 networks
+		w, done, err := th.BeginAccount(ctx, acct, "10.1.0."+string(rune('a'+i)))
+		if err != nil || w != 0 {
+			t.Fatalf("attempt %d refused early (%v, %v)", i+1, w, err)
+		}
+		_ = done(false)
+	}
+	if w, _, _ := th.BeginAccount(ctx, acct, "192.168.1.5"); w == 0 {
+		t.Fatal("an unknown device got past the account-wide lock")
+	}
+	w, done, err := th.BeginAccountTrusted(ctx, acct, "192.168.1.5", true)
+	if err != nil || w != 0 {
+		t.Fatalf("the trusted device was refused (%v, %v)", w, err)
+	}
+	_ = done(false)
+	// Its own wrong passwords still count per account and network: 5.
+	for i := 0; i < 4; i++ {
+		w, done, _ := th.BeginAccountTrusted(ctx, acct, "192.168.1.5", true)
+		if w != 0 {
+			t.Fatalf("trusted attempt %d refused early", i+2)
+		}
+		_ = done(false)
+	}
+	if w, _, _ := th.BeginAccountTrusted(ctx, acct, "192.168.1.5", true); w == 0 {
+		t.Fatal("6th wrong password from the trusted device's network was allowed")
+	}
+}

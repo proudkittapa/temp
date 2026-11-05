@@ -73,6 +73,31 @@ function saveSession(_kind: SessionKind, session: StoredSession | null) {
   }
 }
 
+// Trusted-device keys (golang-backend trusted_devices.go): the server gives
+// this browser a key per account signed in on it; a browser holding the
+// key may still sign in (right password) while that account is locked by
+// wrong passwords from elsewhere. Newest first, at most 10 (a counter PC
+// several staff use); kept on sign-out - they are about the browser, not
+// the session.
+const DEVICE_KEYS = 'sports_complex_device_keys';
+const MAX_DEVICE_KEYS = 10;
+function deviceKeys(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(DEVICE_KEYS) || '[]');
+    return Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string').slice(0, MAX_DEVICE_KEYS) : [];
+  } catch {
+    return [];
+  }
+}
+function keepDeviceKey(key?: string) {
+  if (!key) return;
+  try {
+    localStorage.setItem(DEVICE_KEYS, JSON.stringify([key, ...deviceKeys().filter(k => k !== key)].slice(0, MAX_DEVICE_KEYS)));
+  } catch {
+    // storage unavailable: this browser just isn't remembered
+  }
+}
+
 // Signs out everywhere (there is one session).
 export function logout(_kind?: SessionKind) {
   saveSession('customer', null);
@@ -304,10 +329,11 @@ const toPayment = (p: ApiPayment): Payment => ({
 // ---- auth ----
 
 export async function login(kind: SessionKind, identity: string, password: string): Promise<User> {
-  const data = await request<{ token: string; user: ApiUser }>('/auth/login', {
+  const data = await request<{ token: string; user: ApiUser; device_token?: string }>('/auth/login', {
     method: 'POST',
-    body: { identity, password }
+    body: { identity, password, device_tokens: deviceKeys() }
   });
+  keepDeviceKey(data.device_token);
   saveSession(kind, { token: data.token, user: toUser(data.user) });
   // The login response has no permissions; /auth/me does, and the screens
   // use them to decide what to show.
@@ -315,7 +341,8 @@ export async function login(kind: SessionKind, identity: string, password: strin
 }
 
 export async function register(input: { name: string; email: string; phone: string; password: string }): Promise<User> {
-  const data = await request<{ token: string; user: ApiUser }>('/auth/register', { method: 'POST', body: input });
+  const data = await request<{ token: string; user: ApiUser; device_token?: string }>('/auth/register', { method: 'POST', body: input });
+  keepDeviceKey(data.device_token);
   const user = toUser(data.user);
   saveSession('customer', { token: data.token, user });
   return user;

@@ -18,6 +18,51 @@ Entry format:
 
 ---
 
+## 2026-11-05 — Login lockout: browsers that signed in before still get in
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com (lockout decision: "go with your suggestion")
+- **Commit(s):** this commit (on `main`)
+- **Problem:** 20 wrong passwords for one account from anywhere locked it
+  for 15 minutes - anyone who knows a staff phone number could keep that
+  staff member (or the admin) out.
+- **Changed:**
+  - `model.TrustedDevice` (table `trusted_devices`: user, SHA-256 of the
+    key, created / last used / expires; AutoMigrate).
+  - `internal/service/trusted_devices.go` (new): a successful sign-in (and
+    sign-up) gives the browser a random 32-byte key; only its hash is
+    stored; 90 days, renewed at each sign-in on that browser; the newest
+    20 per account are kept; expired ones pruned with the login failures
+    every minute.
+  - `login_throttle.go`: `BeginAccountTrusted` skips only the account-wide
+    limit for a trusted browser; the per account+network (5) and per
+    network (50) limits apply to everyone, and its failures still count.
+  - `auth_service.go`: `Login(..., deviceTokens)` - the browser sends the
+    keys it holds (at most 10: a counter PC used by several staff); a key
+    for one of the accounts the phone/email matches makes it trusted; the
+    response returns the key (`device_token`). `NewAuthService` takes the
+    DB. `handlers.go`: `device_tokens` in, `device_token` out (login and
+    register).
+  - `src/api.ts`: keeps the keys in `sports_complex_device_keys` (newest
+    first, 10), sends them at sign-in; kept on sign-out (they are about the
+    browser).
+  - A correct sign-in still clears the account's failures (as before), so
+    the trusted staff member signing in also ends the lock.
+- **Verified:** unit test (trusted skips only the account limit; 5 wrong
+  from its own network still lock); DB test `TestTrustedDeviceGetsPastAccountLock`
+  (key at sign-up and per browser; 20 guesses from 20 networks → unknown
+  browser with the right password refused, another account's key refused,
+  the counter PC with several keys signs in and keeps its key, wrong
+  password still wrong, expired key refused and pruned, no key stored in
+  clear; ~3.6 s with the test users' bcrypt at MinCost). Live: staff
+  browser signs in once and out; 20 wrong passwords via 20 X-Forwarded-For
+  addresses; a new browser with the right password shows "ลองผิดหลายครั้ง
+  เกินไป กรุณารอ 15 นาที", the staff browser signs in. Full `go test -race`
+  with the DB, vitest 71/71.
+- **Not done / follow-ups:** none. (Note: a new phone or a cleared browser
+  is "unknown" until its first successful sign-in.)
+
+---
+
 ## 2026-11-02 — Loading box: the screen is blocked while an action is sent to the server
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("loading pop up when calling the api; the user shouldn't be able to interact")
