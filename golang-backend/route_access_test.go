@@ -145,3 +145,54 @@ var permByConst = map[string]model.Permission{
 	"PermManageRoles":     model.PermManageRoles,
 	"PermViewAuditLog":    model.PermViewAuditLog,
 }
+
+// publicRoutes are the API routes anyone may call without signing in. Each
+// one answers only what is meant to be public; any other route must check
+// a sign-in (loggedIn) or a permission (can(...)).
+var publicRoutes = map[string]string{
+	"POST /auth/register": "sign-up (rate-limited per IP)",
+	"POST /auth/login":    "sign-in (rate-limited per account and IP)",
+	"GET /courts":         "the courts",
+	"GET /courts/slots":   "free/taken hours, no customer data",
+	"GET /bookings":       "a day's taken hours - names, phones, ids and amounts blanked for the public",
+	"GET /days-off":       "closures",
+	"GET /pricing":        "prices and booking rules",
+	"GET /rewards":        "the reward catalog",
+	"GET /slips/:name":    "a slip image, only with a valid signed, expiring link",
+}
+
+// TestEveryRouteIsGuarded fails when a route is added to main.go without a
+// sign-in or permission check (unless it is listed as public above), and
+// when a listed public route disappears.
+func TestEveryRouteIsGuarded(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`api\.(GET|POST|PUT|DELETE|PATCH)\("([^"]+)",\s*([^\n]*)`)
+	seen := map[string]bool{}
+	routes := 0
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		routes++
+		key := m[1] + " " + m[2]
+		guarded := strings.HasPrefix(m[3], "can(") || strings.HasPrefix(m[3], "loggedIn")
+		if _, public := publicRoutes[key]; public {
+			seen[key] = true
+			if guarded {
+				t.Errorf("%s is listed as public but has a guard - remove it from publicRoutes", key)
+			}
+			continue
+		}
+		if !guarded {
+			t.Errorf("%s has no sign-in or permission check (add can(...) or list it in publicRoutes with why)", key)
+		}
+	}
+	if routes < 60 {
+		t.Fatalf("found only %d routes in main.go - the pattern no longer matches", routes)
+	}
+	for key := range publicRoutes {
+		if !seen[key] {
+			t.Errorf("public route %s is no longer in main.go - remove it from publicRoutes", key)
+		}
+	}
+}

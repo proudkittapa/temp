@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -24,7 +25,13 @@ func TestAuditLogBeforeCreateAlwaysProducesValidJSON(t *testing.T) {
 			if !json.Valid([]byte(got)) {
 				t.Errorf("state for %q is not valid JSON: %s", in, got)
 			}
-			if got != want {
+			// Compared decoded: Go 1.27's encoding/json writes U+FFFD for a
+			// bad byte as the character itself, older versions as \ufffd -
+			// the same JSON.
+			var g, w any
+			_ = json.Unmarshal([]byte(got), &g)
+			_ = json.Unmarshal([]byte(want), &w)
+			if !reflect.DeepEqual(g, w) {
 				t.Errorf("state for %q = %s, want %s", in, got, want)
 			}
 		}

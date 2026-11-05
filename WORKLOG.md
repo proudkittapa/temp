@@ -18,6 +18,48 @@ Entry format:
 
 ---
 
+## 2026-11-05 — Security check 2: Go 1.27 and current libraries; every route must be guarded
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("run a security check")
+- **Commit(s):** this commit (on `main`)
+- **Found (details in SECURITY_REVIEW.md, "Check of 2026-11-05"):** the new
+  CI scan (`govulncheck`) reported 16 known vulnerabilities in 4 modules
+  and the standard library, reachable from the app. Cause: Go 1.25 is out
+  of support (Go 1.27.3 is current) and the modules were 2023-2024
+  versions; the newest x/net, x/crypto, x/text need Go 1.26+.
+- **Changed:**
+  - `golang-backend/go.mod`: `go 1.27`; `go get -u ./... && go mod tidy`:
+    gin 1.9.1 → 1.12.0, gorm 1.25.10 → 1.31.2, gorm postgres driver
+    1.5.7 → 1.6.3, pgx 5.5.3 → 5.12.0, jwt 5.2.0 → 5.3.1, validator
+    10.14 → 10.30.6, x/crypto 0.19 → 0.58, x/net 0.10 → 0.62, x/text 0.14
+    → 0.43, x/sys 0.26 → 0.49, protobuf 1.30 → 1.36.12, and their deps.
+  - `golang-backend/Dockerfile`: `golang:1.27-alpine`.
+  - `internal/model/audit_test.go`: compares the audit JSON decoded - Go
+    1.27's encoding/json writes U+FFFD for a bad byte as the character,
+    older versions as `\ufffd` (same JSON).
+  - `route_access_test.go`: `TestEveryRouteIsGuarded` - every `api.*`
+    route in main.go needs `can(...)` or `loggedIn`, or a reason in
+    `publicRoutes` (9 today); checked by adding an unguarded route (fails
+    naming it).
+  - `.github/workflows/ci.yml`: govulncheck v1.9.0 (runs on Go 1.27); the
+    Go problem matcher is removed in that step (its trace annotations used
+    GitHub's 10 per step); summary lines whenever vulnerabilities are
+    listed, the tail when the scan itself errors.
+  - `golang-backend/README.md`: Go 1.27. `SECURITY_REVIEW.md`: new section.
+- **Verified:** Go 1.27: `go vet`, build, full `go test -race ./...` with
+  the DB. Live on the new binary: full-day money test (37 checks) all
+  pass; 58 guarded routes refuse anonymous and customer calls; forged
+  tokens refused; role-escalation probe refused; bad-body messages
+  unchanged; all admin and staff tabs, customer sign-in, settings save,
+  voucher lookup, device lockout - no page errors. Backend Docker image
+  built with Go 1.27 (local CA workaround copy), started, `/readyz`
+  ready, `/api/v1/pricing` answers. GitHub run: below.
+- **Not done / follow-ups:** keep Go and the modules current - the CI job
+  fails when a new advisory affects them; Go 1.27 is supported until about
+  August 2027 (two releases later).
+
+---
+
 ## 2026-11-05 — Security check 1: dev-tool vulnerabilities fixed; dependency scan on every push
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("run a security check")

@@ -1,6 +1,6 @@
 # The Go backend: built from the whole package (main.go alone misses the
 # other files in package main), run as a small static binary.
-FROM golang:1.25-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 # Build caches kept between builds (BuildKit, Docker's default builder): an

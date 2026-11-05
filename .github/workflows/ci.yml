@@ -114,14 +114,13 @@ jobs:
           # setup-go's matcher turns every "file.go:N:" trace line into an
           # annotation, using up GitHub's 10 per step before the summary.
           echo "::remove-matcher owner=go::"
-          # Pinned to the newest govulncheck that runs on this module's Go
-          # (1.25; v1.8+ needs 1.26). It checks the standard library of the
-          # Go version it runs on - the one the app is built with - so don't
-          # let it switch toolchains. Raise it with go.mod.
-          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./... 2>&1 | tee vuln.log
+          # Pinned (a new release can need a newer Go than go.mod's - v1.8+
+          # needs 1.26). It checks the standard library of the Go it runs on,
+          # the latest patch of go.mod's version, as the Docker build uses.
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./... 2>&1 | tee vuln.log
           status=${PIPESTATUS[0]}
-          if [ "$status" -eq 3 ]; then # 3 = vulnerabilities found
-            grep -E '^Vulnerability #|^ +(Found in|Fixed in): |^ +Standard library' vuln.log | head -30 |
+          if grep -q '^Vulnerability #' vuln.log; then
+            grep -E '^Vulnerability #|^ +(Found in|Fixed in): ' vuln.log | head -30 |
               while IFS= read -r line; do echo "::error title=Go vulnerability::$line"; done
           elif [ "$status" -ne 0 ]; then # the scan itself failed
             tail -15 vuln.log | while IFS= read -r line; do echo "::error title=govulncheck error::$line"; done

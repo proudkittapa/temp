@@ -39,7 +39,7 @@ This directory contains the production-grade, highly performant **Go (Golang)** 
 ## 🚀 Setup & Execution Guide
 
 ### 1. Prerequisites
-- **Go 1.21** or later installed.
+- **Go 1.27** or later installed (the `go` command downloads it by itself when an older one runs `go build` here).
 - **PostgreSQL 14** or later active.
 
 ### 2. Set Up a Local Database (Homebrew, macOS)

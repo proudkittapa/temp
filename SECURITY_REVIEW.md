@@ -80,3 +80,16 @@ serialised by row locks and backed by CHECK constraints; no
 `dangerouslySetInnerHTML`/`innerHTML`; CSV export guards against formulas;
 only Caddy publishes ports; no secrets in git or images; the production
 bundle has no demo accounts or source maps.
+
+## Check of 2026-11-05 (after the October changes)
+
+| Sev | Finding | Status |
+|-----|---------|--------|
+| **High** | **Go 1.25 is out of support** (Go 1.27 is current; Go patches the two newest releases only), so its standard-library vulnerabilities stay unfixed; and the Go libraries were 2023-2024 versions (pgx 5.5.3, x/net 0.10, x/crypto 0.19, x/text 0.14, gin 1.9.1, protobuf 1.30, jwt 5.2.0). `govulncheck`: 16 vulnerabilities in 4 modules + the standard library reachable from the app's code (e.g. pgx's query sanitizer and protocol encoder, HTTP/2, TLS certificate checks). | Fixed: Go 1.27 (`go.mod`, `golang:1.27-alpine`), every module updated (pgx 5.12, gin 1.12, gorm 1.31, x/net 0.62, x/crypto 0.58, ...). Re-checked by the CI job. |
+| Medium (dev only) | vite <= 6.4.3 (high) and vitest 5.0.0-5.0.2 (moderate): the developer machine running `npm run dev` / tests. The deployed site is static files. | Fixed: vite 6.4.5, vitest 5.1.0 (`npm audit`: 0). |
+| Low | Nothing failed a build when a new API route had no permission check (the route test covered only older routes). | Fixed: `TestEveryRouteIsGuarded` - every route needs `can(...)`/`loggedIn` or a listed reason to be public. |
+| Low | Dependencies were never scanned automatically. | Fixed: CI job "Dependency vulnerabilities" (govulncheck + npm audit, on every push). |
+| Info | DEPLOY.md section 10 (Docker on a Mac) publishes ports 80/443 on every network the Mac is on - on a café's Wi-Fi others there could open the test copy. | Test copies only; stop it (`docker compose stop`) off your home network. |
+
+Checked and fine: no secret ever committed (history scanned; the example JWT secret is refused in release mode, the example DB password is only in local-dev instructions); the 9 public routes give only public data (`GET /bookings` blanks names, phones, ids and amounts); all 58 guarded routes refuse anonymous (401) and customer (403) calls; forged tokens (published example secret, `alg: none`) refused; role escalation refused; search boxes, `before_id`, `refund_method` and oversized device keys handled safely; no raw HTML in the screens; production headers (CSP, HSTS, frame, nosniff, referrer, permissions) sent; only Caddy is published; the backend runs as a non-root user on a read-only filesystem.
+
