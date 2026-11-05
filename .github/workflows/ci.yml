@@ -111,7 +111,11 @@ jobs:
         working-directory: golang-backend
         run: |
           set +e
-          go run golang.org/x/vuln/cmd/govulncheck@latest ./... 2>&1 | tee vuln.log
+          # Pinned to the newest govulncheck that runs on this module's Go
+          # (1.25; v1.8+ needs 1.26). It checks the standard library of the
+          # Go version it runs on - the one the app is built with - so don't
+          # let it switch toolchains. Raise it with go.mod.
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./... 2>&1 | tee vuln.log
           status=${PIPESTATUS[0]}
           if [ "$status" -eq 3 ]; then # 3 = vulnerabilities found
             grep -E '^Vulnerability #|^ +(Found in|Fixed in): ' vuln.log | head -30 |
