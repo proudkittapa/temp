@@ -18,6 +18,47 @@ Entry format:
 
 ---
 
+## 2026-11-12 — Customer flow fixes from the UX walkthrough (items 1, 2, 4, 5, 6, 7)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner ("sure" to fixing the nav bug and the customer flow)
+- **Commit(s):** this commit (on `main`) - frontend only
+- **Changed:**
+  - (1) Nav bar showed "ยังไม่ได้เข้าสู่ระบบ" after a staff/admin sign-in until
+    a reload: `api.ts` `saveSession` now tells in-tab listeners
+    (`onSessionChanged`), `App.tsx` follows it. The nav's "not signed in"
+    text is now a "เข้าสู่ระบบ" button that opens the booking screen's form
+    (`src/authRequest.ts`).
+  - (2) Guests can pick hours; "จองต่อ" opens the sign-in form (with a note
+    that the picked hours are kept) and, once signed in or signed up, goes
+    straight on to the check step (`slotPicker.tsx`, `bookingFlow.tsx`,
+    `useCustomerPanel.tsx`: `authOpen`, `pendingCheckout`, `openAuth`).
+  - (4) Step 2 is now "ตรวจสอบการจอง": what is booked (court, hours, price per
+    hour, member discount, total) and one confirm button, no form fields
+    (`ConfirmStep.tsx`; step label in `CustomerPanel.tsx`).
+  - (5) Account box: guests see a one-line card (เข้าสู่ระบบ / สมัครสมาชิก)
+    and the form only when asked; signed in, one line (name, tier, points)
+    with details, rewards, sign-out and a small "ขอลบบัญชี" link under
+    "บัญชีของฉัน" (`AccountBox.tsx`).
+  - (7) "My bookings" shows one card per booking code with a line per hour,
+    one total and one payment button; hidden for guests (`MyBookingsBox.tsx`).
+  - (6) Payment step: "บันทึกรูป QR" saves a PNG of the QR with the amount and
+    booking code (share sheet on phones, download on computers)
+    (`src/qrImage.ts`, `PaymentStep.tsx`).
+  - Off-peak-only messages no longer name courts "B / C".
+- **Verified:** `tsc` clean, vitest 71/71. Production build against the
+  local Go server, phone size (scratchpad `ux9.mjs`): staff sign-in shows
+  the counter tab and name without reload; guest picks 2 hours with no
+  dialog, "จองต่อ" opens the form focused, sign-up lands on the check step
+  with both hours kept, confirm -> QR, saved PNG opened and correct, one
+  card with two lines, account details fold, nav sign-out then
+  "เข้าสู่ระบบ" opens the form; no page errors. Browser-only demo build
+  (`ux10.mjs`): guest pick -> sign in as the member -> check step shows the
+  10% discount -> QR and one card.
+- **Not done / follow-ups:** wording clean-up (walkthrough items 8, 11 -
+  wording to be approved by the owner first), staff layout (9, 10),
+  time-first search across courts (3). LINE plan still waits on the four
+  owner decisions.
+
 ## 2026-11-05 — Security recheck: 22 live attacks, no new finding
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by traning.mbt@gmail.com ("recheck again")

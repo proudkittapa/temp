@@ -15,6 +15,7 @@ export default function PickSlotsStep() {
     gridLoading,
     handleCourtTypeChange,
     handleProceedToCheckout,
+    openAuth,
     loggedInUser,
     onRefreshAll,
     quickDates,
@@ -118,13 +119,13 @@ export default function PickSlotsStep() {
             </div>
           </div>
 
-          {/* Anyone can see what's free; picking a slot asks to log in
-              (handleToggleSlotInGrid). */}
+          {/* Anyone can see what's free and pick hours; "จองต่อ" asks to
+              sign in (handleProceedToCheckout). */}
           <div className="relative">
             {!loggedInUser && (
               <p id="guest-availability-hint" className="mb-2 text-xs bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg px-3 py-2">
-                👀 ดูช่วงเวลาว่างได้เลย — <button type="button" className="underline font-bold"
-                  onClick={() => document.getElementById('customer-auth-console')?.scrollIntoView({ behavior: 'smooth' })}>เข้าสู่ระบบหรือสมัครสมาชิก</button> เพื่อจองและดูราคาสมาชิก
+                👀 เลือกเวลาได้เลยโดยไม่ต้องเข้าสู่ระบบ ระบบจะให้เข้าสู่ระบบตอนกด "จองต่อ" · เป็นสมาชิกแล้ว? <button type="button" className="underline font-bold"
+                  onClick={() => openAuth('login')}>เข้าสู่ระบบ</button> เพื่อดูราคาสมาชิก
               </p>
             )}
 
@@ -233,7 +234,7 @@ export default function PickSlotsStep() {
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200 gap-2">
             <span className="font-semibold text-emerald-800 flex items-center gap-1">
-              💡 คำแนะนำผู้เล่น: เลือกสล็อตที่กล่องสีเขียว/เหลืองเพื่อจอง และสำหรับสนามบาสเกตบอลครึ่งสนาม (B, C) จะอนุญาตให้กดเลือกได้เฉพาะช่วง Off-Peak (เวลานอกช่วงเร่งด่วน) เท่านั้น
+              💡 คำแนะนำผู้เล่น: เลือกสล็อตที่กล่องสีเขียว/เหลืองเพื่อจอง และสนามครึ่งสนามเลือกได้เฉพาะช่วง Off-Peak (เวลานอกช่วงเร่งด่วน) เท่านั้น
             </span>
           </div>
         </div>

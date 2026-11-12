@@ -3,6 +3,8 @@ import { formatBaht, businessInfo } from '../../mockData';
 import { QRCodeSVG } from 'qrcode.react';
 import { AlertTriangle, FileImage } from 'lucide-react';
 import { useCustomerPanelContext, PAYMENT_HOLD_MINUTES } from './useCustomerPanel';
+import { saveQrImage } from '../../qrImage';
+import { notify } from '../Dialog';
 
 export default function PaymentStep() {
   const {
@@ -74,7 +76,20 @@ export default function PaymentStep() {
                 ส่งสลิปหลังหมดเวลา รอพนักงานตรวจ กรุณาอย่าโอนเงินเพิ่ม
               </div>
             ) : qrCodePayload ? (
-              <QRCodeSVG value={qrCodePayload} size={176} level="M" />
+              <span className="flex flex-col items-center gap-2">
+                <span id="payment-qr"><QRCodeSVG value={qrCodePayload} size={176} level="M" /></span>
+                <button type="button" id="btn-save-qr"
+                  onClick={() => {
+                    const svg = document.querySelector<SVGSVGElement>('#payment-qr svg');
+                    if (!svg) return;
+                    const amount = formatBaht(currentPayment?.amount ?? currentBooking.totalAmount);
+                    saveQrImage(svg, `promptpay-${currentBooking.bookingCode}.png`, [`ยอดโอน ${amount} บาท`, `รหัสจอง ${currentBooking.bookingCode}`])
+                      .catch(() => notify('บันทึกรูปไม่สำเร็จ กรุณาแคปหน้าจอแทน'));
+                  }}
+                  className="text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg px-3 min-h-[40px]">
+                  💾 บันทึกรูป QR (เปิดในแอปธนาคารได้)
+                </button>
+              </span>
             ) : (
               <div className="h-44 w-44 flex items-center justify-center text-xs text-slate-400">ไม่พบ QR</div>
             )}

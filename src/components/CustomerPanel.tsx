@@ -95,8 +95,8 @@ export default function CustomerPanel(props: CustomerPanelProps) {
           <div className="flex items-center gap-2 sm:gap-3">
             <div className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center font-bold text-sm ${activeStep >= 2 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>2</div>
             <div>
-              <p className="text-xs font-semibold text-slate-800"><span className="hidden sm:inline">ขั้นตอนที่ 2</span><span className="sm:hidden">ข้อมูล</span></p>
-              <p className="hidden sm:block text-xs text-slate-500">กรอกเบอร์โทร & เช็คราคา</p>
+              <p className="text-xs font-semibold text-slate-800"><span className="hidden sm:inline">ขั้นตอนที่ 2</span><span className="sm:hidden">ตรวจสอบ</span></p>
+              <p className="hidden sm:block text-xs text-slate-500">ตรวจสอบเวลาและราคา</p>
             </div>
           </div>
           <div className="h-px bg-slate-200 flex-1 mx-2 sm:mx-4 max-w-[80px]" />
@@ -112,7 +112,7 @@ export default function CustomerPanel(props: CustomerPanelProps) {
         {/* Step 1: Arena Selector / Slot grid */}
         {activeStep === 1 && <PickSlotsStep />}
 
-        {/* Step 2: Information & Checkout */}
+        {/* Step 2: check the booking and confirm */}
         {activeStep === 2 && <ConfirmStep />}
 
         {/* Step 3: PromptPay QR payment panel */}

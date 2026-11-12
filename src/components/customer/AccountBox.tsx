@@ -6,11 +6,13 @@ import { useCustomerPanelContext } from './useCustomerPanel';
 
 export default function AccountBox() {
   const {
+    accountOpen,
     authEmail,
     authError,
     authName,
     authPassword,
     authPhone,
+    authOpen,
     authTab,
     bookings,
     busy,
@@ -24,55 +26,46 @@ export default function AccountBox() {
     handleRegister,
     loggedInUser,
     loginWith,
+    openAuth,
+    pendingCheckout,
     redemptions,
     rewardsCatalog,
+    selectedSlots,
+    setAccountOpen,
     setAuthEmail,
     setAuthError,
     setAuthName,
+    setAuthOpen,
     setAuthPassword,
     setAuthPhone,
     setAuthTab,
     setForgotResult,
+    setPendingCheckout,
     setShowRewards,
     showRewards
   } = useCustomerPanelContext();
   return (
     <div id="customer-auth-console" className="bg-slate-900 text-white rounded-2xl border border-slate-800 overflow-hidden shadow-md">
       {loggedInUser ? (
-        /* Logged In View */
-        <div className="p-5 md:p-6 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-white text-lg shadow-sm border border-emerald-500 shrink-0">
-                {loggedInUser.name.substring(0, 2)}
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-100 flex items-center gap-2">
-                  สวัสดีคุณ {loggedInUser.name}
-                  <span className="px-2.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-xs font-bold uppercase tracking-wider">
-                    สยามก๊วนคลับ
-                  </span>
-                </h3>
-                <p className="text-[11px] text-slate-400 font-medium">สิทธิ์บัญชีผู้เล่น: {loggedInUser.email || 'ไม่มีอีเมล'}</p>
-              </div>
+        /* Logged In View: one line; the details, rewards and sign-out
+           fold out under "บัญชีของฉัน". */
+        <div className="p-4 sm:p-5">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-white shadow-sm border border-emerald-500 shrink-0">
+              {loggedInUser.name.substring(0, 2)}
             </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleLogout}
-                className="bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 text-[11px] font-bold py-1.5 px-3.5 rounded-lg border border-slate-700 transition"
-              >
-                🚪 ลงชื่อออกจากระบบ (Logout)
-              </button>
-              <button
-                onClick={handleDeleteAccount}
-                className="bg-rose-950/40 hover:bg-rose-900 border border-rose-900/40 text-rose-300 text-xs font-bold py-1.5 px-3 rounded-lg transition"
-              >
-                🗑️ ขอลบข้อมูลบัญชีของฉัน (Delete Account)
-              </button>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-slate-100 truncate">{loggedInUser.name}</p>
+              <p className="text-xs text-slate-400 truncate">{memberTierLabel(loggedInUser.memberType)} · <span className="text-amber-300 font-bold">{loggedInUser.points || 0} แต้ม</span></p>
             </div>
+            <button type="button" id="account-toggle" aria-expanded={accountOpen} onClick={() => setAccountOpen(v => !v)}
+              className="shrink-0 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold min-h-[40px] px-3.5 rounded-lg border border-slate-700 transition">
+              บัญชีของฉัน {accountOpen ? '▴' : '▾'}
+            </button>
           </div>
 
+          {accountOpen && (
+          <div id="account-details" className="mt-4 space-y-4">
           {/* Profile Details segment */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs bg-slate-950/50 p-4 rounded-xl border border-slate-800">
             <div className="space-y-1 font-sans">
@@ -242,18 +235,64 @@ export default function AccountBox() {
             </div>
             )}
           </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
+            <button type="button" onClick={handleLogout}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold min-h-[40px] px-4 rounded-lg border border-slate-700 transition">
+              ออกจากระบบ
+            </button>
+            <button type="button" onClick={handleDeleteAccount} className="text-xs text-slate-500 hover:text-rose-300 underline">
+              ขอลบบัญชี
+            </button>
+          </div>
+          </div>
+          )}
+        </div>
+      ) : !authOpen ? (
+        /* Guest, form folded: hours can be picked without an account. */
+        <div className="p-4 sm:p-5 space-y-3">
+          {authError && (
+            <div role="alert" className="bg-rose-950/30 border border-rose-900/40 text-rose-300 p-3 rounded-xl text-xs">{authError}</div>
+          )}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex items-start gap-3 flex-1 min-w-0">
+              <Shield className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-slate-100">เลือกเวลาได้เลย ไม่ต้องเข้าสู่ระบบก่อน</p>
+                <p className="text-xs text-slate-400 mt-0.5">เข้าสู่ระบบตอนกดจอง · สมาชิกได้ราคาส่วนลดและสะสมแต้ม</p>
+              </div>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button type="button" id="btn-open-login" onClick={() => openAuth('login')}
+                className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold min-h-[40px] px-4 rounded-lg transition">
+                เข้าสู่ระบบ
+              </button>
+              <button type="button" id="btn-open-register" onClick={() => openAuth('register')}
+                className="flex-1 sm:flex-none bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold min-h-[40px] px-4 rounded-lg border border-slate-700 transition">
+                สมัครสมาชิก
+              </button>
+            </div>
+          </div>
         </div>
       ) : (
-        /* Anonymous Authed Screen */
+        /* Guest: the sign-in / sign-up form */
         <div className="p-5 md:p-6">
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-3 mb-4">
-            <Shield className="h-5 w-5 text-emerald-500 shrink-0" />
-            <div>
-              <h3 className="text-xs font-black text-slate-100 uppercase tracking-widest leading-none">ก๊วนผู้เล่น & ส่วนลดอัตโนมัติ (Customer Account Center)</h3>
-              <p className="text-xs text-slate-400 mt-1 leading-normal">
-                ตามหลักมาตรฐานความมั่นคงใหม่ ลูกค้าสยามสปอร์ตคอมเพล็กซ์จะต้องล็อคอินเข้าสู่ระบบก่อน เพื่อระบุสิทธิ์ส่วนลดที่ติดกับบัญชีจริงของคุณ!
-              </p>
+          <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3 mb-4">
+            <div className="flex items-start gap-2">
+              <Shield className="h-5 w-5 text-emerald-500 shrink-0" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-100">เข้าสู่ระบบ / สมัครสมาชิก</h3>
+                <p id="auth-pending-note" className="text-xs text-slate-400 mt-1 leading-normal">
+                  {pendingCheckout && selectedSlots.length > 0
+                    ? `เข้าสู่ระบบหรือสมัครสมาชิกเพื่อจอง ${selectedSlots.length} ชม. ที่เลือกไว้ — เวลาที่เลือกยังอยู่ เข้าสู่ระบบแล้วจะไปขั้นตรวจสอบการจองทันที`
+                    : 'สมาชิกได้ราคาส่วนลดและสะสมแต้มจากทุกการจอง'}
+                </p>
+              </div>
             </div>
+            <button type="button" id="btn-close-auth" aria-label="ปิด" onClick={() => { setAuthOpen(false); setPendingCheckout(false); setAuthError(null); setForgotResult(null); }}
+              className="shrink-0 text-slate-400 hover:text-white text-xs font-bold min-h-[40px] px-2">
+              ✕ ปิด
+            </button>
           </div>
 
           {/* Tabs Switcher */}

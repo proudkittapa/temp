@@ -21,6 +21,7 @@ export function useBookingFlow(deps: CustomerPanelCore & ReturnType<typeof useSl
     memberName,
     onAddAuditLog,
     onRefreshAll,
+    openAuth,
     selectedDate,
     selectedSlots,
     selectedType,
@@ -31,6 +32,7 @@ export function useBookingFlow(deps: CustomerPanelCore & ReturnType<typeof useSl
     setCurrentPayment,
     setLineMessages,
     setNowTick,
+    setPendingCheckout,
     setQrCodePayload,
     setSelectedSlots
   } = deps;
@@ -53,12 +55,15 @@ export function useBookingFlow(deps: CustomerPanelCore & ReturnType<typeof useSl
 
   // Phase 1 Core Booking Submission
   const handleProceedToCheckout = () => {
-    if (!loggedInUser) {
-      notify('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน เพื่อทำรายการจองและแสตมป์ยอดส่วนลดประจำตัวผู้เล่นค่ะ 🌟');
-      return;
-    }
     if (selectedSlots.length === 0) {
       notify('กรุณาเลือกสนาม และช่วงเวลาต้องการจองอย่างน้อย 1 ชั่วโมง!');
+      return;
+    }
+    // A guest signs in (or signs up) here; the picked hours stay, and the
+    // booking carries on once signed in (useCustomerPanel).
+    if (!loggedInUser) {
+      setPendingCheckout(true);
+      openAuth('login');
       return;
     }
     // Taken meanwhile? Checks the whole court group (a half court blocks

@@ -7,6 +7,7 @@ import { StorageService, normalizePhone, getTodayDateStr, formatDate, expireUnpa
 import { useLiveLoad, useLiveTick } from '../../useLiveTick';
 import * as api from '../../api';
 import { notify } from '../Dialog';
+import { takeCustomerAuthRequest, onCustomerAuthRequest } from '../../authRequest';
 import { useAccountActions } from './accountActions';
 import { useSlotPicker } from './slotPicker';
 import { useBookingFlow } from './bookingFlow';
@@ -68,6 +69,27 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
   const [authPhone, setAuthPhone] = useState<string>('');
   const [forgotResult, setForgotResult] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  // The sign-in form is folded away until asked for; the account details
+  // (signed in) likewise, so the booking steps are near the top.
+  const [authOpen, setAuthOpen] = useState<boolean>(false);
+  const [accountOpen, setAccountOpen] = useState<boolean>(false);
+  // A guest pressed "จองต่อ": once signed in, the booking carries on with
+  // the hours they picked.
+  const [pendingCheckout, setPendingCheckout] = useState<boolean>(false);
+  const openAuth = (tab: 'login' | 'register' = 'login') => {
+    setAuthTab(tab);
+    setAuthError(null);
+    setForgotResult(null);
+    setAuthOpen(true);
+    requestAnimationFrame(() => {
+      document.getElementById('customer-auth-console')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      (document.getElementById(tab === 'register' ? 'auth-name' : 'auth-identity') as HTMLInputElement | null)?.focus({ preventScroll: true });
+    });
+  };
+  useEffect(() => {
+    if (takeCustomerAuthRequest()) openAuth('login');
+    return onCustomerAuthRequest(() => { if (takeCustomerAuthRequest()) openAuth('login'); });
+  }, []);
 
   // UI state
   const [activeStep, setActiveStep] = useState<number>(1); // 1: Select Slot, 2: Info & Checkout, 3: QR Payment & Upload Slip
@@ -362,6 +384,13 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
     setForgotResult,
     authError,
     setAuthError,
+    authOpen,
+    setAuthOpen,
+    accountOpen,
+    setAccountOpen,
+    pendingCheckout,
+    setPendingCheckout,
+    openAuth,
     activeStep,
     setActiveStep,
     liveTick,
@@ -410,6 +439,17 @@ export function useCustomerPanel(props: CustomerPanelProps) {
   const slotPicker = useSlotPicker(core);
   const bookingFlow = useBookingFlow({ ...core, ...slotPicker });
   const rewardActions = useRewardActions(core);
+  // Signed in: the form folds away, and a booking a guest started goes on
+  // to the check step.
+  const { loggedInUser, pendingCheckout, setPendingCheckout, setAuthOpen } = core;
+  useEffect(() => {
+    if (!loggedInUser) return;
+    setAuthOpen(false);
+    if (pendingCheckout) {
+      setPendingCheckout(false);
+      bookingFlow.handleProceedToCheckout();
+    }
+  }, [loggedInUser?.id, pendingCheckout]);
   return { ...core, ...account, ...slotPicker, ...bookingFlow, ...rewardActions };
 }
 

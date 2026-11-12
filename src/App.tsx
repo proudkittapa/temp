@@ -9,6 +9,7 @@ import { DialogHost } from './components/Dialog';
 import BusyOverlay from './components/BusyOverlay';
 import { Shield, Sparkles, User, Users, Briefcase, Clock } from 'lucide-react';
 import * as api from './api';
+import { requestCustomerAuth } from './authRequest';
 import { canUseCounter, canUseSettings } from './permissions';
 import { User as SessionUser } from './types';
 
@@ -45,6 +46,9 @@ export default function App() {
   useEffect(() => {
     if (api.USE_BACKEND) setSessionUser(api.getSession()?.user ?? null);
   }, [refreshTrigger]);
+  // A sign-in or sign-out on the counter or settings screen (they sign in on
+  // their own): the nav bar follows at once, not after a reload.
+  useEffect(() => api.onSessionChanged(user => setSessionUser(user)), []);
 
   // The screen's code is fetched first, so it shows at once (screens.ts).
   const openScreen = (role: UserRole) => {
@@ -209,7 +213,8 @@ export default function App() {
                   <button type="button" onClick={handleSignOut} className="text-slate-500 hover:text-slate-800 underline">ออกจากระบบ</button>
                 </>
               ) : (
-                <span>ยังไม่ได้เข้าสู่ระบบ</span>
+                <button type="button" id="nav-sign-in" onClick={() => { openScreen(UserRole.CUSTOMER); requestCustomerAuth(); }}
+                  className="text-emerald-700 hover:text-emerald-900 underline">เข้าสู่ระบบ</button>
               )}
             </span>
           </div>

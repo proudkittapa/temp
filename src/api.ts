@@ -62,15 +62,31 @@ export function getSession(_kind?: SessionKind): StoredSession | null {
 }
 
 function saveSession(_kind: SessionKind, session: StoredSession | null) {
+  const before = getSession();
   // A retry key belongs to the user who started the action: forget them
   // when someone else signs in or out (not on a refresh of the same login).
-  if (getSession()?.user?.id !== session?.user?.id) pendingWrites.clear();
+  if (before?.user?.id !== session?.user?.id) pendingWrites.clear();
   try {
     if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     else localStorage.removeItem(SESSION_KEY);
   } catch (e) {
     console.error(e);
   }
+  // Tell this tab (the nav bar) when the account or what it may do changed;
+  // a refreshMe that changes nothing stays quiet.
+  if (JSON.stringify(before?.user ?? null) !== JSON.stringify(session?.user ?? null) || before?.token !== session?.token) {
+    sessionListeners.forEach(l => l(session?.user ?? null));
+  }
+}
+
+// Calls back in this tab whenever the signed-in account changes: a sign-in
+// or sign-out on any screen (the counter and settings screens sign in on
+// their own), or a role/name change picked up by refreshMe. Other tabs: see
+// onSessionChangedElsewhere.
+const sessionListeners = new Set<(user: User | null) => void>();
+export function onSessionChanged(cb: (user: User | null) => void): () => void {
+  sessionListeners.add(cb);
+  return () => { sessionListeners.delete(cb); };
 }
 
 // Trusted-device keys (golang-backend trusted_devices.go): the server gives

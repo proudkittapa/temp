@@ -58,14 +58,8 @@ export function useSlotPicker(deps: CustomerPanelCore) {
   };
 
   const handleToggleSlotInGrid = (courtId: string, startTime: string) => {
-    if (!loggedInUser) {
-      notify('🔒 ขออภัยค่ะ! กรุณาลงชื่อเข้าใช้ระบบ (Login) หรือสมัครสมาชิกใหม่ด้านบนก่อน จึงจะสามารถเลือกสนามและช่วงเวลาสำหรับจองเล่นกีฬาได้ค่ะ 🌟');
-      const consoleElem = document.getElementById('customer-auth-console');
-      if (consoleElem) {
-        consoleElem.scrollIntoView({ behavior: 'smooth' });
-      }
-      return;
-    }
+    // Guests pick hours too; signing in is asked for at "จองต่อ"
+    // (handleProceedToCheckout), and the picks are kept through it.
     const existsIdx = selectedSlots.findIndex(s => s.courtId === courtId && s.startTime === startTime);
     if (existsIdx > -1) {
       setSelectedSlots(selectedSlots.filter((_, i) => i !== existsIdx));
@@ -97,7 +91,7 @@ export function useSlotPicker(deps: CustomerPanelCore) {
       // Check peak constraint for half-court resources (FR-1.2)
       const targetCourt = courts.find(c => c.id === courtId);
       if (targetCourt?.offPeakOnly && !isHourOffPeak(targetCourt.type, selectedDate, parseInt(startTime.split(':')[0], 10))) {
-        notify('⚠️ ขออภัยค่ะ สนามครึ่งสนาม (B / C) เปิดให้บริการจองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
+        notify('⚠️ ขออภัยค่ะ สนามนี้เปิดให้จองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
         return;
       }
 
