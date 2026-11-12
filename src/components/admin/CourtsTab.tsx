@@ -52,7 +52,7 @@ export default function CourtsTab() {
   return (
     <div className="space-y-6 animate-fade-in text-xs">
       <div>
-        <h3 className="text-base font-bold text-slate-900">ระบบบริหารสนามกีฬาและตั้งเกณฑ์วันปิดบริการพิเศษ (Complex Facility & Holiday Manager)</h3>
+        <h3 className="text-base font-bold text-slate-900">ระบบบริหารสนามกีฬาและตั้งเกณฑ์วันปิดบริการพิเศษ</h3>
         <p className="text-xs text-slate-500">คุณสามารถควบคุมสนามแต่ละเลข เพิ่มสนามกีฬาเมื่อขยายธุรกิจ หรือบล็อกระงับวันหยุดพิเศษไม่ให้ลูกค้าจอง</p>
       </div>
 
@@ -187,7 +187,7 @@ export default function CourtsTab() {
               {!newDayOffIsFullDay && (
                 <div className="grid grid-cols-2 gap-2 bg-rose-100/30 p-2 rounded-lg border border-rose-200/50">
                   <div>
-                    <label className="block text-slate-700 font-bold mb-1 text-[10px]">ตั้งแต่ (Start):</label>
+                    <label className="block text-slate-700 font-bold mb-1 text-[10px]">ตั้งแต่:</label>
                     <select
                       value={startHour}
                       onChange={(e) => setNewDayOffStartHour(Number(e.target.value))}
@@ -199,7 +199,7 @@ export default function CourtsTab() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-slate-700 font-bold mb-1 text-[10px]">ถึงเวลา (End):</label>
+                    <label className="block text-slate-700 font-bold mb-1 text-[10px]">ถึงเวลา:</label>
                     <select
                       value={endHour}
                       onChange={(e) => setNewDayOffEndHour(Number(e.target.value))}

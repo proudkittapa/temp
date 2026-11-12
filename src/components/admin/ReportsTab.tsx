@@ -13,7 +13,7 @@ export default function ReportsTab() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-base font-bold text-slate-900">สรุปพิมพ์ดาวน์โหลดรายงานรายได้ (Exporter Console)</h3>
+        <h3 className="text-base font-bold text-slate-900">สรุปพิมพ์ดาวน์โหลดรายงานรายได้</h3>
         <p className="text-xs text-slate-500">ข้อมูลจะรี่เรียงออกมาจัดรูปตามมติบัญชี สำหรับยื่นปิดงบดุลประจำปีกับสำนักบัญชีสัญญารุ่นไทย</p>
       </div>
 
@@ -28,18 +28,18 @@ export default function ReportsTab() {
               onChange={(e) => setReportsMonth(e.target.value)}
               className="w-full bg-white border border-slate-200 rounded p-2 text-xs"
             >
-              <option value="01">มกราคม (Jan)</option>
-              <option value="02">กุมภาพันธ์ (Feb)</option>
-              <option value="03">มีนาคม (Mar)</option>
-              <option value="04">เมษายน (Apr)</option>
-              <option value="05">พฤษภาคม (May)</option>
-              <option value="06">มิถุนายน (Jun)</option>
-              <option value="07">กรกฎาคม (Jul)</option>
-              <option value="08">สิงหาคม (Aug)</option>
-              <option value="09">กันยายน (Sep)</option>
-              <option value="10">ตุลาคม (Oct)</option>
-              <option value="11">พฤศจิกายน (Nov)</option>
-              <option value="12">ธันวาคม (Dec)</option>
+              <option value="01">มกราคม</option>
+              <option value="02">กุมภาพันธ์</option>
+              <option value="03">มีนาคม</option>
+              <option value="04">เมษายน</option>
+              <option value="05">พฤษภาคม</option>
+              <option value="06">มิถุนายน</option>
+              <option value="07">กรกฎาคม</option>
+              <option value="08">สิงหาคม</option>
+              <option value="09">กันยายน</option>
+              <option value="10">ตุลาคม</option>
+              <option value="11">พฤศจิกายน</option>
+              <option value="12">ธันวาคม</option>
             </select>
           </div>
 

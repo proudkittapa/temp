@@ -84,7 +84,7 @@ export function useWalkinActions(deps: StaffPOSCore & ReturnType<typeof useShift
     // Half courts and other off-peak-only courts sell off-peak hours only
     // (the server refuses the rest).
     if (slotCourt?.offPeakOnly && calculatePrice(slotCourt.type, walkinDate, walkinSlot, MemberType.NORMAL, slotCourt).priceType !== PriceType.OFFPEAK) {
-      notify('สนามนี้เปิดให้จองเฉพาะช่วง Off-Peak กรุณาเลือกเวลาอื่น');
+      notify('สนามนี้เปิดให้จองเฉพาะช่วงนอกพีค กรุณาเลือกเวลาอื่น');
       return;
     }
 
@@ -112,7 +112,7 @@ export function useWalkinActions(deps: StaffPOSCore & ReturnType<typeof useShift
         return;
       }
       if (slotCourt && !isHourOffPeak(slotCourt.type, walkinDate, hourNum)) {
-        notify('คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วง Off-Peak เท่านั้น กรุณาเลือกเวลา Off-Peak');
+        notify('คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วงนอกพีคเท่านั้น กรุณาเลือกเวลานอกพีค');
         return;
       }
     }

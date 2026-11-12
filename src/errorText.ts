@@ -70,7 +70,7 @@ const RULES: Rule[] = [
   [/slot already booked/i, 'ช่วงเวลานี้เพิ่งถูกจองไป กรุณาเลือกเวลาอื่น'],
   [/has already started - book it at the counter/i, 'ช่วงเวลานี้เริ่มไปแล้ว จองออนไลน์ไม่ได้ (ติดต่อเคาน์เตอร์ได้)'],
   [/has already passed|is over\)/i, 'ช่วงเวลานี้ผ่านไปแล้ว'],
-  [/can only be booked during off-peak hours/i, 'สนามนี้จองได้เฉพาะช่วง Off-Peak'],
+  [/can only be booked during off-peak hours/i, 'สนามนี้จองได้เฉพาะช่วงนอกพีค'],
   [/outside opening hours|no price set for that hour/i, 'ช่วงเวลานี้อยู่นอกเวลาเปิดให้บริการ'],
   [/online bookings open (\d+) days ahead/i, m => `จองออนไลน์ล่วงหน้าได้ไม่เกิน ${m[1]} วัน`],
   [/at most (\d+) slots per booking/i, m => `จองได้สูงสุด ${m[1]} ชั่วโมงต่อครั้ง`],
@@ -170,7 +170,7 @@ const RULES: Rule[] = [
   [/voucher can't be used for a free hour: (\S+) is (REDEEMED|EXPIRED|CANCELLED|ACTIVE)$/i, m => `คูปอง ${m[1]} ใช้ไม่ได้ (${m[2]})`],
   [/voucher, not a free court hour|voucher can't be used for a free hour/i, 'คูปองนี้ไม่ใช่ชั่วโมงฟรี'],
   [/a free-hour voucher covers exactly one hour/i, 'คูปองชั่วโมงฟรีใช้ได้ครั้งละ 1 ชั่วโมง'],
-  [/free-hour voucher is for off-peak hours only/i, 'คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วง Off-Peak'],
+  [/free-hour voucher is for off-peak hours only/i, 'คูปองชั่วโมงฟรีใช้ได้เฉพาะช่วงนอกพีค'],
   [/voucher (\S+) is (\w+)/i, m => `คูปอง ${m[1]} ใช้ไม่ได้ (${m[2]})`],
 
   // Roles
@@ -195,7 +195,7 @@ const RULES: Rule[] = [
   [/unknown court[ _]type/i, 'ประเภทสนามไม่ถูกต้อง กรุณารีเฟรชหน้าแล้วลองใหม่'],
   [/unknown member_type/i, 'ระดับสมาชิกไม่ถูกต้อง กรุณารีเฟรชหน้าแล้วลองใหม่'],
   [/day_type must be WEEKDAY or WEEKEND/i, 'กรุณาเลือกวันธรรมดา หรือ วันหยุด'],
-  [/price_type must be PEAK, OFFPEAK or NORMAL/i, 'กรุณาเลือกประเภทราคา (Peak, Off-Peak หรือ ปกติ)'],
+  [/price_type must be PEAK, OFFPEAK or NORMAL/i, 'กรุณาเลือกประเภทราคา (พีค, นอกพีค หรือ ปกติ)'],
   [/no_show_resale_percent must be between 1 and 100/i, 'ราคาขายต่อชั่วโมงที่ลูกค้าไม่มาต้องอยู่ระหว่าง 1 - 100%'],
   [/no_show_grace_minutes must be between 0 and 120/i, 'เวลารอก่อนบันทึก "ไม่มา" ต้องอยู่ระหว่าง 0 - 120 นาที'],
   [/^send half_court_rate_percent/i, 'ไม่มีค่าที่จะบันทึก กรุณาแก้ค่าแล้วลองใหม่'],

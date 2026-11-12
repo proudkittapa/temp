@@ -18,6 +18,44 @@ Entry format:
 
 ---
 
+## 2026-11-12 — Wording clean-up (walkthrough items 8 and 11, owner-approved)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner (approved the 39-item proposal; header name "Sriracha Sporthubs", keep "พีค", keep "ค่ะ" but cut emojis)
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - Name: header, footer, page title and the LINE welcome text say
+    "Sriracha Sporthubs" (`src/brand.ts`). The footer shows the shop
+    address/phone from Settings when set; "เชื่อมต่อเซิร์ฟเวอร์" removed. The
+    payee name on the payment page is still the Settings business name.
+  - Peak / Off-Peak -> พีค / นอกพีค everywhere users see them (frontend and
+    the Go seed's price labels and free-hour reward name for new databases).
+  - Customer screens: booking step, legend, tips, payment page (typos
+    fixed), "การจองของฉัน" and its statuses, sign-in/sign-up tabs, buttons
+    and fields, account details, rewards; forgot-password (API mode) is now
+    just "contact the counter"; no popup after sign-up (the booking goes on);
+    demo reward names without English.
+  - Counter: tab names (จองหน้าเคาน์เตอร์ / ตรวจสลิป / ขายสินค้า / เช่าอุปกรณ์ /
+    รับของรางวัล / กะและเงินสด), headings, "เวริฟายเดลิเวอร์รี" removed, role shown in
+    Thai, court type code removed from the court list.
+  - Settings: tab names, dashboard cards ("ดอกเบี้ย" in the history filter was
+    wrong), users and member-discount pages, header.
+  - English in brackets removed from all screens (script, reviewed list),
+    except receipt labels (TAX ID, No., Date ...), shoe sizes (EU, M/F) and
+    stored values ("ลูกค้าทั่วไป (Walk-in)" on orders).
+  - Built-in admin role renamed "ผู้ดูแลระบบ" (`model.AdminRoleName`); a
+    database still holding the old default "ผู้บริหาร (Admin)" is renamed on
+    startup (`RoleService.SeedBuiltins`), an admin-chosen name is kept.
+- **Verified:** tsc clean, vitest 71/71, Go build/vet/gofmt and `go test
+  ./...` with the local Postgres all pass. Local server restarted on an
+  existing database: roles table shows ADMIN = ผู้ดูแลระบบ. Production build
+  in a browser (scratchpad `ux11.mjs`, `ux9.mjs`): title, header, footer,
+  forgot-password text, counter tabs and role, settings header and tabs as
+  above, the guest -> sign-up -> booking flow still works; no page errors.
+- **Not done / follow-ups:** the simulated LINE message texts still use
+  several emojis (left for the LINE plan). Staff layout (9, 10) and
+  time-first search (3) still open. An existing database keeps its old
+  price-rule labels ("... Peak") until edited in Settings.
+
 ## 2026-11-12 — Customer flow fixes from the UX walkthrough (items 1, 2, 4, 5, 6, 7)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner ("sure" to fixing the nav bug and the customer flow)

@@ -1,5 +1,5 @@
 import { CourtType } from '../../types';
-import { formatBaht, lastBookableDate, getTodayDateStr, maxHoursPerBooking } from '../../mockData';
+import { formatBaht, lastBookableDate, getTodayDateStr, maxHoursPerBooking, formatDate } from '../../mockData';
 import { Calendar, Sparkles } from 'lucide-react';
 import { useCustomerPanelContext, COURT_TYPE_LABEL } from './useCustomerPanel';
 
@@ -34,9 +34,9 @@ export default function PickSlotsStep() {
         <div>
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-amber-500" />
-            จองสนามกีฬา & วันเวลาที่ท่านต้องการ
+            เลือกสนามและเวลา
           </h2>
-          <p className="text-xs text-slate-500">ค่าบริการจะแตกต่างกันไปตามประเภทกีฬาและช่วงเวลา Peak/Off-Peak</p>
+          <p className="text-xs text-slate-500">ราคาขึ้นกับประเภทสนามและช่วงเวลา</p>
         </div>
 
         {/* Court Types Switcher Tabs */}
@@ -64,7 +64,7 @@ export default function PickSlotsStep() {
         <div className="max-w-md">
           <label className="block text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
             <Calendar className="h-4 w-4 text-emerald-600" />
-            ระบุวันที่ต้องการเล่น (กรุณาเลือกเพื่อดึงข้อมูลรอบว่าง):
+            วันที่เล่น
           </label>
           <input
             id="input-booking-date"
@@ -111,11 +111,11 @@ export default function PickSlotsStep() {
             </div>
 
             <div className={`${viewMode === 'grid' ? 'flex' : 'hidden'} flex-wrap items-center gap-2 text-xs font-sans`}>
-              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-500 rounded" /> 🔴 จองแล้ว / เต็ม</span>
-              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-200 rounded" /> ⚠️ ปิดสนาม</span>
-              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-amber-100 rounded" /> 🟡 ว่าง (Peak)</span>
-              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-slate-100 rounded" /> 🟢 ว่าง (Off-Peak / ราคาปกติ)</span>
-              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-emerald-600 rounded" /> ⭐ เลือกแล้ว</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-500 rounded" /> จองแล้ว</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-rose-200 rounded" /> ปิดสนาม</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-amber-100 rounded" /> ว่าง · ราคาช่วงพีค</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-slate-100 rounded" /> ว่าง · ราคาปกติ</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 bg-emerald-600 rounded" /> เลือกแล้ว</span>
             </div>
           </div>
 
@@ -145,7 +145,7 @@ export default function PickSlotsStep() {
               <table className="w-full text-left border-collapse min-w-[1100px]">
                 <thead>
                   <tr className="bg-slate-100 text-xs uppercase font-black text-slate-500 border-b border-slate-200">
-                    <th className="p-3 bg-slate-100 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-36">สนาม (Court Name)</th>
+                    <th className="p-3 bg-slate-100 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-36">สนาม</th>
                     {getAvailableSlots().map((slot) => (
                       <th key={slot.start} className="p-2 text-center text-xs min-w-[75px] border-l border-slate-200">
                         {slot.start} น.
@@ -161,7 +161,7 @@ export default function PickSlotsStep() {
                         <div className="flex flex-col">
                           <span className="text-[11px] font-black">{court.name}</span>
                           {court.offPeakOnly && (
-                            <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-1 py-0.2 rounded w-max mt-0.5">Off-Peak เท่านั้น</span>
+                            <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-1 py-0.2 rounded w-max mt-0.5">เฉพาะนอกพีค</span>
                           )}
                         </div>
                       </td>
@@ -191,7 +191,7 @@ export default function PickSlotsStep() {
                           case 'notOpen':
                             return (
                               <td key={time} className={`${blocked} bg-slate-100 text-slate-500`}
-                                title={st.kind === 'started' ? 'เลยเวลาจองออนไลน์แล้ว ติดต่อเคาน์เตอร์ได้' : st.kind === 'peakBlocked' ? 'ครึ่งสนามเปิดเฉพาะเวลา Off-Peak' : 'นอกเวลาเปิดให้บริการ'}>
+                                title={st.kind === 'started' ? 'เลยเวลาจองออนไลน์แล้ว ติดต่อเคาน์เตอร์ได้' : st.kind === 'peakBlocked' ? 'ครึ่งสนามเปิดเฉพาะเวลานอกพีค' : 'นอกเวลาเปิดให้บริการ'}>
                                 <span className="block text-[11px] font-bold">{st.kind === 'started' ? '⌛' : '🚫'} {SLOT_LABEL[st.kind]}</span>
                               </td>
                             );
@@ -211,7 +211,7 @@ export default function PickSlotsStep() {
                                 }`}>
                                 <span className="block text-[11px] font-semibold text-slate-500 leading-none">🟢 ว่าง</span>
                                 <span className="text-xs font-black block mt-0.5 text-slate-800">{formatBaht(st.price)}฿</span>
-                                <span className="text-[11px] text-slate-500">{st.isPeak ? '⚡ Peak' : st.isOffPeak ? 'Off-Peak' : 'ราคาปกติ'}</span>
+                                <span className="text-[11px] text-slate-500">{st.isPeak ? '⚡ พีค' : st.isOffPeak ? 'นอกพีค' : 'ราคาปกติ'}</span>
                               </td>
                             );
                         }
@@ -234,7 +234,7 @@ export default function PickSlotsStep() {
 
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200 gap-2">
             <span className="font-semibold text-emerald-800 flex items-center gap-1">
-              💡 คำแนะนำผู้เล่น: เลือกสล็อตที่กล่องสีเขียว/เหลืองเพื่อจอง และสนามครึ่งสนามเลือกได้เฉพาะช่วง Off-Peak (เวลานอกช่วงเร่งด่วน) เท่านั้น
+              แตะช่องที่ว่างเพื่อเลือก (เลือกได้หลายชั่วโมง) · ครึ่งสนามจองได้เฉพาะช่วงนอกพีค
             </span>
           </div>
         </div>
@@ -246,7 +246,7 @@ export default function PickSlotsStep() {
           <div className="space-y-2">
             <p className="text-xs font-bold text-slate-700 flex items-center gap-1">
               <Calendar className="h-4 w-4 text-emerald-700" />
-              รายการสนามและเวลาที่คุณเลือกเล่น (วันที่ {selectedDate}):
+              ที่เลือกไว้ (วันที่ {formatDate(selectedDate)}):
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -274,7 +274,7 @@ export default function PickSlotsStep() {
 
           <div className="flex justify-between items-center border-t border-emerald-100 pt-3">
             <div>
-              <span className="text-xs text-slate-400 block font-medium">คำนวณราคาเฉลี่ยสมาชิกรวม:</span>
+              <span className="text-xs text-slate-400 block font-medium">รวม</span>
               <span className="text-sm font-extrabold text-emerald-800 font-mono">{formatBaht(currentPriceDetails().total)} บาท</span>
             </div>
             <button
@@ -282,7 +282,7 @@ export default function PickSlotsStep() {
               onClick={handleProceedToCheckout}
               className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold py-2 px-4 rounded-lg shadow-sm transition"
             >
-              ระบุข้อมูลผู้ติดต่อ & ถัดไป &rarr;
+              จองต่อ &rarr;
             </button>
           </div>
         </div>

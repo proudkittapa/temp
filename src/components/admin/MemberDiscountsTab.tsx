@@ -26,10 +26,10 @@ export default function MemberDiscountsTab() {
       <div>
         <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
           <Settings className="h-5 w-5 text-emerald-600 animate-pulse" />
-          ระบบจัดการระดับสิทธิ์สมาชิกอัจฉริยะ (Membership & Privilege Engine)
+          ส่วนลดสมาชิก
         </h3>
         <p className="text-xs text-slate-500 mt-1">
-          กำหนดระดับสิทธิ์สมาชิก (Membership Tiers) และสัดส่วนค่าเปอร์เซ็นต์ส่วนลดในการใช้บริการสนามและห้องประชุม 
+          กำหนดระดับสิทธิ์สมาชิก และสัดส่วนค่าเปอร์เซ็นต์ส่วนลดในการใช้บริการสนามและห้องประชุม 
           เมื่อมีลูกค้าที่ครอบครองสิทธิ์ประเภทนั้นทำการจอง ระบบคำนวณราคา Price Engine จะใช้อัตรานี้โดยอัตโนมัติ
         </p>
       </div>
@@ -40,7 +40,7 @@ export default function MemberDiscountsTab() {
         </h4>
         <ul className="list-disc list-inside text-[11px] text-slate-600 space-y-1.5 pl-1 leading-relaxed">
           <li>
-            <span className="font-bold text-slate-800">ลูกค้าทั่วไป (NORMAL):</span> โดยปกติจะตั้งเป็น 0% เพื่อเป็นจุดตั้งต้นในการคิดราคามาตรฐาน (เปลี่ยนชื่อตามต้องการได้)
+            <span className="font-bold text-slate-800">ลูกค้าทั่วไป:</span> โดยปกติจะตั้งเป็น 0% เพื่อเป็นจุดตั้งต้นในการคิดราคามาตรฐาน (เปลี่ยนชื่อตามต้องการได้)
           </li>
           <li>
             <span className="font-bold text-slate-800">การยกเลิกสิทธิ์ชั่วคราว:</span> หากท่านสลับสถานะเป็น <b>"ระงับใช้งานสิทธิ์"</b> ลูกค้าที่มีเกณฑ์สิทธิ์ดังกล่าวจะไม่ได้รับส่วนลดใดๆ (คิดอ้างอิงเป็นราคาลูกค้าระดับทั่วไปแทน)
@@ -53,7 +53,7 @@ export default function MemberDiscountsTab() {
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
         <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
-          <span className="text-xs font-bold font-mono">🌟 บูธปรับแต่งระดับสิทธิ์ (Privilege Tier Configuration)</span>
+          <span className="text-xs font-bold font-mono">ส่วนลดตามระดับสมาชิก</span>
           <span className="text-[10px] bg-emerald-600 text-white font-extrabold px-2 py-0.5 rounded uppercase font-sans">
             Engine: Active
           </span>
@@ -64,8 +64,8 @@ export default function MemberDiscountsTab() {
             <thead>
               <tr className="bg-slate-100 border-b border-slate-200 text-slate-600 font-extrabold text-[10.5px]">
                 <th className="p-3.5">🔑 ID รหัสระบบ</th>
-                <th className="p-3.5">🏷️ ชื่อเรียกสิทธิ์ระดับสมาชิก (Display Title)</th>
-                <th className="p-3.5 w-1/5">💰 ส่วนลดเป็นเปอร์เซ็นต์ (%)</th>
+                <th className="p-3.5">ชื่อระดับสมาชิก</th>
+                <th className="p-3.5 w-1/5">ส่วนลด (%)</th>
                 <th className="p-3.5 text-center">🎯 สถานะเปิดใช้</th>
                 <th className="p-3.5 text-center">👥 จำนวนบัญชีที่ครองสิทธิ์</th>
                 <th className="p-3.5 text-center w-[150px]">⚙️ เซฟบันทึก</th>

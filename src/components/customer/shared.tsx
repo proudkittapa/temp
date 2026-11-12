@@ -55,10 +55,10 @@ export function lineMessageTime(ts: string): string {
 }
 
 export const LOYALTY_REWARDS: Reward[] = [
-  { id: 'water', name: "น้ำแร่ภูเขาแช่เย็น (Free Mineral Water)", cost: 5, description: "น้ำดื่มสุขภาพเย็นฉ่ำขวดใหญ่ ดับกระหายลุยศึกซูเปอร์แมตช์", emoji: "🥤" },
-  { id: 'sponsor', name: "เกลือแร่สปอนเซอร์ (Free Energy Drink)", cost: 8, description: "เพิ่มประจุพลังงานฟิตเต็มร้อยพร้อมเสิร์ฟตบคีย์สปีดสปอร์ต", emoji: "⚡" },
-  { id: 'towel', name: "ผ้าขนหนูเช่าซักสะอาดยกชุด (Free Towel Rental)", cost: 10, description: "สิทธิ์ผ้าเช็ดตัวไมโครไฟเบอร์ นิ่มเนียน สะอาดแห้งอบโอโซน", emoji: "🧼" },
-  { id: 'court', name: "เช่าสนามฟรี 1 สล็อต Off-Peak (Free 1-Hr Court)", cost: 25, description: "ยกเว้นค่าธรรมเนียมสนามในช่วงเวลา Off-Peak 1 ชั่วโมงเต็ม", emoji: "🏸" }
+  { id: 'water', name: "น้ำดื่มเย็น 1 ขวด", cost: 5, description: "รับที่เคาน์เตอร์", emoji: "🥤" },
+  { id: 'sponsor', name: "เครื่องดื่มเกลือแร่ 1 ขวด", cost: 8, description: "รับที่เคาน์เตอร์", emoji: "⚡" },
+  { id: 'towel', name: "เช่าผ้าขนหนูฟรี 1 ผืน", cost: 10, description: "รับที่เคาน์เตอร์", emoji: "🧼" },
+  { id: 'court', name: "เล่นฟรี 1 ชั่วโมง (ช่วงนอกพีค)", cost: 25, description: "แจ้งรหัสที่เคาน์เตอร์เพื่อจอง", emoji: "🏸" }
 ];
 
 export type SlotState =

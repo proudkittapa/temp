@@ -92,7 +92,7 @@ export function useReportActions(deps: AdminPanelCore) {
           // dated when it was kept, so LineTotal adds up to the income.
           ...(o.depositKept && o.status !== OrderStatus.CANCELLED ? [[
             o.orderCode, o.depositSettledAt ? bangkokStamp(o.depositSettledAt) : bangkokStamp(o.createdAt), o.type, o.customerName, 'CASH', o.status,
-            `มัดจำที่ยึด (kept deposit)${o.depositNote ? `: ${o.depositNote}` : ''}`, '', 1, o.depositKept, o.depositKept, ''
+            `มัดจำที่ยึด${o.depositNote ? `: ${o.depositNote}` : ''}`, '', 1, o.depositKept, o.depositKept, ''
           ]] : [])
         ]));
     }

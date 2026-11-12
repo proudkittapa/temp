@@ -73,9 +73,8 @@ export default function AdminPanel(props: AdminPanelProps) {
         <div>
           <h2 className="text-sm font-bold flex items-center gap-1.5 text-emerald-400">
             <Settings className="h-5 w-5 animate-spin-slow text-emerald-400" />
-            บอร์ดบริหารคอมเพล็กซ์ระบบอัจฉริยะ (Manager & Administrator Console)
+            ตั้งค่าระบบ
           </h2>
-          <p className="text-[10px] text-slate-400 mt-1">ผู้เข้าใช้ระดับพรีเมียม: ยินดีต้อนรับกลับสิทธิ์บริหารระดับสูงสุดของคุณ</p>
           {/* API mode: who is signed in, and a way to switch accounts (e.g.
               from the manager to the admin account) - there was none. */}
           {api.USE_BACKEND && adminUser && (

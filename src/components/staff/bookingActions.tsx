@@ -37,7 +37,7 @@ export function useBookingActions(deps: StaffPOSCore & ReturnType<typeof useShif
       title: `ยกเลิกการจอง ${booking.bookingCode}`,
       // Allowed after the hour has started (owner 2026-10-23), with a
       // warning - the server records it in the audit log.
-      message: `${booking.date} ${booking.startTime}-${booking.endTime} · ${booking.userName}${group.some(b => slotTiming(b.date, b.startTime).started) ? '\n⚠️ มีชั่วโมงที่เริ่มเล่นไปแล้ว — การยกเลิกนี้จะถูกบันทึกในประวัติการตรวจสอบ (Audit Log)' : ''}`,
+      message: `${booking.date} ${booking.startTime}-${booking.endTime} · ${booking.userName}${group.some(b => slotTiming(b.date, b.startTime).started) ? '\n⚠️ มีชั่วโมงที่เริ่มเล่นไปแล้ว — การยกเลิกนี้จะถูกบันทึกในประวัติการตรวจสอบ' : ''}`,
       input: { label: 'เหตุผล (จำเป็น - บันทึกใน Audit Log)', required: true },
       choices: group.length > 1 ? [
         { value: 'all', label: `ยกเลิกทั้งหมด ${group.length} ชั่วโมง` },

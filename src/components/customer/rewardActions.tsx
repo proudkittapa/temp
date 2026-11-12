@@ -82,7 +82,7 @@ export function useRewardActions(deps: CustomerPanelCore) {
 
     // Send Line simulated notification
     const cleanPhone = normalizePhone(loggedInUser.phone || '');
-    const lpMsg = `🎁 แลกรับสิทธิ์ของรางวัลสำเร็จ!\n🏆 คุณได้ใช้แต้มสะสมจำนวน -${reward.cost} แต้ม เพื่อแลกรับรางวัล "${reward.emoji} ${reward.name}"\n🔑 รหัสเคลมของรางวัล (Claim Code): ${claimCode}\n\n*โปรดแสดงรหัสสิทธิ์นี้ให้สตาฟเห็นเพื่อรับของรางวัลทันทีที่เคาน์เตอร์ขอบสนามค่ะ! 🎉`;
+    const lpMsg = `🎁 แลกรับสิทธิ์ของรางวัลสำเร็จ!\n🏆 คุณได้ใช้แต้มสะสมจำนวน -${reward.cost} แต้ม เพื่อแลกรับรางวัล "${reward.emoji} ${reward.name}"\n🔑 รหัสเคลมของรางวัล: ${claimCode}\n\n*โปรดแสดงรหัสสิทธิ์นี้ให้สตาฟเห็นเพื่อรับของรางวัลทันทีที่เคาน์เตอร์ขอบสนามค่ะ! 🎉`;
     
     // Call the pushMessage simulator
     const currentLine = StorageService.get<LineMessage[]>('line_messages', []);

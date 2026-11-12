@@ -25,10 +25,10 @@ export default function PaymentStep() {
     <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm space-y-6">
       <div className="text-center space-y-2">
         <span className="inline-flex text-xs items-center gap-1 font-bold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
-          <AlertTriangle className="h-3 w-3" /> ชำระเงินล่วงหน้าเพื่อยืนยันสิทธิ์คอร์ท
+          <AlertTriangle className="h-3 w-3" /> ชำระเงินเพื่อยืนยันการจอง
         </span>
-        <h2 className="text-lg font-bold text-slate-900">ชำระเงินค่านัดผ่าน QR Thai PromptPay</h2>
-        <p className="text-xs text-slate-500">กรุณาสแกนรหัสคิวอาร์ และทำการโอนเงินยอดและแสกนด้วยแอพนาคารจากนั้นส่งหลักฐานสลิปด้านล่าง</p>
+        <h2 className="text-lg font-bold text-slate-900">ชำระเงินด้วยพร้อมเพย์</h2>
+        <p className="text-xs text-slate-500">สแกน QR ด้วยแอปธนาคาร โอนตามยอด แล้วส่งสลิปด้านล่าง</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
@@ -87,7 +87,7 @@ export default function PaymentStep() {
                       .catch(() => notify('บันทึกรูปไม่สำเร็จ กรุณาแคปหน้าจอแทน'));
                   }}
                   className="text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg px-3 min-h-[40px]">
-                  💾 บันทึกรูป QR (เปิดในแอปธนาคารได้)
+                  บันทึกรูป QR (เปิดในแอปธนาคารได้)
                 </button>
               </span>
             ) : (
@@ -113,7 +113,7 @@ export default function PaymentStep() {
               <p className="text-[11px] font-bold text-sky-700">📨 ส่งสลิปแล้ว รอพนักงานตรวจ — อัปโหลดใหม่ได้หากส่งผิดรูป (หน้านี้อัปเดตผลให้เอง)</p>
             )}
             {currentPayment?.status === PaymentStatus.VERIFIED && (
-              <p className="text-[11px] font-bold text-emerald-700">ดูการจองได้ที่ "รายการจองของฉัน" ด้านล่าง พบกันที่สนาม!</p>
+              <p className="text-[11px] font-bold text-emerald-700">ดูการจองได้ที่ "การจองของฉัน" ด้านล่าง พบกันที่สนามค่ะ</p>
             )}
             {currentPayment?.status === PaymentStatus.REJECTED && (() => {
               const reason = bookings.find(b => b.id === currentBooking.id)?.cancellationReason;
@@ -181,7 +181,7 @@ export default function PaymentStep() {
             <p className="font-bold">ขั้นตอนหลังจอง:</p>
             <p>1. ระบบกันสนามไว้ให้ {PAYMENT_HOLD_MINUTES} นาที — โอนและส่งสลิปภายในเวลานี้</p>
             <p>2. พนักงานตรวจสลิปแล้วยืนยันการจอง</p>
-            <p>3. ดูสถานะได้ที่ "ตรวจสอบสถานะการจอง" ด้านล่าง (ขึ้น "อนุมัติเรียบร้อย" เมื่อยืนยันแล้ว)</p>
+            <p>3. ดูสถานะได้ที่ "การจองของฉัน" ด้านล่าง (ขึ้น "ยืนยันแล้ว" เมื่อพนักงานตรวจแล้ว)</p>
           </div>
         </div>
       </div>

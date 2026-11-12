@@ -112,7 +112,6 @@ export function useAccountActions(deps: CustomerPanelCore) {
           setAuthName('');
           setAuthPhone('');
           onRefreshAll();
-          notify('🎉 สมัครสมาชิกและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" 🌟');
         })
         .catch(err => setAuthError(`❌ ${err.message}`));
       return;
@@ -158,7 +157,6 @@ export function useAccountActions(deps: CustomerPanelCore) {
     setAuthPhone('');
     
     onRefreshAll();
-    notify('🎉 สมัครสมาชิกก๊วนและเข้าสู่ระบบสำเร็จ! ระดับบัญชีของคุณเริ่มต้นที่ "ลูกค้าทั่วไป" (สามารถติดต่อเจ้าหน้าที่สตาฟ ณ ร้านเพื่อยืนยันหลักฐานรับสิทธิ์ส่วนลดพิเศษได้ภายหลังค่ะ) 🌟');
   };
 
   const handleForgotPassword = (e: React.FormEvent) => {

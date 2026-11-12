@@ -94,27 +94,27 @@ const OLD_BASKETBALL_NAMES: Record<string, string> = {
 
 const DEFAULT_PRICING_RULES: PricingRule[] = [
   // Badminton
-  { id: 'p-bad-wd-op', courtType: CourtType.BADMINTON, dayType: DayType.WEEKDAY, startHour: 7, endHour: 17, pricePerHour: 180, priceType: PriceType.OFFPEAK, label: 'แบดมินตัน วันธรรมดาช่วง Off-Peak', isActive: true },
-  { id: 'p-bad-wd-p', courtType: CourtType.BADMINTON, dayType: DayType.WEEKDAY, startHour: 17, endHour: 22, pricePerHour: 280, priceType: PriceType.PEAK, label: 'แบดมินตัน วันธรรมดาช่วง Peak', isActive: true },
+  { id: 'p-bad-wd-op', courtType: CourtType.BADMINTON, dayType: DayType.WEEKDAY, startHour: 7, endHour: 17, pricePerHour: 180, priceType: PriceType.OFFPEAK, label: 'แบดมินตัน วันธรรมดาช่วงนอกพีค', isActive: true },
+  { id: 'p-bad-wd-p', courtType: CourtType.BADMINTON, dayType: DayType.WEEKDAY, startHour: 17, endHour: 22, pricePerHour: 280, priceType: PriceType.PEAK, label: 'แบดมินตัน วันธรรมดาช่วงพีค', isActive: true },
   { id: 'p-bad-wd-op2', courtType: CourtType.BADMINTON, dayType: DayType.WEEKDAY, startHour: 22, endHour: 23, pricePerHour: 200, priceType: PriceType.OFFPEAK, label: 'แบดมินตัน วันธรรมดาช่วงดึก', isActive: true },
-  { id: 'p-bad-we-p', courtType: CourtType.BADMINTON, dayType: DayType.WEEKEND, startHour: 9, endHour: 22, pricePerHour: 300, priceType: PriceType.PEAK, label: 'แบดมินตัน วันหยุดช่วง Peak', isActive: true },
-  { id: 'p-bad-we-op', courtType: CourtType.BADMINTON, dayType: DayType.WEEKEND, startHour: 7, endHour: 9, pricePerHour: 220, priceType: PriceType.OFFPEAK, label: 'แบดมินตัน วันหยุดช่วงเช้า Off-Peak', isActive: true },
-  { id: 'p-bad-we-op2', courtType: CourtType.BADMINTON, dayType: DayType.WEEKEND, startHour: 22, endHour: 23, pricePerHour: 220, priceType: PriceType.OFFPEAK, label: 'แบดมินตัน วันหยุดช่วงดึก Off-Peak', isActive: true },
+  { id: 'p-bad-we-p', courtType: CourtType.BADMINTON, dayType: DayType.WEEKEND, startHour: 9, endHour: 22, pricePerHour: 300, priceType: PriceType.PEAK, label: 'แบดมินตัน วันหยุดช่วงพีค', isActive: true },
+  { id: 'p-bad-we-op', courtType: CourtType.BADMINTON, dayType: DayType.WEEKEND, startHour: 7, endHour: 9, pricePerHour: 220, priceType: PriceType.OFFPEAK, label: 'แบดมินตัน วันหยุดช่วงเช้า (นอกพีค)', isActive: true },
+  { id: 'p-bad-we-op2', courtType: CourtType.BADMINTON, dayType: DayType.WEEKEND, startHour: 22, endHour: 23, pricePerHour: 220, priceType: PriceType.OFFPEAK, label: 'แบดมินตัน วันหยุดช่วงดึก (นอกพีค)', isActive: true },
 
   // Basketball
-  { id: 'p-bas-wd-op', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKDAY, startHour: 7, endHour: 17, pricePerHour: 500, priceType: PriceType.OFFPEAK, label: 'บาสเกตบอล วันธรรมดา Off-Peak', isActive: true },
-  { id: 'p-bas-wd-p', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKDAY, startHour: 17, endHour: 22, pricePerHour: 800, priceType: PriceType.PEAK, label: 'บาสเกตบอล วันธรรมดา Peak', isActive: true },
+  { id: 'p-bas-wd-op', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKDAY, startHour: 7, endHour: 17, pricePerHour: 500, priceType: PriceType.OFFPEAK, label: 'บาสเกตบอล วันธรรมดาช่วงนอกพีค', isActive: true },
+  { id: 'p-bas-wd-p', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKDAY, startHour: 17, endHour: 22, pricePerHour: 800, priceType: PriceType.PEAK, label: 'บาสเกตบอล วันธรรมดาช่วงพีค', isActive: true },
   { id: 'p-bas-wd-op2', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKDAY, startHour: 22, endHour: 23, pricePerHour: 600, priceType: PriceType.OFFPEAK, label: 'บาสเกตบอล วันธรรมดาช่วงดึก', isActive: true },
-  { id: 'p-bas-we-p', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKEND, startHour: 9, endHour: 22, pricePerHour: 900, priceType: PriceType.PEAK, label: 'บาสเกตบอล วันหยุด Peak', isActive: true },
-  { id: 'p-bas-we-op', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKEND, startHour: 7, endHour: 9, pricePerHour: 600, priceType: PriceType.OFFPEAK, label: 'บาสเกตบอล วันหยุด Off-Peak', isActive: true },
+  { id: 'p-bas-we-p', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKEND, startHour: 9, endHour: 22, pricePerHour: 900, priceType: PriceType.PEAK, label: 'บาสเกตบอล วันหยุดช่วงพีค', isActive: true },
+  { id: 'p-bas-we-op', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKEND, startHour: 7, endHour: 9, pricePerHour: 600, priceType: PriceType.OFFPEAK, label: 'บาสเกตบอล วันหยุดช่วงนอกพีค', isActive: true },
   { id: 'p-bas-we-op2', courtType: CourtType.BASKETBALL, dayType: DayType.WEEKEND, startHour: 22, endHour: 23, pricePerHour: 600, priceType: PriceType.OFFPEAK, label: 'บาสเกตบอล วันหยุดช่วงดึก', isActive: true },
 
   // Pickleball
-  { id: 'p-pic-wd-op', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKDAY, startHour: 7, endHour: 17, pricePerHour: 220, priceType: PriceType.OFFPEAK, label: 'พิคเคิลบอล วันธรรมดา Off-Peak', isActive: true },
-  { id: 'p-pic-wd-p', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKDAY, startHour: 17, endHour: 22, pricePerHour: 350, priceType: PriceType.PEAK, label: 'พิคเคิลบอล วันธรรมดา Peak', isActive: true },
+  { id: 'p-pic-wd-op', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKDAY, startHour: 7, endHour: 17, pricePerHour: 220, priceType: PriceType.OFFPEAK, label: 'พิคเคิลบอล วันธรรมดาช่วงนอกพีค', isActive: true },
+  { id: 'p-pic-wd-p', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKDAY, startHour: 17, endHour: 22, pricePerHour: 350, priceType: PriceType.PEAK, label: 'พิคเคิลบอล วันธรรมดาช่วงพีค', isActive: true },
   { id: 'p-pic-wd-op2', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKDAY, startHour: 22, endHour: 23, pricePerHour: 250, priceType: PriceType.OFFPEAK, label: 'พิคเคิลบอล วันธรรมดาช่วงดึก', isActive: true },
-  { id: 'p-pic-we-p', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKEND, startHour: 9, endHour: 22, pricePerHour: 380, priceType: PriceType.PEAK, label: 'พิคเคิลบอล วันหยุด Peak', isActive: true },
-  { id: 'p-pic-we-op', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKEND, startHour: 7, endHour: 9, pricePerHour: 250, priceType: PriceType.OFFPEAK, label: 'พิคเคิลบอล วันหยุด Off-Peak', isActive: true },
+  { id: 'p-pic-we-p', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKEND, startHour: 9, endHour: 22, pricePerHour: 380, priceType: PriceType.PEAK, label: 'พิคเคิลบอล วันหยุดช่วงพีค', isActive: true },
+  { id: 'p-pic-we-op', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKEND, startHour: 7, endHour: 9, pricePerHour: 250, priceType: PriceType.OFFPEAK, label: 'พิคเคิลบอล วันหยุดช่วงนอกพีค', isActive: true },
   { id: 'p-pic-we-op2', courtType: CourtType.PICKLEBALL, dayType: DayType.WEEKEND, startHour: 22, endHour: 23, pricePerHour: 250, priceType: PriceType.OFFPEAK, label: 'พิคเคิลบอล วันหยุดช่วงดึก', isActive: true },
 
   // Meeting Room

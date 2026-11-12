@@ -1,5 +1,5 @@
 import { OrderType } from '../../types';
-import { getTodayDateStr, formatBaht, isPaidBooking, formatDateTime, roundBaht } from '../../mockData';
+import { getTodayDateStr, formatBaht, isPaidBooking, formatDateTime, roundBaht, formatDate } from '../../mockData';
 import { AlertTriangle, Receipt } from 'lucide-react';
 import { useStaffPOSContext } from './useStaffPOS';
 
@@ -129,8 +129,8 @@ export default function DayTotalTab() {
         )}
       </div>
       <div>
-        <h3 className="text-base font-bold text-slate-900">สรุปบัญชีเงินสด และ ยอดจราจรวันนี้ (Cash Reconciliation)</h3>
-        <p className="text-xs text-slate-500">รายงานข้อมูลเรียลไทม์ ยอดในหมวดหมู่คอร์ท การจราจร F&B เพื่อกระทบยอดปิดกะพนักงานประจำวันวันนี้ ({getTodayDateStr()})</p>
+        <h3 className="text-base font-bold text-slate-900">สรุปเงินสดวันนี้</h3>
+        <p className="text-xs text-slate-500">ยอดค่าสนามและสินค้าของวันนี้ ({formatDate(getTodayDateStr())}) สำหรับนับเงินปิดกะ</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -182,7 +182,7 @@ export default function DayTotalTab() {
       {/* List of Recent POS Receipts orders & Walk-in Bookings */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4 shadow-sm">
         <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-          🧾 ระบบพิมพ์ใบเสร็จรับเงินด่วน (Recent Invoices & Receipts)
+          🧾 ระบบพิมพ์ใบเสร็จรับเงินด่วน
         </h4>
         <p className="text-[10px] text-slate-500">
           รายชื่อสล็อตและ F&B ทั้งหมดที่ได้รับการโอนชำระเสร็จในวันนี้ กดเพื่อเปิดหน้าต่างพิมพ์ใบสำคัญรับเงินได้ทันที
@@ -229,7 +229,7 @@ export default function DayTotalTab() {
                       {o.type === OrderType.FB ? '🥤 ออเดอร์ F&B' : o.type === OrderType.EQUIPMENT_SALE ? '🏸 ขายอุปกรณ์กีฬา' : '👟 เช่ารองเท้า/ไม้เล่น'}
                     </p>
                     <p className="text-[11px] text-slate-500">ลูกค้า: {o.customerName} | ยอด: {formatBaht(o.totalAmount)} บ.</p>
-                    <p className="text-[11px] text-[#475569]">รหัสธุรกรรม (Order): {o.orderCode}</p>
+                    <p className="text-[11px] text-[#475569]">รหัสธุรกรรม: {o.orderCode}</p>
                   </div>
                   <button
                     type="button"
@@ -263,10 +263,10 @@ export default function DayTotalTab() {
       <div className="p-4 bg-amber-50 rounded-xl text-xs flex gap-2 border border-amber-200 text-amber-800">
         <AlertTriangle className="h-5 w-5 text-amber-700 shrink-0" />
         <div>
-          <p className="font-bold">นโยบายห้ามแก้ไขรายการเงินสำมะคัญ (Anti-Price Tampering):</p>
+          <p className="font-bold">นโยบายห้ามแก้ไขรายการเงินสำมะคัญ:</p>
           <p className="text-[10px] leading-relaxed mt-1">
             ทุกรายการแก้ไขยอดเงิน สล็อตที่ถูกกด หรือสินค้าตัดสต๊อกจะถูกสลักชื่อแอดมิน คุณกิตติ ลงในแผงบิล Audit Log ถาวร 
-            การลบหรือสลับยกเลิก (Cancel) สล็อตและจ่ายคืนเคลม (Refund) จะต้องยื่นให้สิทธิ์ ผู้จัดการ (Manager) หรือ ผู้บริหารระบบ (Admin) ดำเนิการผ่านรหัสล็อคเกอร์พาสเท่านั้น
+            การลบหรือสลับยกเลิก สล็อตและจ่ายคืนเคลม จะต้องยื่นให้สิทธิ์ ผู้จัดการ หรือ ผู้บริหารระบบ ดำเนิการผ่านรหัสล็อคเกอร์พาสเท่านั้น
           </p>
         </div>
       </div>

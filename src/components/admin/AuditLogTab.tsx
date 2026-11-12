@@ -19,7 +19,7 @@ export default function AuditLogTab() {
         <div>
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-1">
             <ShieldCheck className="h-5 w-5 text-rose-600 animate-pulse" />
-            ระบบบันทึกความปลอดภัยต้านทุจริตภายใน (System Audit Database)
+            ระบบบันทึกความปลอดภัยต้านทุจริตภายใน
           </h3>
           <p className="text-xs text-slate-500">บันทึกทุกพฤติกรรมการแก้ไขยอดเงิน, การสลับเกณฑ์ราคา หรือการเปลี่ยนสถานะโอนความถี่สูตรสลับ</p>
         </div>
@@ -33,14 +33,14 @@ export default function AuditLogTab() {
               onChange={(e) => setAuditTypeFilter(e.target.value)}
               className="bg-slate-50 border border-slate-200 text-xs py-1.5 px-3 rounded-xl text-slate-800 font-bold focus:bg-white focus:outline-none"
             >
-              <option value="ALL">🔍 ค้นหาประเภททั้งหมด (All Resources)</option>
-              <option value="User">👥 ฐานข้อมูลสิทธิ์และบทบาทสมาชิก (User/Member)</option>
-              <option value="Booking">📅 งานจองคอร์ทและสนาม (Booking Arena)</option>
-              <option value="PricingRule">💰 เกณฑ์อัตราดอกเบี้ยและกฎราคา (Pricing Rules)</option>
-              <option value="Court">🏸 ตั้งค่าระเบียบและสนามแข่งขัน (Courts Config)</option>
-              <option value="DayOff">🚫 สล็อตวันหยุดปิดบริการและจองสนาม (Day Off)</option>
-              <option value="Product">🥤 ระบบสต็อกสินค้า POS และ F&B (Products/Rentals)</option>
-              <option value="Report">📊 งานส่งออกชุดบันทึกสถิติ (Reports Export)</option>
+              <option value="ALL">ทั้งหมด</option>
+              <option value="User">👥 ผู้ใช้</option>
+              <option value="Booking">📅 การจอง</option>
+              <option value="PricingRule">💰 ราคา</option>
+              <option value="Court">🏸 สนาม</option>
+              <option value="DayOff">🚫 วันปิด</option>
+              <option value="Product">🥤 สินค้า</option>
+              <option value="Report">📊 รายงาน</option>
             </select>
           </div>
 
@@ -68,43 +68,43 @@ export default function AuditLogTab() {
                 switch (log.targetType) {
                   case 'User':
                     return {
-                      label: '👥 ฐานข้อมูลสิทธิ์และบทบาทสมาชิก (Users / Members)',
+                      label: '👥 ผู้ใช้',
                       badgeStyle: 'bg-amber-500/20 text-amber-300 border border-amber-500/30',
                       cardBorder: 'border-l-4 border-l-amber-500'
                     };
                   case 'Booking':
                     return {
-                      label: '📅 งานจองคอร์ทและสนามแข่งขัน (Booking Arena)',
+                      label: '📅 การจอง',
                       badgeStyle: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
                       cardBorder: 'border-l-4 border-l-emerald-500'
                     };
                   case 'PricingRule':
                     return {
-                      label: '💰 เกณฑ์อัตราดอกเบี้ยและกฎราคา (Pricing Rules)',
+                      label: '💰 ราคา',
                       badgeStyle: 'bg-sky-500/20 text-sky-300 border border-sky-500/30',
                       cardBorder: 'border-l-4 border-l-sky-500'
                     };
                   case 'Court':
                     return {
-                      label: '🏸 ตั้งค่าระเบียบและสนามแข่งขัน (Courts Config)',
+                      label: '🏸 สนาม',
                       badgeStyle: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
                       cardBorder: 'border-l-4 border-l-purple-500'
                     };
                   case 'DayOff':
                     return {
-                      label: '🚫 สล็อตวันหยุดปิดบริการและจองสนาม (Day Off)',
+                      label: '🚫 วันปิด',
                       badgeStyle: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
                       cardBorder: 'border-l-4 border-l-rose-500'
                     };
                   case 'Product':
                     return {
-                      label: '🥤 ระบบสต็อกสินค้า POS และ F&B (Products & Rentals)',
+                      label: '🥤 สินค้า',
                       badgeStyle: 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',
                       cardBorder: 'border-l-4 border-l-indigo-500'
                     };
                   case 'Report':
                     return {
-                      label: '📊 งานส่งออกชุดบันทึกสถิติ (Reports Export)',
+                      label: '📊 รายงาน',
                       badgeStyle: 'bg-teal-500/20 text-teal-300 border border-teal-500/30',
                       cardBorder: 'border-l-4 border-l-teal-500'
                     };
@@ -171,7 +171,7 @@ export default function AuditLogTab() {
                   {changedProperties.length > 0 && (
                     <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800 text-[10.5px] space-y-1.5 font-sans">
                       <span className="text-[11px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1">
-                        🔍 ตรวจทุจริตเปลี่ยนค่าที่แสตมป์ (Property Changes):
+                        🔍 ตรวจทุจริตเปลี่ยนค่าที่แสตมป์:
                       </span>
                       <div className="divide-y divide-slate-800">
                         {changedProperties.map(key => {
@@ -200,15 +200,15 @@ export default function AuditLogTab() {
                   {(log.before || log.after) && (
                     <details className="group">
                       <summary className="text-[11px] text-slate-500 hover:text-slate-400 cursor-pointer select-none font-bold uppercase tracking-wider flex items-center gap-1 focus:outline-none">
-                        <span>📁 คลิกเพื่อดูฐานข้อมูลดิบ (Toggle Raw Snapshot Metadata)</span>
+                        <span>📁 คลิกเพื่อดูฐานข้อมูลดิบ</span>
                       </summary>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 bg-slate-950 p-2.5 rounded border border-slate-900 text-[11px] group-open:animate-fadeIn">
                         <div>
-                          <p className="text-slate-500 font-extrabold mb-1">📋 SNAPSHOT [ก่อนหน้า] (BEFORE):</p>
+                          <p className="text-slate-500 font-extrabold mb-1">📋 SNAPSHOT [ก่อนหน้า]:</p>
                           <pre className="text-rose-400 bg-rose-950/10 p-1.5 rounded border border-rose-950/30 max-h-32 overflow-y-auto pr-1">{JSON.stringify(log.before || {}, null, 1)}</pre>
                         </div>
                         <div>
-                          <p className="text-slate-500 font-extrabold mb-1">📋 SNAPSHOT [ล่าสุด] (AFTER):</p>
+                          <p className="text-slate-500 font-extrabold mb-1">📋 SNAPSHOT [ล่าสุด]:</p>
                           <pre className="text-emerald-400 bg-emerald-950/10 p-1.5 rounded border border-emerald-950/30 max-h-32 overflow-y-auto pr-1">{JSON.stringify(log.after || {}, null, 1)}</pre>
                         </div>
                       </div>

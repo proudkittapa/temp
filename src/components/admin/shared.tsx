@@ -16,14 +16,14 @@ export type AdminTab = 'dashboard' | 'pricing' | 'courts' | 'products' | 'users'
 
 export const ADMIN_TABS: { id: AdminTab; label: string }[] = [
   { id: 'dashboard', label: '📊 แดชบอร์ด' },
-  { id: 'pricing', label: '⚙️ Pricing Engine ตั้งราคา' },
-  { id: 'courts', label: '🏟️ บริหารสนาม & วันปิดบริการ' },
-  { id: 'products', label: '🥤 คุมตู้เครื่องดื่ม F&B' },
-  { id: 'users', label: '👥 บัญชีสตาฟเวร' },
-  { id: 'member_discounts', label: '🌟 ตั้งค่าสิทธิ์ส่วนลด (Membership Tiers)' },
+  { id: 'pricing', label: '⚙️ ราคาและข้อมูลร้าน' },
+  { id: 'courts', label: '🏟️ สนามและวันปิด' },
+  { id: 'products', label: '🥤 สินค้าและสต๊อก' },
+  { id: 'users', label: '👥 ผู้ใช้และพนักงาน' },
+  { id: 'member_discounts', label: '🌟 ส่วนลดสมาชิก' },
   { id: 'reports', label: '📥 ออกรายงาน Excel' },
   { id: 'roles', label: '🔐 สิทธิ์และบทบาท' },
-  { id: 'audit_logs', label: '🛡️ Audit Log ล็อกกลโกง' }
+  { id: 'audit_logs', label: '🛡️ ประวัติการแก้ไข' }
 ];
 
 export const ADMIN_TAB_PERMISSIONS: Record<AdminTab, Permission[]> = {

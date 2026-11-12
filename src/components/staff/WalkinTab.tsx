@@ -45,7 +45,7 @@ export default function WalkinTab() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div className="space-y-4">
         <div>
-          <h3 className="text-base font-bold text-slate-900">รับจองคอร์ทหน้างาน (Walk-in Booking)</h3>
+          <h3 className="text-base font-bold text-slate-900">จองให้ลูกค้าที่เคาน์เตอร์</h3>
           <p className="text-xs text-slate-500">สำหรับลูกค้ายืนต่อแถวหน้าสนาม ไม่ต้องเช็คสลิปเนื่องจากพนักงานรับเงินสดหรือสแกนตรงนั้นทันที</p>
         </div>
 
@@ -64,7 +64,7 @@ export default function WalkinTab() {
               className="w-full bg-slate-50 border border-slate-200 py-2.5 px-3 rounded-lg text-slate-800 font-medium text-xs"
             >
               {courts.map(c => (
-                <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
+                <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
           </div>
@@ -162,7 +162,7 @@ export default function WalkinTab() {
               {walkinPayMethod === PaymentMethod.CASH
                 ? 'เงินสด: รับเงินก่อนกดยืนยัน ระบบยืนยันการจองทันทีและนับเข้าลิ้นชักเงินสด'
                 : walkinPayMethod === PaymentMethod.VOUCHER
-                  ? 'คูปอง: ฟรี 1 ชั่วโมงช่วง Off-Peak ใช้ได้ครั้งเดียว จองในชื่อเจ้าของคูปอง ไม่ได้แต้มสะสม'
+                  ? 'คูปอง: ฟรี 1 ชั่วโมงช่วงนอกพีค ใช้ได้ครั้งเดียว จองในชื่อเจ้าของคูปอง ไม่ได้แต้มสะสม'
                   : 'โอน: ระบบแสดง QR และยอดเงิน แล้วกดยืนยันเมื่อเห็นเงินเข้า'}
             </p>
           </div>
@@ -260,7 +260,7 @@ export default function WalkinTab() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
         <div>
           <h3 className="text-sm font-black text-[#0f172a] uppercase tracking-wider flex items-center gap-1.5 font-sans">
-            🎾 แดชบอร์ดตรวจสอบมอนิเตอร์ดีมานด์ภาพรวม & จองสนามด่วน (Occupancy Grid Matrix & Pos Shortcut)
+            ตารางสนามวันนี้
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
             เลือกดูสถานะว่าง/จัดงาน/ซ่อมบำรุง ทุกสนามพร้อมกันของวันที่ <span className="font-bold underline text-slate-800">{walkinDate}</span>. 
@@ -312,7 +312,7 @@ export default function WalkinTab() {
                 <td className="p-2.5 font-bold text-slate-800 bg-[#f8fafc]/95 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] border-r border-slate-200">
                   <span className="block text-[11px] font-black">{court.name}</span>
                   {court.offPeakOnly && (
-                    <span className="text-[10px] text-[#0f5132] font-semibold bg-[#d1e7dd] px-1 py-0.2 rounded w-max mt-0.5 inline-block">Off-Peak เท่านั้น</span>
+                    <span className="text-[10px] text-[#0f5132] font-semibold bg-[#d1e7dd] px-1 py-0.2 rounded w-max mt-0.5 inline-block">เฉพาะนอกพีค</span>
                   )}
                 </td>
 
@@ -398,9 +398,9 @@ export default function WalkinTab() {
                       <td 
                         key={time} 
                         className="p-1 border-l border-slate-200 bg-slate-100 text-slate-400 text-center min-h-[44px] cursor-not-allowed select-none"
-                        title="เฉพาะช่วงนิกาเพื่อสุขภาพ (Off-peak) เท่านั้น"
+                        title="เฉพาะช่วงนอกพีค"
                       >
-                        <span className="block text-[10px] font-semibold text-slate-500">🚫 ปิดช่วง Peak</span>
+                        <span className="block text-[10px] font-semibold text-slate-500">🚫 ปิดช่วงพีค</span>
                         <span className="text-[10px] text-slate-400 block">บาสเกตบอลครึ่งสนาม</span>
                       </td>
                     );
@@ -464,7 +464,7 @@ export default function WalkinTab() {
                       <span className="block text-[11px] font-mono font-black text-[#1e293b]">{shownPrice}฿</span>
                       {resale !== undefined
                         ? <span className="noshow-resale text-[7.5px] text-violet-700 font-bold block">ลูกค้าไม่มา · ราคาพิเศษ</span>
-                        : <span className="text-[7.5px] text-slate-400 italic block font-mono">{isPeak ? '⚡ Peak' : 'Off-Peak'}</span>}
+                        : <span className="text-[7.5px] text-slate-400 italic block font-mono">{isPeak ? '⚡ พีค' : 'นอกพีค'}</span>}
                     </td>
                   );
                 })}

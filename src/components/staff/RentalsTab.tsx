@@ -32,7 +32,7 @@ export default function RentalsTab() {
         {/* Rent Equipment form */}
         <div className="space-y-4">
           <div>
-            <h3 className="text-base font-bold text-slate-900">บันทึกจ่ายปล่อยเช่าแร็กเก็ตและอุปกรณ์กีฬา</h3>
+            <h3 className="text-base font-bold text-slate-900">ให้เช่าอุปกรณ์</h3>
             <p className="text-xs text-slate-500">เลือกอุปกรณ์ ใส่เบอร์สมาชิกถ้ามี แล้วเก็บค่าเช่าเป็นเงินสด (ค่าเช่าไม่ได้แต้ม)</p>
           </div>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { UserRole, AuditLog, AddAuditLog } from './types';
-import { initializeState, StorageService, formatDateTime } from './mockData';
+import { initializeState, StorageService, formatDateTime, businessInfo } from './mockData';
+import { BRAND_NAME } from './brand';
 import CustomerPanel from './components/CustomerPanel';
 // The counter and settings screens load on demand (customers' phones don't
 // download them), fetched before they are shown - see screens.ts.
@@ -101,9 +102,9 @@ export default function App() {
       // With the backend, name whoever is actually signed in to this panel.
       userId: sessionUser?.id ?? (currentRole === UserRole.CUSTOMER ? 'guest-customer' : 'current-user'),
       userName: sessionUser ? `${sessionUser.name} (${sessionUser.role})` :
-                currentRole === UserRole.CUSTOMER ? 'ลูกค้าภายนอก (Customer)' :
-                currentRole === UserRole.STAFF ? 'คุณ กิตติ (Staff)' :
-                currentRole === UserRole.MANAGER ? 'คุณ วิชัย (Manager)' : 'คุณ สมชาย (Admin)',
+                currentRole === UserRole.CUSTOMER ? 'ลูกค้าภายนอก' :
+                currentRole === UserRole.STAFF ? 'คุณ กิตติ' :
+                currentRole === UserRole.MANAGER ? 'คุณ วิชัย' : 'คุณ สมชาย',
       action,
       targetType,
       targetId,
@@ -121,10 +122,10 @@ export default function App() {
 
   // Switcher bar roles list configuration
   const ROLES_LIST = [
-    { role: UserRole.CUSTOMER, label: 'ลูกค้า (Customer WebApp)', icon: User, desc: 'เลือกกีฬา, เช็กคาบเวลา, สแกน QR & อัพสลิป' },
-    { role: UserRole.STAFF, label: 'พนักงานเคาน์เตอร์ (Staff POS)', icon: Briefcase, desc: 'รับวอล์คอิน, แสตมป์สลิปโอน, เช่าแร็กเกต, ขายเครื่องดื่ม' },
-    { role: UserRole.MANAGER, label: 'ผู้จัดการ (Manager)', icon: Users, desc: 'อนุญาตตัดยอดเงินคืน, ยกเลิกคอร์ท, เช็กยอด Ledger ปิดกล่อง' },
-    { role: UserRole.ADMIN, label: 'ผู้บริหารสูงสุด (Admin Settings)', icon: Shield, desc: 'ตั้งค่า Engine เรทราคา Peak/วันธรรมดา, คุมสิทธิ์สตาฟ, ตรวจโกง' }
+    { role: UserRole.CUSTOMER, label: 'ลูกค้า', icon: User, desc: 'เลือกกีฬา, เช็กคาบเวลา, สแกน QR & อัพสลิป' },
+    { role: UserRole.STAFF, label: 'พนักงานเคาน์เตอร์', icon: Briefcase, desc: 'รับวอล์คอิน, แสตมป์สลิปโอน, เช่าแร็กเกต, ขายเครื่องดื่ม' },
+    { role: UserRole.MANAGER, label: 'ผู้จัดการ', icon: Users, desc: 'อนุญาตตัดยอดเงินคืน, ยกเลิกคอร์ท, เช็กยอด Ledger ปิดกล่อง' },
+    { role: UserRole.ADMIN, label: 'ผู้บริหารสูงสุด', icon: Shield, desc: 'ตั้งค่า Engine เรทราคาพีค/วันธรรมดา, คุมสิทธิ์สตาฟ, ตรวจโกง' }
   ];
 
   return (
@@ -137,11 +138,11 @@ export default function App() {
           {/* Logo Brand */}
           <div className="flex items-center gap-2.5">
             <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-800 to-emerald-600 flex items-center justify-center text-white shadow-md shadow-emerald-700/10 shrink-0">
-              <span className="font-sans font-black text-sm tracking-widest leading-none">SC</span>
+              <span className="font-sans font-black text-sm tracking-widest leading-none">SS</span>
             </div>
             <div>
               <h1 id="brand-title" className="text-sm font-black text-slate-900 tracking-tight flex items-center gap-1 leading-none">
-                SPORTS COMPLEX THAILAND
+                {BRAND_NAME}
                 <Sparkles className="h-4 w-4 text-amber-500 fill-amber-500" />
               </h1>
               <p className="text-[10px] text-slate-500 font-medium mt-0.5">จองสนามแบดมินตัน • บาสเกตบอล • พิกเคิลบอล • ห้องประชุม</p>
@@ -263,8 +264,12 @@ export default function App() {
 
       {/* Footer Branding */}
       <footer className="bg-white border-t border-slate-100 py-6 text-center text-xs text-slate-400 text-slate-500">
-        <p className="font-semibold text-slate-800">Sports Complex Management Thailand</p>
-        <p className="text-[10px] mt-1 text-slate-400">{api.USE_BACKEND ? 'เชื่อมต่อเซิร์ฟเวอร์' : 'โหมดสาธิต: ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น'}</p>
+        <p className="font-semibold text-slate-800">{BRAND_NAME}</p>
+        {(() => {
+          const { address, phone } = businessInfo();
+          return (address || phone) ? <p className="mt-1 text-slate-500">{[address, phone && `โทร ${phone}`].filter(Boolean).join(' · ')}</p> : null;
+        })()}
+        {!api.USE_BACKEND && <p className="text-[10px] mt-1 text-slate-400">โหมดสาธิต: ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น</p>}
       </footer>
 
     </div>

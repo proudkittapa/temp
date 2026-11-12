@@ -41,7 +41,7 @@ export default function UsersTab() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h3 className="text-base font-bold text-slate-900">แผงพนักงานเวร และระดับสิทธิ์สมาชิก (Staff & User Membership management)</h3>
+          <h3 className="text-base font-bold text-slate-900">ผู้ใช้และพนักงาน</h3>
           <p className="text-xs text-slate-500">แต่งตั้งสตาฟคุมคอร์ทจากรายชื่อผู้จอง ปรับสิทธิ์ส่วนลดพิเศษ และควบคุมเสถียรภาพระบบ</p>
         </div>
       </div>
@@ -52,17 +52,17 @@ export default function UsersTab() {
           <span className="text-xs font-black text-slate-800 block text-emerald-800 uppercase tracking-wider">👥 แต่งตั้งสตาฟ/เวรปฏิบัติการ</span>
 
           <p className="text-[11px] text-slate-500 leading-normal">
-            เลือกผู้ใช้งานทั่วไปที่เคยลงทะเบียนเข้ามาร่วมก๊วน เพื่อเลื่อนสิทธิ์เป็นพนักงานปฏิบัติการ (Staff) หรือผู้บริหารระบบ โดยไม่ต้องสร้างข้อมูลซ้ำซ้อน
+            เลือกลูกค้าที่สมัครไว้แล้ว เพื่อตั้งเป็นพนักงาน ผู้จัดการ หรือผู้ดูแลระบบ โดยไม่ต้องสร้างบัญชีใหม่
           </p>
 
           {!canManageAccounts ? (
             <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
-              การแต่งตั้งพนักงาน เปลี่ยนบทบาท และระงับบัญชี ทำได้เฉพาะผู้ดูแลระบบ (Admin) ส่วนระดับสมาชิก (ส่วนลด) และแต้มสะสมแก้ไขได้ในตารางด้านขวา
+              การแต่งตั้งพนักงาน เปลี่ยนบทบาท และระงับบัญชี ทำได้เฉพาะผู้ดูแลระบบ ส่วนระดับสมาชิก (ส่วนลด) และแต้มสะสมแก้ไขได้ในตารางด้านขวา
             </p>
           ) : (
           <form onSubmit={e => { e.preventDefault(); void guarded(handlePromoteUser)(e); }} className="space-y-4 text-xs">
             <div>
-              <label className="block text-slate-700 font-bold mb-1.5">ค้นหาเลือกจากผู้เล่นที่ลงไว้ในก๊วน:</label>
+              <label className="block text-slate-700 font-bold mb-1.5">ค้นหาลูกค้าที่สมัครไว้</label>
               {users.filter(u => u.role === UserRole.CUSTOMER).length === 0 ? (
                 <div className="p-3 bg-slate-100 rounded-lg text-[10.5px] font-sans text-slate-600 border border-slate-200">
                   ⚠️ ขณะนี้ไม่มีลูกค้าที่เป็นบทบาท CUSTOMER ว่างเลย กรุณาลงทะเบียนที่หน้าสมัครแท็บลูกค้าก่อนค่ะ เพื่อนำมาเลื่อนระดับงาน
@@ -85,7 +85,7 @@ export default function UsersTab() {
             </div>
 
             <div>
-              <label className="block text-slate-700 font-bold mb-1.5">ยศตำแหน่งเวรทำงานที่จะแต่งตั้ง (Assigned Role):</label>
+              <label className="block text-slate-700 font-bold mb-1.5">ตำแหน่ง</label>
               <select 
                 value={newUserRole}
                 onChange={(e) => setNewUserRole(e.target.value as UserRole)}
@@ -108,7 +108,7 @@ export default function UsersTab() {
 
         {/* Comprehensive Users list & management search */}
         <div className="col-span-1 lg:col-span-8 space-y-4">
-          <span className="text-xs font-black text-slate-800 block uppercase tracking-wider">🗄️ ระบบบริหารสมุดรายชื่อสิทธิ์สมาชิกพอร์ทัล ({users.length} รายการ)</span>
+          <span className="text-xs font-black text-slate-800 block uppercase tracking-wider">รายชื่อผู้ใช้ทั้งหมด ({users.length} รายการ)</span>
 
           {usersHasMore && (
             <p id="users-has-more" className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -129,7 +129,7 @@ export default function UsersTab() {
               />
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">คัดกรอง ยศบทบาทงาน:</label>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">กรองตามตำแหน่ง</label>
               <select
                 value={userRoleFilter}
                 onChange={(e) => setUserRoleFilter(e.target.value)}
@@ -143,7 +143,7 @@ export default function UsersTab() {
               </select>
             </div>
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">สิทธิ์ระดับสมาชิก (MemberType):</label>
+              <label className="block text-[10px] font-bold text-slate-500 mb-1">ระดับสมาชิก</label>
               <select
                 value={userTierFilter}
                 onChange={(e) => setUserTierFilter(e.target.value)}
@@ -161,7 +161,7 @@ export default function UsersTab() {
                 <tr>
                   <th className="p-3">ข้อมูลโปรไฟล์หลัก / ล็อกอิน</th>
                   <th className="p-3">ระดับสิทธิ์และส่วนลด</th>
-                  <th className="p-3">ยศเวรทำงาน (Role)</th>
+                  <th className="p-3">ตำแหน่ง</th>
                   <th className="p-3 text-center">🏆 แต้มสะสม CRM</th>
                   <th className="p-3 text-center">ปฏิบัติการและมาตรการ</th>
                 </tr>
@@ -223,7 +223,7 @@ export default function UsersTab() {
                           value={userPendingChanges[item.id]?.role ?? item.role}
                           onChange={(e) => handleStageUserRole(item.id, e.target.value as UserRole)}
                           disabled={!canManageAccounts || item.id === adminUser?.id || higherThanMe(item)}
-                          title={!canManageAccounts ? 'เปลี่ยนบทบาทได้เฉพาะผู้ดูแลระบบ (Admin)' : item.id === adminUser?.id ? 'เปลี่ยนบทบาทของตัวเองไม่ได้' : higherThanMe(item) ? 'บัญชีนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)' : undefined}
+                          title={!canManageAccounts ? 'เปลี่ยนบทบาทได้เฉพาะผู้ดูแลระบบ' : item.id === adminUser?.id ? 'เปลี่ยนบทบาทของตัวเองไม่ได้' : higherThanMe(item) ? 'บัญชีนี้มีสิทธิ์ที่คุณไม่มี (ให้ผู้ดูแลระบบทำ)' : undefined}
                           className={`border rounded py-1 px-1.5 text-[11px] font-mono font-bold transition duration-150 ${
                             userPendingChanges[item.id]?.role !== undefined && userPendingChanges[item.id]?.role !== item.role
                               ? 'bg-amber-50 border-amber-300 text-amber-900 ring-2 ring-amber-100'

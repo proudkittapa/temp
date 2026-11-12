@@ -1,3 +1,4 @@
+import { BRAND_NAME } from '../../brand';
 import { useCustomerPanelContext, lineMessageTime } from './useCustomerPanel';
 
 export default function LineSimulator() {
@@ -37,7 +38,7 @@ export default function LineSimulator() {
           <div className="flex items-start gap-2 max-w-[85%]">
             <div className="h-6 w-6 rounded-full bg-emerald-500 flex items-center justify-center text-[11px] font-bold text-white shrink-0">SP</div>
             <div className="bg-[#293646] p-2.5 rounded-xl text-[11px] text-slate-200">
-              สวัสดีค่ะ ยินดีต้อนรับสู่ LINE OA ของสปอร์ตคอมเพล็กซ์ 🏸🏀 <br />ระบบจะส่งข้อมูลยืนยันการจอง และแจ้งเตือนล่วงหน้าให้ท่านที่นี่โดยอัติโนมัติค่ะ
+              สวัสดีค่ะ ยินดีต้อนรับสู่ LINE OA ของ {BRAND_NAME} <br />ระบบจะส่งข้อมูลยืนยันการจอง และแจ้งเตือนล่วงหน้าให้ที่นี่โดยอัตโนมัติค่ะ
             </div>
           </div>
 

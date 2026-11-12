@@ -91,7 +91,7 @@ export function useSlotPicker(deps: CustomerPanelCore) {
       // Check peak constraint for half-court resources (FR-1.2)
       const targetCourt = courts.find(c => c.id === courtId);
       if (targetCourt?.offPeakOnly && !isHourOffPeak(targetCourt.type, selectedDate, parseInt(startTime.split(':')[0], 10))) {
-        notify('⚠️ ขออภัยค่ะ สนามนี้เปิดให้จองเฉพาะช่วง Off-Peak เท่านั้นค่ะ');
+        notify('⚠️ ขออภัยค่ะ สนามนี้เปิดให้จองเฉพาะช่วงนอกพีคเท่านั้นค่ะ');
         return;
       }
 
@@ -160,7 +160,7 @@ export function useSlotPicker(deps: CustomerPanelCore) {
     }
   });
   const SLOT_LABEL: Record<Exclude<SlotState['kind'], 'free' | 'selected'>, string> = {
-    booked: 'จองแล้ว', closed: 'ปิดสนาม', started: 'หมดเวลาจอง', peakBlocked: 'เฉพาะ Off-Peak', notOpen: 'ปิดบริการ'
+    booked: 'จองแล้ว', closed: 'ปิดสนาม', started: 'หมดเวลาจอง', peakBlocked: 'เฉพาะนอกพีค', notOpen: 'ปิดบริการ'
   };
 
   // Phone list view: one card per court; tapping it shows its hours as big
@@ -184,7 +184,7 @@ export function useSlotPicker(deps: CustomerPanelCore) {
                   <span className="block font-bold text-slate-900 text-base">{court.name}</span>
                   <span className="text-xs text-slate-500">
                     {freeCount > 0 ? `ว่าง ${freeCount} ชม.` : 'เต็ม / ไม่เปิด'}
-                    {court.offPeakOnly && ' · เฉพาะ Off-Peak'}
+                    {court.offPeakOnly && ' · เฉพาะนอกพีค'}
                     {selectedHere > 0 && <span className="text-emerald-700 font-bold"> · เลือก {selectedHere}</span>}
                   </span>
                 </span>
@@ -204,7 +204,7 @@ export function useSlotPicker(deps: CustomerPanelCore) {
                         }`}>
                         <span className="block text-sm font-bold">{time}</span>
                         <span className="block text-xs">
-                          {bookable ? `${formatBaht((st as { price: number }).price)}฿${(st as { isPeak: boolean }).isPeak ? ' · Peak' : ''}` : SLOT_LABEL[st.kind as keyof typeof SLOT_LABEL]}
+                          {bookable ? `${formatBaht((st as { price: number }).price)}฿${(st as { isPeak: boolean }).isPeak ? ' · พีค' : ''}` : SLOT_LABEL[st.kind as keyof typeof SLOT_LABEL]}
                         </span>
                       </button>
                     );

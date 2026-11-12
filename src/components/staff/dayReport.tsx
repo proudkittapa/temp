@@ -52,9 +52,9 @@ export function useDayReport(deps: StaffPOSCore) {
     return null;
   })();
   const METHOD_LABEL: Partial<Record<PaymentMethod, string>> = {
-    [PaymentMethod.CASH]: 'เงินสด (CASH)',
-    [PaymentMethod.PROMPTPAY]: 'โอนผ่านพร้อมเพย์ (PROMPTPAY)',
-    [PaymentMethod.VOUCHER]: 'คูปองชั่วโมงฟรี (VOUCHER)'
+    [PaymentMethod.CASH]: 'เงินสด',
+    [PaymentMethod.PROMPTPAY]: 'โอนผ่านพร้อมเพย์',
+    [PaymentMethod.VOUCHER]: 'คูปองชั่วโมงฟรี'
   };
   const calculateLedger = () => {
     const todayStr = getTodayDateStr();

@@ -47,7 +47,7 @@ export const BUILTIN_ROLES: { id: string; name: string; permissions: Permission[
   { id: UserRole.CUSTOMER, name: 'ลูกค้า', permissions: BUILTIN_ROLE_PERMISSIONS[UserRole.CUSTOMER], isBuiltin: true, userCount: 0 },
   { id: UserRole.STAFF, name: 'พนักงานเคาน์เตอร์', permissions: BUILTIN_ROLE_PERMISSIONS[UserRole.STAFF], isBuiltin: true, userCount: 0 },
   { id: UserRole.MANAGER, name: 'ผู้จัดการ', permissions: BUILTIN_ROLE_PERMISSIONS[UserRole.MANAGER], isBuiltin: true, userCount: 0 },
-  { id: UserRole.ADMIN, name: 'ผู้บริหาร (Admin)', permissions: BUILTIN_ROLE_PERMISSIONS[UserRole.ADMIN], isBuiltin: true, userCount: 0 }
+  { id: UserRole.ADMIN, name: 'ผู้ดูแลระบบ', permissions: BUILTIN_ROLE_PERMISSIONS[UserRole.ADMIN], isBuiltin: true, userCount: 0 }
 ];
 
 export function permissionsOf(user: Pick<User, 'role' | 'permissions'> | null | undefined): Permission[] {

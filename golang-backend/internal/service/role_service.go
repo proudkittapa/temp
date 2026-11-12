@@ -36,6 +36,13 @@ func (s *RoleService) SeedBuiltins(ctx context.Context) error {
 		if err := s.db.WithContext(ctx).Where(model.Role{ID: r.ID}).FirstOrCreate(&r).Error; err != nil {
 			return fmt.Errorf("seed role %s: %w", r.ID, err)
 		}
+		if r.ID == string(model.RoleAdmin) && r.Name == model.OldAdminRoleName {
+			if err := s.db.WithContext(ctx).Model(&model.Role{}).Where("id = ? AND name = ?", r.ID, model.OldAdminRoleName).
+				Update("name", model.AdminRoleName).Error; err != nil {
+				return err
+			}
+			r.Name = model.AdminRoleName
+		}
 		if r.ID == string(model.RoleAdmin) && !hasPerm(r.Permissions, model.PermManageRoles) {
 			r.Permissions = append(r.Permissions, model.PermManageRoles)
 			// Through the struct, not a column map: only then does GORM apply

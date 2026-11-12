@@ -53,7 +53,7 @@ export default function PricingTab() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-base font-bold text-slate-900">ตัวเครื่องมือตั้งและปรับราคาล่วงหน้า (Pricing Engine Configurator)</h3>
+        <h3 className="text-base font-bold text-slate-900">ตัวเครื่องมือตั้งและปรับราคาล่วงหน้า</h3>
         <div id="max-advance-days-setting" className="mt-2 flex flex-wrap items-center gap-2 text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 w-fit">
           <span className="text-slate-600">ลูกค้าจองออนไลน์ล่วงหน้าได้</span>
           <input type="number" min={1} max={365} value={maxAdvanceDays} onChange={e => setMaxAdvanceDays(Number(e.target.value))}
@@ -97,7 +97,7 @@ export default function PricingTab() {
             <span className="text-slate-600">จดทะเบียน VAT (ใบเสร็จแสดงภาษี 7%)</span></label>
           <div className="sm:col-span-2"><button type="button" disabled={busy} onClick={guarded(handleSaveBusiness)} className="disabled:opacity-50 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded">บันทึกข้อมูลร้าน</button></div>
         </div>
-        <p className="text-xs text-slate-500">คุณสามารถกำหนดค่า ราคาปกติ, ราคา Peak ยิ่งเร่งด่วนตามเงื่อนไขช่วงชั่วโมง, และชนิดวันธรรมดา/เสาร์อาทิตย์</p>
+        <p className="text-xs text-slate-500">คุณสามารถกำหนดค่า ราคาปกติ, ราคาพีค ยิ่งเร่งด่วนตามเงื่อนไขช่วงชั่วโมง, และชนิดวันธรรมดา/เสาร์อาทิตย์</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -175,7 +175,7 @@ export default function PricingTab() {
             </div>
 
             <div>
-              <label className="block text-slate-700 font-semibold mb-1.5">6. ป้ายชื่อแสดงหน้าร้าน (Label):</label>
+              <label className="block text-slate-700 font-semibold mb-1.5">6. ป้ายชื่อแสดงหน้าร้าน:</label>
               <input 
                 type="text"
                 required
@@ -224,7 +224,7 @@ export default function PricingTab() {
         {/* Rules interactive table (Right side) */}
         <div className="col-span-1 lg:col-span-8 space-y-4">
           <div className="flex justify-between items-center">
-            <span className="text-xs font-bold text-slate-700 block">ตารางเกณฑ์คำนวณราคาปัจจุบันทั้งหมด (Active Engine Table):</span>
+            <span className="text-xs font-bold text-slate-700 block">ตารางเกณฑ์คำนวณราคาปัจจุบันทั้งหมด:</span>
             {(filterCourtType || filterDayType || filterPriceType || filterLabel) && (
               <button 
                 type="button"

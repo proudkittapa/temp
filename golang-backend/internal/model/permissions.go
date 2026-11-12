@@ -54,6 +54,14 @@ var managerPermissions = append(append([]Permission{}, staffPermissions...),
 	PermCancelRefund, PermManageProducts, PermManageMembers, PermAdjustPoints, PermManageClosures, PermViewReports,
 )
 
+// AdminRoleName is the built-in admin role's name. OldAdminRoleName was its
+// name before 2026-11-12: a role still carrying it (never renamed by the
+// admin) is renamed on startup.
+const (
+	AdminRoleName    = "ผู้ดูแลระบบ"
+	OldAdminRoleName = "ผู้บริหาร (Admin)"
+)
+
 // BuiltinRoles are created on startup with exactly the rights the fixed
 // roles had before roles became configurable, so nothing changes until the
 // admin edits them. Their ids are the old role names, which users.role
@@ -62,7 +70,7 @@ var BuiltinRoles = []Role{
 	{ID: string(RoleCustomer), Name: "ลูกค้า", IsBuiltin: true, Permissions: []Permission{PermBookOnline}},
 	{ID: string(RoleStaff), Name: "พนักงานเคาน์เตอร์", IsBuiltin: true, Permissions: staffPermissions},
 	{ID: string(RoleManager), Name: "ผู้จัดการ", IsBuiltin: true, Permissions: managerPermissions},
-	{ID: string(RoleAdmin), Name: "ผู้บริหาร (Admin)", IsBuiltin: true, Permissions: AllPermissions},
+	{ID: string(RoleAdmin), Name: AdminRoleName, IsBuiltin: true, Permissions: AllPermissions},
 }
 
 // Role is a named set of permissions; users.role holds its id. Built-in

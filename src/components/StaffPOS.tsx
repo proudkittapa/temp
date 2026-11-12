@@ -1,6 +1,7 @@
 import { BookingStatus, PaymentStatus } from '../types';
 import { bookingGroupOf, slotTiming, formatBaht, formatDateTime, formatTaxId, noShowOpenAt } from '../mockData';
 import * as api from '../api';
+import { BUILTIN_ROLES } from '../permissions';
 import DemoLogins, { DEMO_STAFF, DEMO_ADMINS } from './DemoLogins';
 import { X, Receipt, AlertOctagon } from 'lucide-react';
 import { useStaffPOS, StaffPOSContext, StaffPOSProps } from './staff/useStaffPOS';
@@ -57,7 +58,7 @@ export default function StaffPOS(props: StaffPOSProps) {
     return (
       <div className="max-w-sm mx-auto my-10 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
         <form onSubmit={handleStaffLogin} className="space-y-3 text-xs">
-          <p className="text-sm font-bold text-slate-800">เข้าสู่ระบบพนักงาน (Staff POS)</p>
+          <p className="text-sm font-bold text-slate-800">เข้าสู่ระบบพนักงาน</p>
           {signedInElsewhere && (
             <p className="text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">ตอนนี้เข้าสู่ระบบเป็น "{signedInElsewhere.name}" ซึ่งไม่มีสิทธิ์ใช้หน้าเคาน์เตอร์ - เข้าสู่ระบบด้วยบัญชีพนักงานเพื่อสลับบัญชี</p>
           )}
@@ -97,8 +98,8 @@ export default function StaffPOS(props: StaffPOSProps) {
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 bg-emerald-950 text-emerald-400 rounded-xl flex items-center justify-center font-bold font-mono">POS</div>
           <div>
-            <p className="text-xs font-bold">แผงทำงานพนักงานสปอร์ตคอมเพล็กซ์ (Staff Panel)</p>
-            <p className="text-[10px] text-slate-400">ผู้ใช้งาน: {staffUser ? staffUser.name : 'คุณ กิตติ (เดโม)'} | สิทธิ์ของคุณ: <span className="text-emerald-400 font-extrabold">{actingUser?.role}</span>
+            <p className="text-xs font-bold">หน้าเคาน์เตอร์</p>
+            <p className="text-[10px] text-slate-400">ผู้ใช้งาน: {staffUser ? staffUser.name : 'คุณ กิตติ (เดโม)'} | ตำแหน่ง: <span className="text-emerald-400 font-extrabold">{BUILTIN_ROLES.find(r => r.id === actingUser?.role)?.name ?? actingUser?.role}</span>
               {lastSyncAt && <span id="staff-last-sync"> · อัปเดตอัตโนมัติ {new Date(lastSyncAt).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour12: false })}</span>}</p>
           </div>
         </div>
@@ -119,7 +120,7 @@ export default function StaffPOS(props: StaffPOSProps) {
           onClick={() => setActivePosTab('walkin')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'walkin' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
-          🏸 บันทึก Walk-in ด่วน
+          🏸 จองหน้าเคาน์เตอร์
         </button>
         )}
 {tabAllowed('slips') && (
@@ -127,7 +128,7 @@ export default function StaffPOS(props: StaffPOSProps) {
           onClick={() => setActivePosTab('slips')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition relative ${activePosTab === 'slips' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
-          📝 อนุมัติ Slip โอน ({pendingSlipPayments.length})
+          📝 ตรวจสลิป ({pendingSlipPayments.length})
           {pendingSlipPayments.length > 0 && (
             <span className="absolute top-1 right-1 h-2.5 w-2.5 rounded-full bg-rose-600 animate-ping" />
           )}
@@ -138,7 +139,7 @@ export default function StaffPOS(props: StaffPOSProps) {
           onClick={() => setActivePosTab('fb')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'fb' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
-          ☕️ POS ขายอาหาร F&B / ลูกแบด
+          ☕️ ขายสินค้า
         </button>
         )}
 {tabAllowed('rentals') && (
@@ -146,7 +147,7 @@ export default function StaffPOS(props: StaffPOSProps) {
           onClick={() => setActivePosTab('rentals')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'rentals' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
-          🏸 ยืม/เช่าแร็กเกต & รองเท้า
+          🎒 เช่าอุปกรณ์
         </button>
         )}
 {tabAllowed('vouchers') && (
@@ -162,7 +163,7 @@ export default function StaffPOS(props: StaffPOSProps) {
           onClick={() => setActivePosTab('todays_total')}
           className={`px-5 py-3 text-xs font-bold border-b-2 transition ${activePosTab === 'todays_total' ? 'border-emerald-700 text-emerald-800 bg-emerald-50/50' : 'border-transparent text-slate-600 hover:text-slate-900'}`}
         >
-          📊 ยอดลิ้นชักวันนี้ (Read-Only)
+          📊 กะและเงินสด
         </button>
         )}
       </div>

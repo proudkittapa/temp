@@ -17,10 +17,9 @@ export default function MyBookingsBox() {
     <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 text-white space-y-4 shadow-xl">
       <div className="flex items-center justify-between border-b border-slate-800 pb-3">
         <div>
-          <p className="text-sm font-bold tracking-tight">ตรวจสอบสถานะการจองล่าสุดทั้งหมด</p>
-          <p className="text-xs text-slate-400">สถานะการจองและสลิปการชำระเงินของคุณ</p>
+          <p className="text-sm font-bold tracking-tight">การจองของฉัน</p>
+          <p className="text-xs text-slate-400">การจองที่กำลังจะถึงและสถานะการชำระเงิน</p>
         </div>
-        <span className="text-xs bg-slate-800 text-slate-300 font-bold px-2.5 py-1 rounded-full">เรียงใหม่</span>
       </div>
 
       <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
@@ -34,8 +33,7 @@ export default function MyBookingsBox() {
           if (userFilteredFutureBookings.length === 0) {
             return (
               <p className="text-xs text-slate-500 text-center py-6 leading-relaxed">
-                🌟 ไม่พบประวัติการจองล่วงหน้าสำหรับบัญชีคุณในขณะนี้ <br/>
-                <span className="text-xs text-slate-400">(ระบบจะแสดงเฉพาะรอบจองที่ยังไม่ถึงเวลาเล่นของท่านเท่านั้น รอบที่เคยผ่านไปแล้วจะไม่แสดงเพื่อความรวดเร็วและเป็นส่วนตัวค่ะ)</span>
+                ยังไม่มีการจองที่กำลังจะถึง
               </p>
             );
           }
@@ -75,12 +73,12 @@ export default function MyBookingsBox() {
               else if (b.status === BookingStatus.CANCELLED) cls = 'bg-slate-600 text-slate-300';
               return (
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${cls}`}>
-                  {b.status === BookingStatus.CONFIRMED && 'อนุมัติเรียบร้อย'}
-                  {b.status === BookingStatus.PENDING_PAYMENT && (matchedPayment?.status === PaymentStatus.SLIP_UPLOADED ? 'รอสต๊าฟเช็คสลิป' : 'รอชำระเงิน / รอสลิป')}
+                  {b.status === BookingStatus.CONFIRMED && 'ยืนยันแล้ว'}
+                  {b.status === BookingStatus.PENDING_PAYMENT && (matchedPayment?.status === PaymentStatus.SLIP_UPLOADED ? 'รอตรวจสลิป' : 'รอชำระเงิน')}
                   {b.status === BookingStatus.CANCELLED && (
                     matchedPayment?.status === PaymentStatus.EXPIRED ? 'หมดเวลาชำระ'
                       : lateSlip ? 'ส่งสลิปล่าช้า รอพนักงานตรวจ'
-                      : 'ยกเลิกรายการ')}
+                      : 'ยกเลิกแล้ว')}
                   {b.status === BookingStatus.COMPLETED && 'เล่นแล้ว'}
                   {b.status === BookingStatus.NO_SHOW && 'ไม่มาใช้สนาม'}
                 </span>
@@ -136,8 +134,8 @@ export default function MyBookingsBox() {
                       }}
                       className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 min-h-[36px] rounded-lg transition"
                     >
-                      {matchedPayment.status === PaymentStatus.EXPIRED ? '📤 โอนแล้วแต่หมดเวลา? ส่งสลิป'
-                        : matchedPayment.status === PaymentStatus.SLIP_UPLOADED ? '🔁 ส่งสลิปใหม่' : '📤 ชำระเงิน / อัปโหลดสลิป'}
+                      {matchedPayment.status === PaymentStatus.EXPIRED ? 'โอนแล้วแต่หมดเวลา? ส่งสลิป'
+                        : matchedPayment.status === PaymentStatus.SLIP_UPLOADED ? 'ส่งสลิปใหม่' : 'ชำระเงิน / ส่งสลิป'}
                     </button>
                   )}
                 </div>

@@ -32,7 +32,7 @@ export default function ProductsTab() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h3 className="text-base font-bold text-slate-900">คุมสต๊อกตู้เย็น F&B และอุปกรณ์สนาม (Stock Inventory System)</h3>
+          <h3 className="text-base font-bold text-slate-900">คุมสต๊อกตู้เย็น F&B และอุปกรณ์สนาม</h3>
           <p className="text-xs text-slate-500">จัดการราคาสินค้าน้ำ และจำลองสต๊อกขวดแบ่งขาย สรรหาสตาฟตรวจสอบเวลาเบิกปิดยอด</p>
         </div>
       </div>
@@ -146,7 +146,7 @@ export default function ProductsTab() {
 
         {/* Product Inventory tracker table */}
         <div className="col-span-1 lg:col-span-8 space-y-4">
-          <span className="text-xs font-bold text-slate-700 block">สต๊อกรายการเครื่องดื่ม/บริการสนามปัจจุบัน (Realtime Stock Ledger):</span>
+          <span className="text-xs font-bold text-slate-700 block">สต๊อกรายการเครื่องดื่ม/บริการสนามปัจจุบัน:</span>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {products.map((p) => (

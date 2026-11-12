@@ -34,7 +34,7 @@ export default function VouchersTab() {
           {voucherFound.status === 'ACTIVE' && voucherFound.freeHour && (
             <>
               <button id="voucher-use-free-hour" type="button" onClick={handleUseFreeHourVoucher} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 rounded-lg">🏸 ใช้จองชั่วโมงฟรี</button>
-              <p className="text-[10px] text-slate-500">เปิดฟอร์ม Walk-in พร้อมรหัสนี้ เลือกสนามและเวลา Off-Peak 1 ชั่วโมง แล้วกดยืนยัน (คูปองถูกใช้เมื่อจองสำเร็จ)</p>
+              <p className="text-[10px] text-slate-500">เปิดฟอร์ม Walk-in พร้อมรหัสนี้ เลือกสนามและเวลานอกพีค 1 ชั่วโมง แล้วกดยืนยัน (คูปองถูกใช้เมื่อจองสำเร็จ)</p>
             </>
           )}
           {voucherFound.status === 'ACTIVE' && !voucherFound.freeHour && (

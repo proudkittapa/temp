@@ -30,7 +30,7 @@ export default function SlipsTab() {
       <div>
         <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
           <ShieldCheck className="h-5 w-5 text-emerald-600" />
-          คิวตรวจสอบสลิปโอนเงินลูกค้าออนไลน์ (Line Slip Verify Stage)
+          ตรวจสลิปโอนเงิน
         </h3>
         <p className="text-xs text-slate-500">กรุณากดตรวจเช็กรายละเอียด รูปสลิปผู้เข้าใช้บริการก่อนการยืนยันจอง ป้องกันความคลาดเคลื่อนและสลิปปลอมแปลง</p>
       </div>
@@ -47,7 +47,7 @@ export default function SlipsTab() {
 
         {/* Slip list queue */}
         <div className="space-y-3">
-          <span className="text-xs font-bold text-slate-700 block">สลิปที่รอสต๊าฟเวอริฟายเดลิเวอร์รี ({pendingSlipPayments.length} รายการ):</span>
+          <span className="text-xs font-bold text-slate-700 block">สลิปที่รอตรวจ ({pendingSlipPayments.length} รายการ)</span>
 
           <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
             {pendingSlipPayments.map((pay) => {
@@ -206,7 +206,7 @@ export default function SlipsTab() {
                   disabled={busy} onClick={guarded(() => handleRejectSlip(rejectId))}
                   className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 px-4 rounded"
                 >
-                  ยืนยันการปฎิเสธ (Cancel Booking)
+                  ยืนยันการปฎิเสธ
                 </button>
                 <button
                   onClick={() => setRejectId(null)}
@@ -220,7 +220,7 @@ export default function SlipsTab() {
             <div className="text-center py-20 text-slate-400 font-sans space-y-2">
               <CheckCircle2 className="h-10 w-10 text-slate-300 mx-auto" />
               <p className="text-xs font-bold">ยังไม่ได้เลือกรายการที่จะปฏิเสธ</p>
-              <p className="text-[11px] text-slate-400">เลือกกด 'ปฏิเสธ (Reject)' เพื่อเปิดแผงสาเหตุที่นี่</p>
+              <p className="text-[11px] text-slate-400">เลือกกด 'ปฏิเสธ' เพื่อเปิดแผงสาเหตุที่นี่</p>
             </div>
           )}
         </div>
