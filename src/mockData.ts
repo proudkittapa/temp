@@ -645,7 +645,7 @@ export function normalizePhone(phone: string | undefined): string {
 // The current date and hour at the venue (Asia/Bangkok), whatever the
 // browser's own time zone.
 const BKK_HOUR = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', hour: '2-digit', hourCycle: 'h23' });
-function bangkokNow(): { date: string; hour: number } {
+export function bangkokNow(): { date: string; hour: number } {
   const now = new Date();
   return { date: BKK_DATE.format(now), hour: parseInt(BKK_HOUR.format(now), 10) };
 }

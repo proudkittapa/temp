@@ -1,7 +1,9 @@
-import { formatBaht, formatDateTime } from '../../mockData';
+import { useState } from 'react';
+import { formatBaht, formatDateTime, formatDate, slotTiming } from '../../mockData';
 import * as api from '../../api';
-import { Check, AlertTriangle, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Check, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { useStaffPOSContext } from './useStaffPOS';
+import type { Payment } from '../../types';
 
 export default function SlipsTab() {
   const {
@@ -25,32 +27,22 @@ export default function SlipsTab() {
     slipQueueBookings,
     staffUser
   } = useStaffPOSContext();
-  return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
-          <ShieldCheck className="h-5 w-5 text-emerald-600" />
-          ตรวจสลิปโอนเงิน
-        </h3>
-        <p className="text-xs text-slate-500">กรุณากดตรวจเช็กรายละเอียด รูปสลิปผู้เข้าใช้บริการก่อนการยืนยันจอง ป้องกันความคลาดเคลื่อนและสลิปปลอมแปลง</p>
-      </div>
+  const [showPlayed, setShowPlayed] = useState(false);
+  // The game each slip pays for: its group's first hour (to sort by, the
+  // soonest first) and whether its last hour is over (already played -
+  // approve late or refund).
+  const timing = (pay: Payment) => {
+    const first = slipQueueBookings.find(b => b.id === pay.bookingId);
+    const group = first ? slipQueueBookings.filter(b => b.bookingCode === first.bookingCode) : [];
+    const keys = group.map(b => `${b.date} ${b.startTime}`).sort();
+    const last = group.find(b => `${b.date} ${b.startTime}` === keys[keys.length - 1]);
+    return { start: keys[0] ?? '', played: !!last && slotTiming(last.date, last.startTime).ended };
+  };
+  const sorted = [...pendingSlipPayments].sort((a, b) => timing(a).start.localeCompare(timing(b).start));
+  const upcoming = sorted.filter(p => !timing(p).played);
+  const played = sorted.filter(p => timing(p).played);
 
-
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {api.USE_BACKEND && staffUser && (
-          <p className="md:col-span-2 text-[11px] text-slate-500">
-            ตรวจสลิปในนาม <span className="font-bold text-slate-700">{staffUser.name}</span>
-            <button type="button" onClick={handleStaffLogout} className="ml-2 underline text-slate-500 hover:text-slate-700">ออกจากระบบ</button>
-          </p>
-        )}
-
-        {/* Slip list queue */}
-        <div className="space-y-3">
-          <span className="text-xs font-bold text-slate-700 block">สลิปที่รอตรวจ ({pendingSlipPayments.length} รายการ)</span>
-
-          <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
-            {pendingSlipPayments.map((pay) => {
+  const card = (pay: Payment) => {
               const bookingObj = slipQueueBookings.find(b => b.id === pay.bookingId);
               if (!bookingObj) return null;
               const groupHours = slipQueueBookings.filter(b => b.bookingCode === bookingObj.bookingCode).length;
@@ -64,7 +56,7 @@ export default function SlipsTab() {
                       <span className="text-[10px] bg-[#1e293b] text-white px-2 py-0.5 rounded font-mono font-bold">{bookingObj.bookingCode}</span>
                       <p className="font-black text-slate-800 mt-1.5">{courtName}</p>
                       <p className="text-[10px] text-slate-500">ผู้จอง: <span className="text-slate-800 font-semibold">{bookingObj.userName}</span> | โทร: {bookingObj.userPhone}</p>
-                      <p className="text-[10px] text-slate-500">จองเล่นวันที่: {bookingObj.date} | เวลา: {bookingObj.startTime} - {bookingObj.endTime} น.{groupHours > 1 ? ` (+${groupHours - 1} ชั่วโมงในกลุ่มเดียวกัน)` : ''}</p>
+                      <p className="text-[10px] text-slate-500">วันเล่น: {formatDate(`${bookingObj.date}T12:00:00+07:00`)} | เวลา: {bookingObj.startTime} - {bookingObj.endTime} น.{groupHours > 1 ? ` (+${groupHours - 1} ชั่วโมงในกลุ่มเดียวกัน)` : ''}</p>
                     </div>
 
                     <div className="text-right">
@@ -72,7 +64,7 @@ export default function SlipsTab() {
                         <p className="text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 mb-1">⚠️ ส่งสลิปหลังหมดเวลา</p>
                       )}
                       <p className="font-extrabold text-emerald-700 text-sm">{formatBaht(pay.amount)} บาท</p>
-                      <p className="text-[11px] text-slate-400">อัพโหลดเมื่อ: {pay.slipUploadedAt ? formatDateTime(pay.slipUploadedAt) : 'ไม่ระบุ'}</p>
+                      <p className="text-[11px] text-slate-400">ส่งสลิปเมื่อ: {pay.slipUploadedAt ? formatDateTime(pay.slipUploadedAt) : 'ไม่ระบุ'}</p>
                     </div>
                   </div>
 
@@ -113,7 +105,7 @@ export default function SlipsTab() {
                         title="ลูกค้าโอนแล้วแต่ยืนยันการจองไม่ได้ (เช่น ส่งสลิปช้าและมีผู้อื่นจองไปแล้ว) - บันทึกการคืนเงิน"
                         className="bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 py-1.5 px-3 rounded text-[11px] font-bold transition"
                       >
-                        💸 คืนเงิน
+                        คืนเงิน
                       </button>
                     )}
 
@@ -125,7 +117,7 @@ export default function SlipsTab() {
                       }}
                       className="disabled:opacity-40 bg-slate-200 hover:bg-slate-300 text-slate-700 py-1.5 px-3 rounded text-[11px] font-bold transition"
                     >
-                      ❌ ปฏิเสธ
+                      ปฏิเสธ
                     </button>
 
                     <button
@@ -133,20 +125,87 @@ export default function SlipsTab() {
                       disabled={busy || slipChanged} onClick={guarded(() => handleVerifySlip(pay.id))}
                       className="disabled:opacity-40 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 px-4 rounded text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
                     >
-                      <Check className="h-3.5 w-3.5" /> อนุมัติสล็อตจอง
+                      <Check className="h-3.5 w-3.5" /> อนุมัติ
                     </button>
                   </div>
+
+                  {rejectId === pay.id && (
+                    <div id="slip-reject-form" className="space-y-2 pt-2 border-t border-rose-200">
+                      <p className="font-bold text-rose-700 flex items-center gap-1">
+                        <AlertTriangle className="h-4 w-4" /> ปฏิเสธสลิปนี้
+                      </p>
+                      <p className="text-slate-500 text-[11px]">การจองจะถูกยกเลิกและสนามจะว่าง ลูกค้าจะเห็นเหตุผลนี้</p>
+                      <textarea
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        placeholder="เช่น ยอดไม่ตรง, ไม่พบเงินเข้าบัญชี"
+                        aria-label="เหตุผลที่ปฏิเสธ"
+                        className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none"
+                        rows={2}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={busy} onClick={guarded(() => handleRejectSlip(rejectId))}
+                          className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 px-4 rounded"
+                        >
+                          ยืนยันการปฏิเสธ
+                        </button>
+                        <button type="button" onClick={() => setRejectId(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 px-4 rounded">
+                          ยกเลิก
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
-            })}
+  };
 
-            {pendingSlipPayments.length === 0 && (
-              <div className="text-center py-16 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                <p className="text-xs text-slate-500 font-bold">ไม่มีรายการสลิปรอการยืนยันในตู้ทำงานขณะนี้ 🎉</p>
-                <p className="text-[10px] text-slate-400 mt-1">คิวเป็นระเบียบเรียบร้อยทั้งหมด</p>
-              </div>
-            )}
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-1.5">
+            <ShieldCheck className="h-5 w-5 text-emerald-600" />
+            ตรวจสลิปโอนเงิน
+          </h3>
+          <p className="text-xs text-slate-500">เปิดดูสลิป ตรวจยอดเงินและชื่อผู้รับให้ตรงกับที่เข้าบัญชีก่อนอนุมัติ · เรียงตามเวลาเล่น (ใกล้ที่สุดก่อน)</p>
+        </div>
+        {api.USE_BACKEND && staffUser && (
+          <p className="text-[11px] text-slate-500">
+            ตรวจในนาม <span className="font-bold text-slate-700">{staffUser.name}</span>
+            <button type="button" onClick={handleStaffLogout} className="ml-2 underline text-slate-500 hover:text-slate-700">ออกจากระบบ</button>
+          </p>
+        )}
+      </div>
+
+      <section className="space-y-3">
+        <span className="text-xs font-bold text-slate-700 block">รอตรวจ ({upcoming.length} รายการ)</span>
+        <div id="slip-queue" className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          {upcoming.map(card)}
+        </div>
+        {upcoming.length === 0 && (
+          <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+            <p className="text-xs text-slate-500 font-bold">ไม่มีสลิปรอตรวจค่ะ</p>
           </div>
+        )}
+      </section>
+
+      {/* Slips for games already played: still money to settle (approve
+          late or refund), but not in the way of today's queue. */}
+      {played.length > 0 && (
+        <section id="slip-queue-played" className="space-y-3 border-t border-slate-200 pt-4">
+          <button type="button" aria-expanded={showPlayed} onClick={() => setShowPlayed(v => !v)}
+            className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 min-h-[36px]">
+            วันเล่นผ่านไปแล้ว ({played.length} รายการ) — อนุมัติย้อนหลังหรือคืนเงิน {showPlayed ? '▴' : '▾'}
+          </button>
+          {showPlayed && (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {played.map(card)}
+            </div>
+          )}
+        </section>
+      )}
 
           {/* Refunds asked for when cancelling, not recorded because the slip
               was never approved: check the bank account, then refund or
@@ -179,52 +238,6 @@ export default function SlipsTab() {
               })}
             </div>
           )}
-        </div>
-
-        {/* Reject / Slip Reject dialogue drawer simulation */}
-        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 flex flex-col justify-between">
-          {rejectId ? (
-            <div className="space-y-4 text-xs">
-              <p className="font-bold text-slate-800 flex items-center gap-1 text-rose-700">
-                <AlertTriangle className="h-4 w-4" /> ปฏิเสธหลักฐานรูปสลิปลูกค้า
-              </p>
-              <p className="text-slate-500 text-[10px]">ระบบจะยิงแจ้งเตือนยกเลิกการสลักเวลา และยิง Push message คัดสิทธิ์ คืนเงิน ผ่านทางพอร์ท LINE OA ลูกค้าทันที</p>
-
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1.5">ระบุเหตุผลการปฏิเสธยอดสลิป:</label>
-                <textarea
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  placeholder="เช่น มียอดเบี่ยงเบนเล็กน้อย, สลิปซ้ำซ้อนรอบบ่าย, ตรวจสอบเงินไม่เข้าธนาคารกสิกร"
-                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs focus:outline-none"
-                  rows={3}
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  disabled={busy} onClick={guarded(() => handleRejectSlip(rejectId))}
-                  className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2 px-4 rounded"
-                >
-                  ยืนยันการปฎิเสธ
-                </button>
-                <button
-                  onClick={() => setRejectId(null)}
-                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 px-4 rounded"
-                >
-                  ยกเลิก
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-20 text-slate-400 font-sans space-y-2">
-              <CheckCircle2 className="h-10 w-10 text-slate-300 mx-auto" />
-              <p className="text-xs font-bold">ยังไม่ได้เลือกรายการที่จะปฏิเสธ</p>
-              <p className="text-[11px] text-slate-400">เลือกกด 'ปฏิเสธ' เพื่อเปิดแผงสาเหตุที่นี่</p>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

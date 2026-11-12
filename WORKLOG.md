@@ -18,6 +18,34 @@ Entry format:
 
 ---
 
+## 2026-11-12 — Counter layout: grid first, slip queue by play time (walkthrough items 9, 10)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner ("do the staff layout next")
+- **Commit(s):** this commit (on `main`) - frontend only
+- **Changed:**
+  - `staff/WalkinTab.tsx`: the court grid is now at the top with its own
+    date picker (วันนี้ / พรุ่งนี้ / date) and sport filter; today's grid opens
+    scrolled to the current hour, whose column is marked "ตอนนี้"; tapping a
+    free cell fills court and time in the form below, scrolls to it and
+    focuses the name field. The form (date shown from the grid) and the
+    day's booking list are below the grid. Leftover emoji/odd labels in the
+    grid cleaned ("ค้างVerify" -> "รอชำระ"); sticky court column made opaque.
+    `bangkokNow` is now exported from `mockData.ts`.
+  - `staff/SlipsTab.tsx`: slips sorted by play time (soonest first); slips
+    whose game is already over go in a separate, folded "วันเล่นผ่านไปแล้ว"
+    group (approve late or refund); reject opens inside the slip's own card
+    instead of the right half panel that was empty until reject was
+    pressed; the page scrolls instead of a 400px inner box.
+- **Verified:** tsc clean, vitest 71/71. Production build against the local
+  Go server (scratchpad `staff1.mjs`): grid above form, today's grid
+  scrolled to 22:00 marked "ตอนนี้", "พรุ่งนี้" resets to the start, tapping a
+  free cell fills 10:00 and focuses the name with the form in view; slip
+  tab shows 2 upcoming and 4 already-played (folded, opens to 4 cards),
+  inline reject form opens and closes; no page errors. Browser-only demo
+  build (`staffdemo.mjs`, 1024px): same layout, no errors.
+- **Not done / follow-ups:** time-first search across courts for customers
+  (walkthrough item 3). LINE plan waits on the owner's four decisions.
+
 ## 2026-11-12 — Wording clean-up (walkthrough items 8 and 11, owner-approved)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner (approved the 39-item proposal; header name "Sriracha Sporthubs", keep "พีค", keep "ค่ะ" but cut emojis)
