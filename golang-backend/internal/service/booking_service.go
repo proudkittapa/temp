@@ -147,6 +147,7 @@ type BookingService struct {
 	priceEngine    *PriceEngineService
 	paymentService *PaymentService
 	now            func() time.Time // overridable in tests
+	line           *LineNotifier    // nil = no LINE messages (line_messages.go)
 }
 
 func NewBookingService(
@@ -872,7 +873,7 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 			if locked.Status != model.PaymentPending {
 				return nil // a slip arrived in the meantime
 			}
-			group, _, err := s.bookingGroup(tx, locked.BookingID)
+			group, root, err := s.bookingGroup(tx, locked.BookingID)
 			now := s.now()
 			if errors.Is(err, ErrNotFound) {
 				// Its booking rows are gone: close the payment so it leaves the
@@ -891,6 +892,9 @@ func (s *BookingService) ExpireUnpaidBookings(ctx context.Context) (int, error) 
 				return err
 			}
 			if _, err := cancelPending(tx, group, reason, model.CancelKindExpired, now); err != nil {
+				return err
+			}
+			if err := s.line.queue(tx, root.UserID, LineKindExpired, expiredText(root.BookingCode, groupLines(tx, group), int(PaymentHoldDuration.Minutes())), now); err != nil {
 				return err
 			}
 			cancelled = true
@@ -1408,6 +1412,9 @@ func (s *BookingService) VerifyPayment(ctx context.Context, paymentID string, se
 		}
 
 		res = &ReviewResult{PaymentID: p.ID, BookingCode: root.BookingCode, Status: string(model.PaymentVerified), BookingsCount: confirmed, PointsAwarded: points, Late: p.ExpiredAt != nil}
+		if err := s.line.queue(tx, root.UserID, LineKindApproved, approvedText(root.BookingCode, groupLines(tx, group)), now); err != nil {
+			return err
+		}
 		return tx.Create(&model.AuditLog{
 			ID:          ids.New("log"),
 			UserID:      staffID,
@@ -1467,6 +1474,9 @@ func (s *BookingService) RejectPayment(ctx context.Context, paymentID string, se
 			return err
 		}
 		res = &ReviewResult{PaymentID: p.ID, BookingCode: root.BookingCode, Status: string(model.PaymentRejected), BookingsCount: cancelled}
+		if err := s.line.queue(tx, root.UserID, LineKindRejected, rejectedText(root.BookingCode, groupLines(tx, group), reason), now); err != nil {
+			return err
+		}
 		return tx.Create(&model.AuditLog{
 			ID:          ids.New("log"),
 			UserID:      staffID,

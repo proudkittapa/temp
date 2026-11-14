@@ -78,6 +78,7 @@ cp golang-backend/.env.example golang-backend/.env
 | `JWT_SECRET` | `openssl rand -hex 32` - **required**; the server refuses to start without it |
 | `PROMPTPAY_ID` | the shop's real PromptPay number - **required**; the server refuses to start without it (or with the old example number `0105561008012`, which would send customers' money elsewhere) |
 | `LINE_LOGIN_CHANNEL_ID`, `LINE_LOGIN_CHANNEL_SECRET`, `LINE_LOGIN_CALLBACK_URL` | optional - turns on "เข้าสู่ระบบด้วย LINE" for customers. From the LINE Login channel in the LINE Developers Console; set the channel's callback URL to `https://YOUR_DOMAIN/line-callback` and use the same address here. All three together, or none |
+| `LINE_CHANNEL_ACCESS_TOKEN` | optional - turns on LINE messages to customers who linked LINE (slip approved, slip rejected, booking expired). The Messaging API channel's long-lived token, from the same provider as the Login channel |
 | court counts, `NO_SHOW_*`, `DB_*`, ... | only if not the defaults (see the comments in the file) |
 
 Both `.env` files stay on the server: never commit them or send them in

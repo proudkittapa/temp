@@ -644,6 +644,33 @@ type TrustedDevice struct {
 	ExpiresAt  time.Time `json:"-" gorm:"column:expires_at;index"`
 }
 
+// A LINE message to a customer, queued in the same transaction as the
+// change it reports (slip approved / rejected, booking expired - owner
+// decision 2026-11-14) and sent by a background job, so a slow or failing
+// LINE never holds up or undoes a booking. RetryKey is sent as
+// X-Line-Retry-Key: a resend after an unknown outcome is never delivered
+// twice.
+type LineOutbox struct {
+	ID            string     `json:"id" gorm:"primaryKey;column:id"`
+	UserID        string     `json:"user_id" gorm:"column:user_id;not null;index"`
+	LineUserID    string     `json:"-" gorm:"column:line_user_id;not null"`
+	Kind          string     `json:"kind" gorm:"column:kind;not null"` // APPROVED, REJECTED, EXPIRED
+	Text          string     `json:"text" gorm:"column:text;not null"`
+	Status        string     `json:"status" gorm:"column:status;not null;index:idx_line_outbox_due,priority:1"` // PENDING, SENT, FAILED
+	RetryKey      string     `json:"-" gorm:"column:retry_key;not null"`
+	Attempts      int        `json:"attempts" gorm:"column:attempts;not null;default:0"`
+	LastError     *string    `json:"last_error,omitempty" gorm:"column:last_error"`
+	NextAttemptAt time.Time  `json:"-" gorm:"column:next_attempt_at;index:idx_line_outbox_due,priority:2"`
+	CreatedAt     time.Time  `json:"created_at" gorm:"column:created_at"`
+	SentAt        *time.Time `json:"sent_at,omitempty" gorm:"column:sent_at;index"`
+}
+
+const (
+	LineOutboxPending = "PENDING"
+	LineOutboxSent    = "SENT"
+	LineOutboxFailed  = "FAILED"
+)
+
 // 16. A write request the app may send again (a retry after a lost
 // response): the first attempt's response is kept, keyed by the client's
 // Idempotency-Key header, so a repeat is answered from here instead of

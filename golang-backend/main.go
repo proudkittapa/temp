@@ -204,7 +204,14 @@ func main() {
 	if lineCfg != nil {
 		log.Println("LINE login is on.")
 	}
-	lineHandler := handler.NewLineHandler(service.NewLineLogin(lineCfg, authService, db))
+	// LINE messages (slip approved / rejected, booking expired); off unless
+	// LINE_CHANNEL_ACCESS_TOKEN is set.
+	lineNotifier := service.LineNotifierFromEnv(db)
+	if lineNotifier != nil {
+		bookingService.SetLineNotifier(lineNotifier)
+		log.Println("LINE messages are on.")
+	}
+	lineHandler := handler.NewLineHandler(service.NewLineLogin(lineCfg, authService, db), lineNotifier)
 
 	// 3. Launch Gin Web Engine Router
 	// gin.Default() minus its logger, which writes each URL with its query
@@ -342,6 +349,7 @@ func main() {
 
 		// Reports from the database (FR-7.2-7.4)
 		api.GET("/admin/dashboard", can(model.PermViewReports), shopHandler.Dashboard)
+		api.GET("/admin/line/usage", can(model.PermViewReports), lineHandler.Usage)
 		api.GET("/admin/report", can(model.PermViewReports), shopHandler.MonthReport)
 		api.GET("/admin/audit-logs", can(model.PermViewAuditLog), shopHandler.AuditLogs)
 
@@ -408,6 +416,28 @@ func main() {
 		defer background.Done()
 		expireUnpaidBookingsLoop(ctx, db, bookingService, authService, rewardService)
 	}()
+
+	// Queued LINE messages go out within seconds. No lease needed: rows are
+	// claimed with SKIP LOCKED, so several servers never send one twice.
+	if lineNotifier != nil {
+		background.Add(1)
+		go func() {
+			defer background.Done()
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				runJob(ctx, "sending LINE messages", func(ctx context.Context) error {
+					_, err := lineNotifier.SendPending(ctx)
+					return err
+				})
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 
 	// 5. Fire Up listener
 	port := os.Getenv("PORT")
@@ -1121,6 +1151,7 @@ func setupSchemaLocked(setupDB *gorm.DB) error {
 		&model.AppMigration{},
 		&model.JobLease{},
 		&model.TrustedDevice{},
+		&model.LineOutbox{},
 	)
 	if err != nil {
 		return err

@@ -420,6 +420,21 @@ export async function completeLineSignup(signupToken: string, name: string, phon
   return (await refreshMe('customer')) ?? toUser(data.user);
 }
 
+export interface LineUsage {
+  enabled: boolean; sentThisMonth: number; pending: number; failedThisMonth: number;
+  lineUsed?: number; lineLimit?: number;
+}
+// This month's LINE messages (Settings). null when the server can't say.
+export async function lineUsage(): Promise<LineUsage | null> {
+  try {
+    const d = await request<{ enabled: boolean; sent_this_month: number; pending: number; failed_this_month: number; line_used?: number; line_limit?: number }>(
+      '/admin/line/usage', { session: 'admin' });
+    return { enabled: d.enabled, sentThisMonth: d.sent_this_month, pending: d.pending, failedThisMonth: d.failed_this_month, lineUsed: d.line_used, lineLimit: d.line_limit };
+  } catch {
+    return null;
+  }
+}
+
 // Re-reads the logged-in user (e.g. for a fresh points balance) and updates
 // the stored session. Returns null if not logged in, or if the session is
 // no longer valid (expired, suspended, or - for staff - no longer a staff

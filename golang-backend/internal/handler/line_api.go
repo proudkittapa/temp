@@ -13,10 +13,23 @@ import (
 // LINE login endpoints (service.LineLogin). All are public: start and
 // callback also accept a signed-in customer (linking LINE to the account).
 type LineHandler struct {
-	line *service.LineLogin
+	line     *service.LineLogin
+	notifier *service.LineNotifier // nil = LINE messages off
 }
 
-func NewLineHandler(line *service.LineLogin) *LineHandler { return &LineHandler{line: line} }
+func NewLineHandler(line *service.LineLogin, notifier *service.LineNotifier) *LineHandler {
+	return &LineHandler{line: line, notifier: notifier}
+}
+
+// GET /api/v1/admin/line/usage - this month's LINE messages (Settings).
+func (h *LineHandler) Usage(c *gin.Context) {
+	u, err := h.notifier.Usage(c.Request.Context())
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": u})
+}
 
 // GET /api/v1/auth/line - whether the "เข้าสู่ระบบด้วย LINE" button shows.
 func (h *LineHandler) Status(c *gin.Context) {

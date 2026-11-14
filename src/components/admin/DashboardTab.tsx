@@ -1,4 +1,5 @@
 import { CourtType, BookingStatus, MemberType } from '../../types';
+import LineUsageCard from './LineUsageCard';
 import { findClosure, isHourOffPeak, courtsConflict, openSlotHours, formatBaht, calculatePrice } from '../../mockData';
 import * as api from '../../api';
 import {
@@ -107,6 +108,8 @@ export default function DashboardTab() {
             <span className="text-2xl font-extrabold text-slate-800 mt-1 block">{formatBaht(dashStats.fbSales)} บาท</span>
             <p className="text-[11px] text-slate-500 mt-1.5">ทุกบิลที่หน้าเคาน์เตอร์</p>
           </div>
+
+          <LineUsageCard />
         </div>
       </div>
 

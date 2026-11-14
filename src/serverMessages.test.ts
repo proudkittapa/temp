@@ -21,6 +21,9 @@ const NOT_SHOWN: Record<string, string> = {
   "the court's grouping changed during the booking - please try again": 'ErrCourtRegrouped is answered as "the system was busy" (translated)',
   'user not found': 'login internals; the user sees "invalid login credentials"',
   'insufficient points: balance cannot drop below zero': 'covered by the "insufficient points" rule',
+  'LINE push: %v': 'LINE message send error: stored on the queued message, never shown',
+  'LINE push: %s': 'LINE message send error: stored on the queued message, never shown',
+  'LINE %s: HTTP %s': 'LINE usage lookup error: the count is left out, never shown',
 };
 
 // Sample values for formats the generic ones below don't fit.

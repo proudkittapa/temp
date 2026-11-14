@@ -18,6 +18,17 @@ Entry format:
 
 ---
 
+## 2026-11-14 — LINE messages: approved / rejected / expired (phase 2)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, continuing the LINE work the owner approved
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - `service/line_messages.go`, `model.LineOutbox` (table `line_outbox`): VerifyPayment, RejectPayment (with the reason) and ExpireUnpaidBookings queue a Thai message in their own transaction, only for customers with LINE linked and only when `LINE_CHANNEL_ACCESS_TOKEN` is set. A 5-second job (no lease: rows claimed with SKIP LOCKED) pushes them with X-Line-Retry-Key; 409 = already sent; network/5xx/429 retried 1-2-4-8-16 min; other 4xx failed; older than a day dropped. No "booking received" or reminder (owner decision).
+  - `GET /admin/line/usage` (view_reports) and a "ข้อความ LINE เดือนนี้" card on the Settings dashboard: our sent count, plus LINE's own usage and plan limit when it answers.
+  - `.env.example`, DEPLOY.md, TODO.md; `serverMessages.test.ts` lists the three internal-only LINE error formats.
+- **Verified:** `go test -race ./...` with Postgres incl. 2 new tests (approved/rejected/expired texts, nothing for a customer without LINE, push body/token/retry key, usage; 500 then 409 with the same key = sent once, 400 = failed); vitest 71/71, tsc. Live: local server + scratchpad `fakeline.mjs` - a LINE-linked member booked, uploaded a slip, staff approved, the push arrived within 5 s with the booking's court and time; the Settings card showed "1 / 300"; no page errors.
+- **Not done / follow-ups:** not yet tried with the real LINE channels (owner setup). Webhook for blocked/unfollow and chat replies (optional).
+
 ## 2026-11-14 — LINE login for customers (phase 1)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner ("sure" to starting the LINE work)

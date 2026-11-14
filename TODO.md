@@ -86,8 +86,10 @@ Each needs a yes/no from the owner before it is built.
 - Cost: LINE Login is free. Estimate: ~1–2 days.
 
 ## 2. LINE OA notifications
-- [ ] Replace the simulated LINE messages (`line_messages` in localStorage) with real Messaging API push messages - only the three the owner chose: slip approved, slip rejected (with reason), booking expired.
-- [ ] Settings: count of push messages sent this month against the plan's limit (free plan ~300).
+- [x] Real Messaging API push messages - only the three the owner chose: slip approved, slip rejected (with reason), booking expired - built 2026-11-14 (`service/line_messages.go`): queued in the same transaction (`line_outbox`), sent every 5 s with X-Line-Retry-Key, retried 5 times on network/5xx/429, dropped after a day; only to customers with LINE linked; on when `LINE_CHANNEL_ACCESS_TOKEN` is set. Tested against a fake LINE.
+- [x] Settings → แดชบอร์ด: "ข้อความ LINE เดือนนี้" (sent / plan limit from LINE, 300 if unknown; amber from 80%).
+- [ ] The demo's simulated LINE panel (browser-only mode) still shows its own pretend messages - fine for the demo.
+- [ ] Optional: a webhook for "blocked the shop" (stop queuing) and free replies to customer chats.
 - [ ] On LINE login, offer "add the OA as friend" (customers must be friends to receive pushes).
 - [ ] Send from the backend after the DB transaction commits; a failed push must never fail the booking.
 - Cost (Thailand, check current prices): Free plan = 300 push messages/month (~150 bookings at ~2 messages each); Basic ฿1,280/month + VAT = 15,000 messages. Replies to customer chats are free. Estimate: ~1–2 days on top of item 1.
