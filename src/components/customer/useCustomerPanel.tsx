@@ -15,6 +15,9 @@ import { useRewardActions } from './rewardActions';
 import { CustomerPanelProps, Reward, Redemption, LOYALTY_REWARDS } from './shared';
 export * from './shared';
 
+const LINE_RESUME_KEY = 'sports_complex_line_resume';
+interface LineResume { date: string; type: CourtType; slots: { courtId: string; startTime: string }[]; pending: boolean }
+
 // Shared state, effects and data loading of the panel. The handlers are in
 // one hook per area: accountActions, slotPicker, bookingFlow, rewardActions.
 function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onStaffSignIn }: CustomerPanelProps) {
@@ -76,6 +79,35 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
   // A guest pressed "จองต่อ": once signed in, the booking carries on with
   // the hours they picked.
   const [pendingCheckout, setPendingCheckout] = useState<boolean>(false);
+  // LINE sign-in leaves the page: what the guest picked is kept in this
+  // tab (sessionStorage) and put back on return.
+  const lineResume = useRef<LineResume | null>(null);
+  useEffect(() => {
+    let saved: LineResume | null = null;
+    try {
+      saved = JSON.parse(sessionStorage.getItem(LINE_RESUME_KEY) || 'null');
+      sessionStorage.removeItem(LINE_RESUME_KEY);
+    } catch { /* nothing kept */ }
+    if (!saved || !saved.date || !Array.isArray(saved.slots)) return;
+    lineResume.current = saved;
+    setSelectedType(saved.type);
+    setSelectedDate(saved.date);
+  }, []);
+  const signInWithLine = async (link = false) => {
+    try {
+      sessionStorage.setItem(LINE_RESUME_KEY, JSON.stringify({ date: selectedDate, type: selectedType, slots: selectedSlots, pending: pendingCheckout }));
+    } catch { /* the picks are lost, the sign-in still works */ }
+    try {
+      await api.startLineLogin(link);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err));
+    }
+  };
+  // Whether the LINE buttons show (API mode, LINE set up on the server).
+  const [lineEnabled, setLineEnabled] = useState(false);
+  useEffect(() => {
+    if (api.USE_BACKEND) void api.lineLoginEnabled().then(setLineEnabled);
+  }, []);
   const openAuth = (tab: 'login' | 'register' = 'login') => {
     setAuthTab(tab);
     setAuthError(null);
@@ -308,6 +340,7 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
   // screen for the next person on a shared device.
   const clearCustomerScreen = () => {
     setActiveStep(1);
+    setAccountOpen(false);
     setSelectedSlots([]);
     setCurrentBooking(null);
     setCurrentPayment(null);
@@ -330,6 +363,16 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
   // re-fetches the courts, and that must not wipe the customer's picks.
   const courtIdsKey = courts.map(c => c.id).join(',');
   useEffect(() => {
+    // Back from LINE sign-in: the hours picked before leaving, once the
+    // courts are loaded (and "จองต่อ" carries on if it was pressed).
+    const resume = lineResume.current;
+    if (resume && courtIdsKey && resume.type === selectedType) {
+      lineResume.current = null;
+      const ids = new Set(courts.map(c => c.id));
+      setSelectedSlots(resume.slots.filter(s => ids.has(s.courtId)));
+      if (resume.pending && resume.slots.length > 0) setPendingCheckout(true);
+      return;
+    }
     setSelectedSlots([]);
   }, [selectedType, courtIdsKey]);
   return {
@@ -390,6 +433,8 @@ function useCustomerPanelCore({ onAddAuditLog, triggerRefresh, onRefreshAll, onS
     setAccountOpen,
     pendingCheckout,
     setPendingCheckout,
+    signInWithLine,
+    lineEnabled,
     openAuth,
     activeStep,
     setActiveStep,

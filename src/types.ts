@@ -156,6 +156,8 @@ export interface User {
   // Permissions of the user's role, from the server's /auth/me (API mode).
   // Absent in browser-only mode: permissionsOf() uses the built-in role's.
   permissions?: string[];
+  // A LINE account is linked (API mode; LINE login).
+  lineLinked?: boolean;
 }
 
 export interface Booking {

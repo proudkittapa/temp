@@ -18,6 +18,16 @@ Entry format:
 
 ---
 
+## 2026-11-14 — LINE login for customers (phase 1)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner ("sure" to starting the LINE work)
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - Server: `service/line_login.go` + `handler/line_api.go`, routes `GET /auth/line`, `POST /auth/line/start|callback|complete` (public, listed in `route_access_test.go`). Signed state (nonce, account to link) in a 10-minute HS256 token; code exchanged at LINE's token endpoint; ID token checked by LINE's verify endpoint (channel + nonce). Customers only (staff refused); new LINE users give a phone once (required) - an existing phone is refused so nobody can take an account by typing its number; signed-in customers can link LINE. Unique index `idx_users_line_user_id`. Off unless `LINE_LOGIN_CHANNEL_ID/SECRET/CALLBACK_URL` are set (`.env.example`, DEPLOY.md); `LINE_TEST_AUTH_BASE/API_BASE` point at a fake LINE for tests.
+  - Website: LINE buttons in the account box (guest card, sign-in form, "เชื่อมบัญชี LINE" in บัญชีของฉัน) when the server has LINE on; `/line-callback` page (`LineCallback.tsx`) with the one-time phone form; picked hours kept across the trip to LINE and "จองต่อ" carries on; Thai texts for the new messages; account details fold on sign-out.
+- **Verified:** `go test -race ./...` with Postgres (5 new LINE tests: new user + phone + returning, existing phone refused, link incl. another account / already linked / suspended, staff refused, bad state / LINE error / forged token / not configured), gofmt, vet; vitest 71/71, tsc. Browser (production build, local server, scratchpad `fakeline.mjs` + `linee2e.mjs`): guest picks 2 hours → จองต่อ → LINE → phone → back on the check step with both hours; sign-out and LINE again signs straight in; a password member links LINE; cancelling at LINE shows the message; no page errors.
+- **Not done / follow-ups:** not yet tried with real LINE channels (owner setup: TODO.md prerequisites). Phase 2: the three LINE messages (approved / rejected / expired) and the monthly counter.
+
 ## 2026-11-14 — LINE plan: owner decisions recorded
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, answers from the owner

@@ -1,8 +1,9 @@
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { UserRole, AuditLog, AddAuditLog } from './types';
 import { initializeState, StorageService, formatDateTime, businessInfo } from './mockData';
 import { BRAND_NAME } from './brand';
 import CustomerPanel from './components/CustomerPanel';
+import LineCallback from './components/customer/LineCallback';
 // The counter and settings screens load on demand (customers' phones don't
 // download them), fetched before they are shown - see screens.ts.
 import { StaffPOS, AdminPanel, preloadScreen, roleFromHash, hashForRole } from './screens';
@@ -40,6 +41,13 @@ const MAX_LOCAL_AUDIT_LOGS = 2000;
 
 export default function App() {
   const [currentRole, setCurrentRole] = useState<UserRole>(roleFromHash);
+  // Back from a LINE sign-in (LineCallback): that page until it is done.
+  const [lineCallback, setLineCallback] = useState(() => api.USE_BACKEND && window.location.pathname === '/line-callback');
+  const finishLineCallback = useCallback(() => {
+    window.history.replaceState(null, '', '/');
+    setLineCallback(false);
+    setCurrentRole(UserRole.CUSTOMER);
+  }, []);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
   // API mode: the one signed-in account; its permissions decide which
   // screens the nav bar offers (the server checks every call regardless).
@@ -225,8 +233,10 @@ export default function App() {
       {/* Main Dynamic View Area */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
+        {lineCallback && <LineCallback onDone={finishLineCallback} />}
+
         {/* Render Customer App */}
-        {currentRole === UserRole.CUSTOMER && (
+        {!lineCallback && currentRole === UserRole.CUSTOMER && (
           <CustomerPanel 
             onAddAuditLog={handleAddNewAuditLog}
             triggerRefresh={refreshTrigger}

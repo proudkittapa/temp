@@ -250,6 +250,7 @@ interface ApiUser {
   id: string; name: string; email?: string; phone: string; role: string;
   member_type: string; org_name?: string; is_active: boolean; points: number; created_at: string;
   permissions?: string[]; // /auth/me only
+  line_user_id?: string;
 }
 interface ApiCourt {
   id: string; name: string; type: string; mutex_group_id?: string; share_of_group: number;
@@ -281,7 +282,8 @@ const toUser = (u: ApiUser): User => ({
   isActive: u.is_active,
   points: u.points,
   createdAt: u.created_at,
-  permissions: u.permissions
+  permissions: u.permissions,
+  lineLinked: !!u.line_user_id
 });
 
 const toCourt = (c: ApiCourt): Court => ({
@@ -362,6 +364,60 @@ export async function register(input: { name: string; email: string; phone: stri
   const user = toUser(data.user);
   saveSession('customer', { token: data.token, user });
   return user;
+}
+
+// ---- LINE login (customers only) ----
+// The browser goes to LINE and comes back to /line-callback?code&state
+// (LineCallback.tsx). The state is kept here, in this tab, to check the
+// answer belongs to the sign-in this tab started.
+const LINE_STATE_KEY = 'sports_complex_line_state';
+
+export async function lineLoginEnabled(): Promise<boolean> {
+  try {
+    return (await request<{ enabled: boolean }>('/auth/line')).enabled;
+  } catch {
+    return false;
+  }
+}
+
+// Sends the browser to LINE. link: add LINE to the signed-in account.
+export async function startLineLogin(link = false): Promise<void> {
+  const data = await request<{ url: string; state: string }>('/auth/line/start', {
+    method: 'POST', body: { link }, session: link ? 'customer' : undefined
+  });
+  try { sessionStorage.setItem(LINE_STATE_KEY, data.state); } catch { /* checked on return */ }
+  window.location.assign(data.url);
+}
+
+export type LineCallbackResult =
+  | { kind: 'signedIn'; user: User }
+  | { kind: 'linked'; user: User }
+  | { kind: 'needsPhone'; signupToken: string; name: string };
+
+export async function finishLineLogin(code: string, state: string): Promise<LineCallbackResult> {
+  let expected: string | null = null;
+  try { expected = sessionStorage.getItem(LINE_STATE_KEY); sessionStorage.removeItem(LINE_STATE_KEY); } catch { /* none */ }
+  if (!expected || expected !== state) throw new Error('เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+  const data = await request<{ token?: string; user?: ApiUser; linked?: boolean; needs_phone?: boolean; signup_token?: string; name?: string }>(
+    '/auth/line/callback', { method: 'POST', body: { code, state }, session: getSession('customer') ? 'customer' : undefined });
+  if (data.needs_phone && data.signup_token) return { kind: 'needsPhone', signupToken: data.signup_token, name: data.name || '' };
+  if (data.linked && data.user) {
+    const session = getSession('customer');
+    const user = toUser(data.user);
+    if (session) saveSession('customer', { token: session.token, user: { ...session.user, lineLinked: true } });
+    return { kind: 'linked', user };
+  }
+  if (!data.token || !data.user) throw new Error('เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+  saveSession('customer', { token: data.token, user: toUser(data.user) });
+  return { kind: 'signedIn', user: (await refreshMe('customer')) ?? toUser(data.user) };
+}
+
+export async function completeLineSignup(signupToken: string, name: string, phone: string): Promise<User> {
+  const data = await request<{ token: string; user: ApiUser }>('/auth/line/complete', {
+    method: 'POST', body: { signup_token: signupToken, name, phone }
+  });
+  saveSession('customer', { token: data.token, user: toUser(data.user) });
+  return (await refreshMe('customer')) ?? toUser(data.user);
 }
 
 // Re-reads the logged-in user (e.g. for a fresh points balance) and updates

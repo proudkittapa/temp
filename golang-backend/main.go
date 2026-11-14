@@ -196,6 +196,15 @@ func main() {
 	shopHandler := handler.NewShopHandler(posService, service.NewReportService(db, posService), bookingService, service.NewShiftService(db))
 
 	arenaHandler := handler.NewArenaHandler(authService, userService, membershipService, bookingService, slipSigner)
+	// LINE login (customers only); off unless LINE_LOGIN_* is set in .env.
+	lineCfg, err := service.LineConfigFromEnv()
+	if err != nil {
+		log.Fatalf("%v\n", err)
+	}
+	if lineCfg != nil {
+		log.Println("LINE login is on.")
+	}
+	lineHandler := handler.NewLineHandler(service.NewLineLogin(lineCfg, authService, db))
 
 	// 3. Launch Gin Web Engine Router
 	// gin.Default() minus its logger, which writes each URL with its query
@@ -269,6 +278,10 @@ func main() {
 		api.POST("/auth/register", arenaHandler.Register)
 		api.POST("/auth/login", arenaHandler.Login)
 		api.GET("/auth/me", loggedIn, arenaHandler.Me)
+		api.GET("/auth/line", lineHandler.Status)
+		api.POST("/auth/line/start", lineHandler.Start)
+		api.POST("/auth/line/callback", lineHandler.Callback)
+		api.POST("/auth/line/complete", lineHandler.Complete)
 
 		// Public availability
 		api.GET("/courts", arenaHandler.ListCourts)
@@ -927,6 +940,10 @@ func ensureUserUniqueIndexes(db *gorm.DB) {
 			log.Printf("WARNING: users.%s has duplicate values, so it is not unique-indexed yet and duplicate sign-ups are still possible. "+
 				"Find them with: SELECT %s, count(*) FROM users GROUP BY %s HAVING count(*) > 1; then restart. (%v)\n", expr, expr, expr, err)
 		}
+	}
+	// One LINE account belongs to one member (LINE login).
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_line_user_id ON users (line_user_id) WHERE line_user_id IS NOT NULL").Error; err != nil {
+		log.Printf("WARNING: users.line_user_id has duplicates, so it is not unique-indexed yet: %v\n", err)
 	}
 }
 

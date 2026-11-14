@@ -78,10 +78,11 @@ Each needs a yes/no from the owner before it is built.
 - **Phone number:** required once for a new LINE user (counter lookups and contact).
 
 ## 1. LINE Login — sign in with LINE *or* phone number (customers only)
-- [ ] Add "Login with LINE" next to the existing phone + password login (keep both).
-- [ ] Backend: OAuth flow (`/auth/line/start` → LINE → `/auth/line/callback`), verify the ID token, find/create the user by `users.line_user_id` (column already exists), then issue our normal JWT.
-- [ ] LINE doesn't provide a phone number → a new LINE user must enter their phone once (required; needed for contact and walk-in matching). Let existing phone users link their LINE account.
-- [ ] Staff/admin accounts cannot sign in with LINE.
+- [x] "เข้าสู่ระบบด้วย LINE" next to phone + password (both kept) - built 2026-11-14 (`service/line_login.go`, `handler/line_api.go`, `LineCallback.tsx`); tested against a fake LINE only.
+- [x] Backend: `/auth/line/start` → LINE → frontend `/line-callback` → `/auth/line/callback`; LINE's verify endpoint checks the ID token (channel, nonce); user found by `users.line_user_id` (unique index).
+- [x] A new LINE user enters their phone once (required); a phone that already has an account is refused (sign in with the password, then "เชื่อมบัญชี LINE" in บัญชีของฉัน). Picked hours survive the trip to LINE.
+- [x] Staff/admin accounts cannot sign in with LINE.
+- [ ] Try with the real LINE channels once the owner has set them up (prerequisites below), on a phone and inside the LINE app.
 - Cost: LINE Login is free. Estimate: ~1–2 days.
 
 ## 2. LINE OA notifications

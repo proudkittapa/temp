@@ -150,15 +150,19 @@ var permByConst = map[string]model.Permission{
 // one answers only what is meant to be public; any other route must check
 // a sign-in (loggedIn) or a permission (can(...)).
 var publicRoutes = map[string]string{
-	"POST /auth/register": "sign-up (rate-limited per IP)",
-	"POST /auth/login":    "sign-in (rate-limited per account and IP)",
-	"GET /courts":         "the courts",
-	"GET /courts/slots":   "free/taken hours, no customer data",
-	"GET /bookings":       "a day's taken hours - names, phones, ids and amounts blanked for the public",
-	"GET /days-off":       "closures",
-	"GET /pricing":        "prices and booking rules",
-	"GET /rewards":        "the reward catalog",
-	"GET /slips/:name":    "a slip image, only with a valid signed, expiring link",
+	"POST /auth/register":      "sign-up (rate-limited per IP)",
+	"POST /auth/login":         "sign-in (rate-limited per account and IP)",
+	"GET /auth/line":           "whether LINE login is on",
+	"POST /auth/line/start":    "LINE login: the authorize URL and a signed state (linking needs a sign-in, checked in the handler)",
+	"POST /auth/line/callback": "LINE login: needs the code LINE issued and the signed state",
+	"POST /auth/line/complete": "LINE sign-up: needs the signed sign-up token from the callback; rate-limited per IP",
+	"GET /courts":              "the courts",
+	"GET /courts/slots":        "free/taken hours, no customer data",
+	"GET /bookings":            "a day's taken hours - names, phones, ids and amounts blanked for the public",
+	"GET /days-off":            "closures",
+	"GET /pricing":             "prices and booking rules",
+	"GET /rewards":             "the reward catalog",
+	"GET /slips/:name":         "a slip image, only with a valid signed, expiring link",
 }
 
 // TestEveryRouteIsGuarded fails when a route is added to main.go without a

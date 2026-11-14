@@ -39,6 +39,12 @@ const RULES: Rule[] = [
   [/booking is \w+, not a no-show/i, 'การจองนี้ไม่ได้อยู่ในสถานะ "ไม่มา" แล้ว (รีเฟรชหน้าจอ)'],
   // Sign-in and accounts
   [/invalid login credentials/i, 'เบอร์โทร/อีเมล หรือรหัสผ่านไม่ถูกต้อง'],
+  // LINE login (2026-11-14)
+  [/LINE login is not set up/i, 'ยังไม่ได้เปิดใช้การเข้าสู่ระบบด้วย LINE'],
+  [/LINE sign-in failed - please try again/i, 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'],
+  [/staff accounts sign in with phone and password/i, 'บัญชีพนักงานต้องเข้าสู่ระบบด้วยเบอร์โทรและรหัสผ่าน'],
+  [/this LINE account is already linked to another member/i, 'บัญชี LINE นี้เชื่อมกับสมาชิกคนอื่นอยู่แล้ว'],
+  [/this phone number already has an account - sign in with your password/i, 'เบอร์นี้มีบัญชีอยู่แล้ว — เข้าสู่ระบบด้วยรหัสผ่าน แล้วกด "เชื่อมบัญชี LINE" ในหน้าบัญชีของฉัน'],
   [/too many failed logins - try again in (\d+) minutes/i, m => `ลองผิดหลายครั้งเกินไป กรุณารอ ${m[1]} นาทีแล้วลองใหม่`],
   [/already registered/i, 'เบอร์โทรหรืออีเมลนี้สมัครไว้แล้ว — เข้าสู่ระบบ หรือกด "ลืมรหัสผ่าน"'],
   [/at least 9 digits|phone number is too long/i, 'เบอร์โทรไม่ถูกต้อง (ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678)'],

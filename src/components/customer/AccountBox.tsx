@@ -26,6 +26,7 @@ export default function AccountBox() {
     handleRedeemReward,
     handleRegister,
     loggedInUser,
+    lineEnabled,
     loginWith,
     openAuth,
     pendingCheckout,
@@ -43,6 +44,7 @@ export default function AccountBox() {
     setForgotResult,
     setPendingCheckout,
     setShowRewards,
+    signInWithLine,
     showRewards
   } = useCustomerPanelContext();
   return (
@@ -236,6 +238,20 @@ export default function AccountBox() {
             )}
           </div>
 
+          {lineEnabled && (
+            <div id="line-link-box" className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/50 p-4 rounded-xl border border-slate-800 text-xs">
+              {loggedInUser.lineLinked ? (
+                <span className="text-emerald-400 font-bold">✓ เชื่อมบัญชี LINE แล้ว · เข้าสู่ระบบด้วย LINE ได้ และรับแจ้งผลการจองทาง LINE</span>
+              ) : (
+                <>
+                  <span className="text-slate-300">เชื่อมบัญชี LINE เพื่อเข้าสู่ระบบด้วย LINE และรับแจ้งผลการจองทาง LINE</span>
+                  <button type="button" id="btn-line-link" onClick={() => void signInWithLine(true)}
+                    className="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold min-h-[40px] px-4 rounded-lg">เชื่อมบัญชี LINE</button>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
             <button type="button" onClick={handleLogout}
               className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold min-h-[40px] px-4 rounded-lg border border-slate-700 transition">
@@ -273,6 +289,13 @@ export default function AccountBox() {
               </button>
             </div>
           </div>
+          {lineEnabled && (
+              <button type="button" id="btn-line-login-compact" onClick={() => void signInWithLine()}
+                className="w-full bg-[#06C755] hover:bg-[#05b34c] text-white text-sm font-bold min-h-[44px] px-4 rounded-lg transition flex items-center justify-center gap-2">
+                <span className="bg-white text-[#06C755] text-[10px] font-black rounded px-1 leading-4">LINE</span>
+                เข้าสู่ระบบด้วย LINE
+              </button>
+          )}
         </div>
       ) : (
         /* Guest: the sign-in / sign-up form */
@@ -294,6 +317,17 @@ export default function AccountBox() {
               ✕ ปิด
             </button>
           </div>
+
+          {lineEnabled && authTab !== 'forgot' && (
+            <div className="mb-4 space-y-3 md:max-w-md">
+              <button type="button" id="btn-line-login" onClick={() => void signInWithLine()}
+                className="w-full bg-[#06C755] hover:bg-[#05b34c] text-white text-sm font-bold min-h-[44px] px-4 rounded-lg transition flex items-center justify-center gap-2">
+                <span className="bg-white text-[#06C755] text-[10px] font-black rounded px-1 leading-4">LINE</span>
+                เข้าสู่ระบบด้วย LINE
+              </button>
+              <p className="text-center text-[11px] text-slate-500">หรือใช้เบอร์โทรและรหัสผ่าน</p>
+            </div>
+          )}
 
           {/* Tabs Switcher */}
           <div className="flex bg-slate-950/60 p-1 rounded-xl w-full border border-slate-800 md:max-w-md mb-4 text-xs">
