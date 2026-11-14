@@ -71,14 +71,22 @@ Each needs a yes/no from the owner before it is built.
 - [x] **Login lockout policy** (decided and done 2026-11-05): a browser that has signed in to an account with the right password gets a device key (`trusted_devices`, hashed, 90 days, renewed at each sign-in, 20 per account); while 20 wrong passwords from anywhere lock that account, a browser holding its key may still sign in with the right password. The per account+network (5) and per network (50) limits apply to everyone. Behind a proxy, `TRUSTED_PROXIES` must be set (the server warns in release mode).
 - [ ] **Business details:** the owner types the real name, address, phone, tax ID and VAT status in Admin → Pricing → ข้อมูลร้าน (built 2026-10-21). Until then receipts show "ยังไม่ได้ตั้งชื่อร้าน" and no VAT lines. The name should match the PromptPay account name - the payment screen shows it as the payee.
 
-## 1. LINE Login — sign in with LINE *or* phone number
+## LINE — owner decisions (2026-11-14)
+- **Messages sent:** slip approved (booking confirmed), slip rejected (with the reason), booking expired (not paid in 30 minutes). **Not** sent: "booking received" (the payment page shows it) and the reminder before play.
+- **Plan:** start on LINE's free plan (~300 shop-sent messages a month); Settings shows a counter of this month's messages so the owner knows when to upgrade.
+- **LINE login:** customers only. Staff and admin keep phone + password.
+- **Phone number:** required once for a new LINE user (counter lookups and contact).
+
+## 1. LINE Login — sign in with LINE *or* phone number (customers only)
 - [ ] Add "Login with LINE" next to the existing phone + password login (keep both).
 - [ ] Backend: OAuth flow (`/auth/line/start` → LINE → `/auth/line/callback`), verify the ID token, find/create the user by `users.line_user_id` (column already exists), then issue our normal JWT.
-- [ ] LINE doesn't provide a phone number → ask new LINE users for their phone once (needed for contact and walk-in matching). Let existing phone users link their LINE account.
+- [ ] LINE doesn't provide a phone number → a new LINE user must enter their phone once (required; needed for contact and walk-in matching). Let existing phone users link their LINE account.
+- [ ] Staff/admin accounts cannot sign in with LINE.
 - Cost: LINE Login is free. Estimate: ~1–2 days.
 
 ## 2. LINE OA notifications
-- [ ] Replace the simulated LINE messages (`line_messages` in localStorage) with real Messaging API push messages: booking created (with QR/amount), slip approved, slip rejected (with reason), booking expired, day-before reminder.
+- [ ] Replace the simulated LINE messages (`line_messages` in localStorage) with real Messaging API push messages - only the three the owner chose: slip approved, slip rejected (with reason), booking expired.
+- [ ] Settings: count of push messages sent this month against the plan's limit (free plan ~300).
 - [ ] On LINE login, offer "add the OA as friend" (customers must be friends to receive pushes).
 - [ ] Send from the backend after the DB transaction commits; a failed push must never fail the booking.
 - Cost (Thailand, check current prices): Free plan = 300 push messages/month (~150 bookings at ~2 messages each); Basic ฿1,280/month + VAT = 15,000 messages. Replies to customer chats are free. Estimate: ~1–2 days on top of item 1.

@@ -18,6 +18,14 @@ Entry format:
 
 ---
 
+## 2026-11-14 — LINE plan: owner decisions recorded
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, answers from the owner
+- **Commit(s):** this commit (on `main`) - docs only
+- **Changed:** `TODO.md` sections 1-2: messages = approved / rejected / expired only (no "booking received", no reminder); start on the free plan with a monthly message counter in Settings; LINE login for customers only; phone number required once for new LINE users.
+- **Verified:** docs only.
+- **Not done / follow-ups:** the owner's LINE setup (Official Account, one provider with a Login channel and a Messaging API channel, public https address), then building phase 1 (LINE login) and phase 2 (the three messages).
+
 ## 2026-11-12 — Counter layout: grid first, slip queue by play time (walkthrough items 9, 10)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner ("do the staff layout next")
