@@ -387,6 +387,12 @@ func main() {
 		api.PUT("/admin/business", can(model.PermEditPricing), pricingHandler.UpdateBusiness)
 	}
 
+	// One-service hosting (render.yaml): the website from STATIC_DIR.
+	if dir := strings.TrimSpace(os.Getenv("STATIC_DIR")); dir != "" {
+		serveWebsite(router, dir)
+		log.Printf("Serving the website from %s.\n", dir)
+	}
+
 	// Health checks for Docker / the reverse proxy (outside /api/v1: no auth,
 	// no body limits): /healthz = the process is up; /readyz = it serves
 	// requests and the database answers (503 until startup is done, or while
@@ -845,6 +851,7 @@ func expireUnpaidBookingsLoop(ctx context.Context, db *gorm.DB, bookings *servic
 			_, err := rewards.ExpireVouchers(ctx)
 			return err
 		})
+		runJob(ctx, "first admin (BOOTSTRAP_ADMIN_PHONE)", func(ctx context.Context) error { return bootstrapAdmin(ctx, db) })
 		runJob(ctx, "pruning old failed logins", auth.PruneLoginFailures)
 		runJob(ctx, "pruning old idempotency keys", func(ctx context.Context) error { return handler.PruneIdempotencyKeys(ctx, db) })
 		runJob(ctx, "pruning old audit log entries", func(ctx context.Context) error {

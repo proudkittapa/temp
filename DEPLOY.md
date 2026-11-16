@@ -294,3 +294,41 @@ visitor reaches it through Docker Desktop's network, so the login limit
 counts them as one address - fine for one tester, one more reason this is
 not for customers. `down -v` deletes everything in the test copy; never use
 it on a real server (section 8).
+
+## 11. Test hosting on Render (free, nothing running on your computer)
+
+For trying the app from any phone or computer. Not for the real launch: the
+free plan sleeps after 15 minutes without visits (the next visit waits about
+a minute), and slip images are wiped whenever it restarts or redeploys.
+`render.yaml` sets up **one** service: the Go server also serves the website
+(`deploy/render.Dockerfile`, `STATIC_DIR`), so everything is on one https
+address.
+
+1. **Database.** Render allows one free Postgres per account (and deletes it
+   after 30 days), so use a separate free one:
+   - **Neon** (free, doesn't expire): sign up at neon.tech, create a project in
+     the Singapore region, and copy the connection string with **connection
+     pooling turned off** (the direct one; it ends in `sslmode=require`). The
+     pooled one may refuse the server's database settings.
+   - Or, once your current free Render database is gone: create a new free
+     Render Postgres (Singapore) and copy its **Internal Database URL**.
+2. **Render.** Sign in to render.com with GitHub → **New → Blueprint** →
+   choose this repository (allow Render to see it) → it reads `render.yaml`
+   and asks for three values:
+   - `DATABASE_URL`: the connection string from step 1.
+   - `PROMPTPAY_ID`: the PromptPay number test payments go to.
+   - `BOOTSTRAP_ADMIN_PHONE`: your phone number.
+   Then **Apply**. The first build takes about 5-10 minutes.
+3. **First admin.** Open the address Render shows
+   (`https://sriracha-sporthubs.onrender.com` or similar), **register** with
+   the phone from step 2, wait a minute, then sign in at `/#/admin`. Then in
+   Render → the service → **Environment**, delete `BOOTSTRAP_ADMIN_PHONE`
+   (it only works while there is no admin, but there is no reason to keep it).
+4. **Updates** deploy by themselves: every push to `main` rebuilds the site.
+5. **LINE (optional).** Set the LINE Login channel's callback URL to
+   `https://YOUR-RENDER-ADDRESS/line-callback`, and add `LINE_LOGIN_CHANNEL_ID`,
+   `LINE_LOGIN_CHANNEL_SECRET`, `LINE_LOGIN_CALLBACK_URL` (that same address)
+   and `LINE_CHANNEL_ACCESS_TOKEN` under **Environment**.
+
+No demo accounts exist there: staff register on the site and the admin gives
+them a role.

@@ -150,3 +150,5 @@ jobs:
         run: docker build -f golang-backend/Dockerfile golang-backend
       - name: Web image
         run: docker build -f deploy/web.Dockerfile .
+      - name: Render image (website + server in one, render.yaml)
+        run: docker build -f deploy/render.Dockerfile .

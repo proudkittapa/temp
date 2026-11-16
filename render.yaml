@@ -1,0 +1,32 @@
+# Test hosting on Render's free plan (DEPLOY.md, "Test hosting on Render"):
+# one web service runs the Go server, which also serves the website - one
+# https address, no CORS, LINE's /line-callback on the same domain.
+# Free plan: sleeps after 15 minutes without visits (the next visit waits
+# about a minute); slip images are wiped on every restart or deploy.
+# The database is not created here: paste a Postgres connection string as
+# DATABASE_URL (e.g. Neon's free plan, which does not expire).
+services:
+  - type: web
+    name: sriracha-sporthubs
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    dockerfilePath: ./deploy/render.Dockerfile
+    dockerContext: .
+    healthCheckPath: /readyz
+    envVars:
+      # Asked for when the Blueprint is created; never in this file.
+      - key: DATABASE_URL
+        sync: false
+      - key: PROMPTPAY_ID
+        sync: false
+      # Your phone number: register with it on the site and that account
+      # becomes the admin (only while there is no admin). Remove it after.
+      - key: BOOTSTRAP_ADMIN_PHONE
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      # Render's own proxies, so the login limits see each visitor's address.
+      - key: TRUSTED_PROXIES
+        value: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16

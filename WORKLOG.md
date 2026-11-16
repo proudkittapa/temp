@@ -18,6 +18,19 @@ Entry format:
 
 ---
 
+## 2026-11-16 — Test hosting on Render (one free service)
+
+- **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, requested by the owner ("can u host it for me" - chose Render free; their one free Render database is in use until 20 Nov)
+- **Commit(s):** this commit (on `main`)
+- **Changed:**
+  - `render.yaml` (Blueprint): one free Docker web service in Singapore, health check `/readyz`; asks for `DATABASE_URL`, `PROMPTPAY_ID`, `BOOTSTRAP_ADMIN_PHONE`; generates `JWT_SECRET`; `TRUSTED_PROXIES` = private ranges. No database in the Blueprint (Neon free, or a new Render one later).
+  - `deploy/render.Dockerfile`: builds the website and the server into one image (no BuildKit cache mounts).
+  - `static_site.go`: with `STATIC_DIR` set the Go server serves the website - built files cached for good, page `no-cache`, unknown paths → index.html (`/line-callback`), `/api/*` misses stay JSON 404, Caddy's browser safety headers. Unset in the normal deploy (Caddy).
+  - `bootstrapAdmin` (same file): `BOOTSTRAP_ADMIN_PHONE` makes that phone's customer the admin, checked every minute, only while no admin exists (Render's free plan has no shell for `make-admin`).
+  - CI builds the Render image too; DEPLOY.md section 11.
+- **Verified:** `go test -race ./...` with Postgres incl. `TestBootstrapAdminOnlyWithoutAnAdmin`; vitest 71/71. The server with `STATIC_DIR` on a production build: `/`, `/line-callback` → page (no-cache + CSP), `/assets/*` immutable, `/api/v1/nope` JSON 404, path escapes refused; browser: customer page and staff counter work from one address, no console errors. Not verified: the Render build itself (needs the owner's Render account) - CI builds the same Dockerfile.
+- **Not done / follow-ups:** the owner creates the Neon database and the Render Blueprint (DEPLOY.md section 11).
+
 ## 2026-11-14 — LINE messages: approved / rejected / expired (phase 2)
 
 - **Who:** Claude Code (Opus 5.5), session https://claude.ai/code/session_01XQcPofjWpD4MF3bFSh4wPo, continuing the LINE work the owner approved
