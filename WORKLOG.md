@@ -27,7 +27,7 @@ Entry format:
   - `deploy/render.Dockerfile`: builds the website and the server into one image (no BuildKit cache mounts).
   - `static_site.go`: with `STATIC_DIR` set the Go server serves the website - built files cached for good, page `no-cache`, unknown paths → index.html (`/line-callback`), `/api/*` misses stay JSON 404, Caddy's browser safety headers. Unset in the normal deploy (Caddy).
   - `bootstrapAdmin` (same file): `BOOTSTRAP_ADMIN_PHONE` makes that phone's customer the admin, checked every minute, only while no admin exists (Render's free plan has no shell for `make-admin`).
-  - CI builds the Render image too; DEPLOY.md section 11.
+  - CI builds the Render image too; DEPLOY.md section 11. `.dockerignore` (repository root) no longer leaves out `golang-backend/` (the Render image needs it; its `.env`, uploads and binaries stay out) - the first CI run failed on that.
 - **Verified:** `go test -race ./...` with Postgres incl. `TestBootstrapAdminOnlyWithoutAnAdmin`; vitest 71/71. The server with `STATIC_DIR` on a production build: `/`, `/line-callback` → page (no-cache + CSP), `/assets/*` immutable, `/api/v1/nope` JSON 404, path escapes refused; browser: customer page and staff counter work from one address, no console errors. Not verified: the Render build itself (needs the owner's Render account) - CI builds the same Dockerfile.
 - **Not done / follow-ups:** the owner creates the Neon database and the Render Blueprint (DEPLOY.md section 11).
 

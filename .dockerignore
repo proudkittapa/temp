@@ -1,11 +1,17 @@
-# Build context of deploy/web.Dockerfile (the repository root).
+# Build context of deploy/web.Dockerfile and deploy/render.Dockerfile (the
+# repository root). The server's code is needed by render.Dockerfile; its
+# secrets and local data never go into an image.
 node_modules
 dist
 build
 coverage
 .git
-golang-backend
 backups
 *.log
 .env
 .env.*
+golang-backend/.env
+golang-backend/.env.*
+golang-backend/uploads
+golang-backend/arena-backend
+golang-backend/*.exe
